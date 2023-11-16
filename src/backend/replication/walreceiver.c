@@ -842,9 +842,15 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 				sendTime = pq_getmsgint64(&incoming_message);
 				ProcessWalSndrMessage(walEnd, sendTime);
 
+#ifndef CLOUDDB
+				pg_atomic_write_u64(&WalRcv->writtenUpto, walEnd);
+				// LogstreamResult.Flush = walEnd;
+				LogstreamResult.Write = walEnd;
+#else 
 				buf += hdrlen;
 				len -= hdrlen;
 				XLogWalRcvWrite(buf, len, dataStart, tli);
+#endif
 				break;
 			}
 		case 'k':				/* Keepalive */
@@ -972,7 +978,7 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 	{
 		WalRcvData *walrcv = WalRcv;
 
-		issue_xlog_fsync(recvFile, recvSegNo, tli);
+		// issue_xlog_fsync(recvFile, recvSegNo, tli);
 
 		LogstreamResult.Flush = LogstreamResult.Write;
 
@@ -1254,6 +1260,9 @@ ProcessWalSndrMessage(XLogRecPtr walEnd, TimestampTz sendTime)
 	walrcv->latestWalEnd = walEnd;
 	walrcv->lastMsgSendTime = sendTime;
 	walrcv->lastMsgReceiptTime = lastMsgReceiptTime;
+
+	walrcv->flushedUpto = walEnd;
+
 	SpinLockRelease(&walrcv->mutex);
 
 	if (message_level_is_interesting(DEBUG2))

@@ -2950,6 +2950,7 @@ XLogSendPhysical(void)
 	pq_sendint64(&output_message, SendRqstPtr); /* walEnd */
 	pq_sendint64(&output_message, 0);	/* sendtime, filled in last */
 
+#ifdef CLOUDDB
 	/*
 	 * Read the log directly into the output buffer to avoid extra memcpy
 	 * calls.
@@ -2996,6 +2997,7 @@ retry:
 	}
 
 	output_message.len += nbytes;
+#endif
 	output_message.data[output_message.len] = '\0';
 
 	/*

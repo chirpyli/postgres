@@ -84,6 +84,7 @@
 #include "replication/snapbuild.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
+#include "replication/walsender_private.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -2412,6 +2413,38 @@ XLogGetReplicationSlotMinimumLSN(void)
 	SpinLockAcquire(&XLogCtl->info_lck);
 	retval = XLogCtl->replicationSlotMinLSN;
 	SpinLockRelease(&XLogCtl->info_lck);
+
+	return retval;
+}
+
+/*
+ * Return the oldest LSN walsender received replay lsn from standby.
+ */
+static XLogRecPtr
+XLogGetWalSenderMinimumReplayLSN(void)
+{
+	XLogRecPtr retval = InvalidXLogRecPtr;
+	bool find = false;
+
+	for (int i = 0; i < max_wal_senders; i++)
+	{
+		WalSnd	*walsnd = &WalSndCtl->walsnds[i];
+		SpinLockAcquire(&walsnd->mutex);
+		if (walsnd->pid != 0 && walsnd->apply != InvalidXLogRecPtr)
+		{
+			if (find && walsnd->apply < retval)
+			{
+				retval = walsnd->apply;
+			}
+			else
+			{
+				retval = walsnd->apply;
+				find = true;
+			}
+		}
+
+		SpinLockRelease(&walsnd->mutex);
+	}
 
 	return retval;
 }
@@ -7338,6 +7371,15 @@ KeepLogSeg(XLogRecPtr recptr, XLogSegNo *logSegNo)
 	/* don't delete WAL segments newer than the calculated segment */
 	if (segno < *logSegNo)
 		*logSegNo = segno;
+
+	// todo: 检查备机回放的lsn，获取所有备机回放的最小LSN
+	keep = XLogGetWalSenderMinimumReplayLSN();
+	if (keep != InvalidXLogRecPtr && keep < recptr)
+	{
+		XLByteToSeg(keep, segno, wal_segment_size);
+		if (segno < *logSegNo)
+			*logSegNo = segno;
+	}
 }
 
 /*
