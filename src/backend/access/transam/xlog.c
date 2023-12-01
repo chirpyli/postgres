@@ -2450,6 +2450,27 @@ XLogGetWalSenderMinimumReplayLSN(void)
 }
 
 /*
+ * Return true, if has active walsender.
+ */
+static bool
+HasActiveWalSender(void)
+{
+	for (int i = 0; i < max_wal_senders; i++)
+	{
+		WalSnd *walsnd = &WalSndCtl->walsnds[i];
+		SpinLockAcquire(&walsnd->mutex);
+		if (walsnd->pid != 0)
+		{
+			SpinLockRelease(&walsnd->mutex);
+			return true;
+		}
+		SpinLockRelease(&walsnd->mutex);
+	}
+
+	return false;
+}
+
+/*
  * Advance minRecoveryPoint in control file.
  *
  * If we crash during recovery, we must reach this point again before the
@@ -3632,6 +3653,12 @@ RemoveOldXlogFiles(XLogSegNo segno, XLogRecPtr lastredoptr, XLogRecPtr endptr,
 		{
 			if (XLogArchiveCheckDone(xlde->d_name))
 			{
+				if (!HasActiveWalSender())
+				{
+					elog(DEBUG2, "skip remove WAL segments %s, has none active walsenders.", xlde->d_name);
+					continue;
+				}
+
 				/* Update the last removed location in shared memory first */
 				UpdateLastRemovedPtr(xlde->d_name);
 
@@ -7372,7 +7399,8 @@ KeepLogSeg(XLogRecPtr recptr, XLogSegNo *logSegNo)
 	if (segno < *logSegNo)
 		*logSegNo = segno;
 
-	// todo: 检查备机回放的lsn，获取所有备机回放的最小LSN
+	// todo: 检查备机回放的lsn,获取所有备机回放的最小LSN
+	// 存在没有备机的情况，此时这个检查就是无效的
 	keep = XLogGetWalSenderMinimumReplayLSN();
 	if (keep != InvalidXLogRecPtr && keep < recptr)
 	{
