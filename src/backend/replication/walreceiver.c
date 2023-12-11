@@ -57,6 +57,7 @@
 #include "access/xlog_internal.h"
 #include "access/xlogarchive.h"
 #include "access/xlogrecovery.h"
+#include "access/xlogutils.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "common/ip.h"
@@ -118,6 +119,24 @@ static struct
 
 static StringInfoData reply_message;
 static StringInfoData incoming_message;
+
+
+typedef struct XLogRecvPrivate
+{
+	TimeLineID timeline;
+	XLogRecPtr startptr;
+	XLogRecPtr endptr;
+	bool endptr_reached;
+} XLogRecvPrivate;
+
+static void InitXLogReader();
+static void WALRecvOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo, TimeLineID *tli_p);
+static int WALRecvReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
+							XLogRecPtr targetPtr, char *readBuff);
+static bool XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sendTime, TimeLineID tli);
+// todo: 释放资源待定
+static XLogReaderState *xlogreader = NULL;
+static XLogRecvPrivate *private = NULL;
 
 /* Prototypes for private functions */
 static void WalRcvFetchTimeLineHistoryFiles(TimeLineID first, TimeLineID last);
@@ -316,6 +335,8 @@ WalReceiverMain(void)
 
 	if (sender_host)
 		pfree(sender_host);
+
+	InitXLogReader();
 
 	first_stream = true;
 	for (;;)
@@ -821,6 +842,7 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 	XLogRecPtr	walEnd;
 	TimestampTz sendTime;
 	bool		replyRequested;
+	bool		ready = false;
 
 	resetStringInfo(&incoming_message);
 
@@ -843,9 +865,10 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 				ProcessWalSndrMessage(walEnd, sendTime);
 
 #ifndef CLOUDDB
-				pg_atomic_write_u64(&WalRcv->writtenUpto, walEnd);
-				// LogstreamResult.Flush = walEnd;
 				LogstreamResult.Write = walEnd;
+				pg_atomic_write_u64(&WalRcv->writtenUpto, LogstreamResult.Write);
+				XLogWalWaitReadyforRead(dataStart, walEnd, sendTime, tli);
+
 #else 
 				buf += hdrlen;
 				len -= hdrlen;
@@ -1475,4 +1498,199 @@ pg_stat_get_wal_receiver(PG_FUNCTION_ARGS)
 
 	/* Returns the record as Datum */
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
+}
+
+
+/***********************************************************/
+static void 
+InitXLogReader()
+{
+	private = palloc0(sizeof(XLogRecvPrivate));
+	xlogreader = XLogReaderAllocate(wal_segment_size, NULL,
+										XL_ROUTINE(.page_read = &WALRecvReadPage,
+												   .segment_open = WALRecvOpenSegment,
+												   .segment_close = wal_segment_close),
+													private);
+	if (!xlogreader)
+		ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory"),
+				 errdetail("Failed while allocating a WAL reading processor.")));
+
+	xlogreader->segcxt.ws_segsize = wal_segment_size;
+	snprintf(xlogreader->segcxt.ws_dir, MAXPGPATH, "%s", XLOGDIR);
+}
+
+
+static void
+WALRecvOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo, TimeLineID *tli_p)
+{
+	TimeLineID	til = *tli_p;
+	char 		path[MAXPGPATH];
+	const int retry = 120;
+	XLogFilePath(path, til, nextSegNo, wal_segment_size);
+
+	for (int i = 0; i < retry; i++)
+	{
+		elog(DEBUG3, "try open wal segment \"%s\"", path);
+		state->seg.ws_file = open(path, O_RDONLY | PG_BINARY, 0);
+		if (state->seg.ws_file >= 0)
+		{
+			elog(DEBUG3, "open wal segment \"%s\" success.", path);
+			return;
+		}
+		if (errno == ENOENT)
+		{
+			int save_errno = errno;
+			/* File not there yet, try again */
+			elog(DEBUG3, "try open wal segment \"%s\" failed: %m. try sleep %d ms", path, (i + 1) * 500);
+			pg_usleep(500 * 1000);
+			
+			errno = save_errno;
+			continue;
+		}
+		/* Any other error, fall through and fail */
+		break;
+	}
+
+	elog(ERROR, "could not find file \"%s\": %m", path);
+}
+
+static int
+WALRecvReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
+				XLogRecPtr targetPtr, char *readBuff)
+{
+	XLogRecvPrivate *private = state->private_data;
+	int			 count = XLOG_BLCKSZ;
+	WALReadError errinfo;
+
+	if (private->endptr != InvalidXLogRecPtr)
+	{
+		if (targetPagePtr + XLOG_BLCKSZ <= private->endptr)
+			count = XLOG_BLCKSZ;
+		else if (targetPagePtr + reqLen <= private->endptr)
+			count = private->endptr - targetPagePtr;
+		else
+		{
+			// private->endptr_reached = true;
+			// return -1;
+			count = reqLen;
+		}
+	}
+
+	if(!WALRead(state, readBuff, targetPagePtr, count, private->timeline, &errinfo))
+	{
+		WALOpenSegment *seg = &errinfo.wre_seg;
+		char		fname[MAXPGPATH];
+
+		XLogFileName(fname, seg->ws_tli, seg->ws_segno, state->segcxt.ws_segsize);
+
+		if (errinfo.wre_errno != 0)
+		{
+			errno = errinfo.wre_errno;
+			elog(ERROR, "could not read from file %s, offset %d: %m",
+					 fname, errinfo.wre_off);
+		}
+		else
+			elog(ERROR, "could not read from file %s, offset %d: read %d of %d",
+					 fname, errinfo.wre_off, errinfo.wre_read,
+					 errinfo.wre_req);
+	}
+
+	return count;
+}
+
+static bool first_read_wal = true;
+
+static bool
+XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sendTime, TimeLineID tli)
+{
+	bool ready = false;
+	const int retry = 600;
+	elog(DEBUG3, "replica wait wal [%X/%X,%X/%X).", LSN_FORMAT_ARGS(dataStart), LSN_FORMAT_ARGS(walEnd));
+	
+	XLogRecPtr record = InvalidXLogRecPtr;
+	char	   *errormsg;
+
+	private->startptr = dataStart;
+	private->endptr = walEnd;
+	private->endptr_reached = false;
+	private->timeline = tli;
+
+	if (walEnd <= xlogreader->EndRecPtr)
+	{
+		elog(DEBUG3, "wal [%X/%X,%X/%X) is ready for read. xlogreader->EndRecPtr = %X/%X", 
+									LSN_FORMAT_ARGS(dataStart), 
+									LSN_FORMAT_ARGS(walEnd),
+									LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+		return true;
+	}
+
+	if (first_read_wal)
+	{
+		int i = 0;
+		for (; i < retry; )
+		{
+			record = XLogFindNextRecord(xlogreader, private->startptr);
+			if (record == InvalidXLogRecPtr)
+			{
+				elog(DEBUG3, "wait %d ms for wal %X/%X first read at replica. xlogreader->EndRecPtr = %X/%X", (i + 1), 
+							LSN_FORMAT_ARGS(dataStart),
+							LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+				i++;
+				pg_usleep(100000L);  // sleep 100 ms
+			}
+			else
+			{
+				elog(DEBUG3, "first read wal record %X/%X, xlogreader->currRecPtr = %X/%X,  xlogreader->NextRecPtr = %X/%X", 
+							LSN_FORMAT_ARGS(record), 
+							LSN_FORMAT_ARGS(xlogreader->currRecPtr), 
+							LSN_FORMAT_ARGS(xlogreader->NextRecPtr));
+
+				first_read_wal = false;
+				if (walEnd <= xlogreader->EndRecPtr)
+				{
+					elog(DEBUG3, "wal [%X/%X,%X/%X) is ready for read. xlogreader->EndRecPtr = %X/%X", 
+									LSN_FORMAT_ARGS(dataStart), 
+									LSN_FORMAT_ARGS(walEnd),
+									LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+					return true;
+				}
+
+				break;
+			}
+		}
+
+		if ( retry == i)
+			elog(DEBUG3, "first wal %X/%X is not ready to read.", LSN_FORMAT_ARGS(dataStart));
+	}
+
+	for (int i = 0; i < retry;)
+	{
+		record = XLogReadRecord(xlogreader, &errormsg);
+		if (walEnd <= xlogreader->EndRecPtr)
+		{
+			elog(DEBUG3, "wal [%X/%X,%X/%X) is ready for read.", LSN_FORMAT_ARGS(dataStart), LSN_FORMAT_ARGS(walEnd));
+			return true;
+		}
+		else if (record == InvalidXLogRecPtr)
+		{
+			elog(DEBUG3, "wait wal %d ms to read at replica. xlogreader->EndRecPtr = %X/%X", (i + 1), LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+			i++;
+			pg_usleep(100000L);		/* sleep 1000ms */
+			continue;
+		}
+
+		i = 0;
+		elog(DEBUG3, "read wal record %X/%X, xlogreader->currRecPtr = %X/%X,  xlogreader->NextRecPtr = %X/%X", 
+						LSN_FORMAT_ARGS(record), 
+						LSN_FORMAT_ARGS(xlogreader->currRecPtr),
+						LSN_FORMAT_ARGS(xlogreader->NextRecPtr));
+	}
+
+	elog(DEBUG3, "wal [%X/%X,%X/%X) is not ready for read. xlogreader->EndRecPtr = %X/%X", 
+				LSN_FORMAT_ARGS(dataStart), LSN_FORMAT_ARGS(walEnd), 
+				LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+
+	return ready;
 }

@@ -2742,6 +2742,7 @@ XLogSendPhysical(void)
 	Size		nbytes;
 	XLogSegNo	segno;
 	WALReadError errinfo;
+	TimestampTz sendTime;
 
 	/* If requested switch the WAL sender to the stopping state. */
 	if (got_STOPPING)
@@ -3004,13 +3005,17 @@ retry:
 	 * Fill the send timestamp last, so that it is taken as late as possible.
 	 */
 	resetStringInfo(&tmpbuf);
-	pq_sendint64(&tmpbuf, GetCurrentTimestamp());
+	sendTime = GetCurrentTimestamp();
+	pq_sendint64(&tmpbuf, sendTime);
 	memcpy(&output_message.data[1 + sizeof(int64) + sizeof(int64)],
 		   tmpbuf.data, sizeof(int64));
 
 	pq_putmessage_noblock('d', output_message.data, output_message.len);
 
 	sentPtr = endptr;
+
+	elog(DEBUG3, "walsender send wal meta: [%X/%X,%X/%X), sendtime: %d", 
+				LSN_FORMAT_ARGS(startptr), LSN_FORMAT_ARGS(endptr), sendTime);
 
 	/* Update shared memory status */
 	{
