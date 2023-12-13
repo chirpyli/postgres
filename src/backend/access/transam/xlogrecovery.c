@@ -3549,6 +3549,7 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					 */
 					Assert(StandbyMode);
 
+					elog(DEBUG3, "shut down walreceiver because of failure while streaming.");
 					/*
 					 * Before we leave XLOG_FROM_STREAM state, make sure that
 					 * walreceiver is not active, so that it won't overwrite
@@ -3820,6 +3821,10 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 							return XLREAD_SUCCESS;
 						}
 						break;
+					}
+					else 
+					{
+						elog(DEBUG3, "recptr=%X/%X > flush=%X/%X , wait wal.", LSN_FORMAT_ARGS(RecPtr), LSN_FORMAT_ARGS(flushedUpto));
 					}
 
 					/* In nonblocking mode, return rather than sleeping. */

@@ -133,10 +133,12 @@ static void InitXLogReader();
 static void WALRecvOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo, TimeLineID *tli_p);
 static int WALRecvReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 							XLogRecPtr targetPtr, char *readBuff);
+static void XLogWalWaitReady(TimeLineID tli);
 static bool XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sendTime, TimeLineID tli);
 // todo: 释放资源待定
 static XLogReaderState *xlogreader = NULL;
 static XLogRecvPrivate *private = NULL;
+static XLogRecPtr last_startptr = InvalidXLogRecPtr;
 
 /* Prototypes for private functions */
 static void WalRcvFetchTimeLineHistoryFiles(TimeLineID first, TimeLineID last);
@@ -506,6 +508,7 @@ WalReceiverMain(void)
 					/* Let the primary know that we received some data. */
 					XLogWalRcvSendReply(false, false);
 
+					XLogWalWaitReady(startpointTLI);
 					/*
 					 * If we've written some records, flush them to disk and
 					 * let the startup process and primary server know about
@@ -865,9 +868,17 @@ XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len, TimeLineID tli)
 				ProcessWalSndrMessage(walEnd, sendTime);
 
 #ifndef CLOUDDB
-				LogstreamResult.Write = walEnd;
-				pg_atomic_write_u64(&WalRcv->writtenUpto, LogstreamResult.Write);
-				XLogWalWaitReadyforRead(dataStart, walEnd, sendTime, tli);
+				if (LogstreamResult.Write < walEnd)
+				{
+					LogstreamResult.Write = walEnd;
+					pg_atomic_write_u64(&WalRcv->writtenUpto, LogstreamResult.Write);
+				}
+			
+				if (last_startptr < dataStart)
+					last_startptr = dataStart;
+	
+				elog(DEBUG3, "replica wait wal[%X/%X,%X/%X).", LSN_FORMAT_ARGS(dataStart), LSN_FORMAT_ARGS(walEnd));
+				// XLogWalWaitReadyforRead(dataStart, walEnd, sendTime, tli);
 
 #else 
 				buf += hdrlen;
@@ -1572,9 +1583,9 @@ WALRecvReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 			count = private->endptr - targetPagePtr;
 		else
 		{
-			// private->endptr_reached = true;
-			// return -1;
-			count = reqLen;
+			private->endptr_reached = true;
+			return -1;
+			// count = reqLen;
 		}
 	}
 
@@ -1602,12 +1613,62 @@ WALRecvReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 
 static bool first_read_wal = true;
 
+static void
+XLogWalWaitReady(TimeLineID tli)
+{
+	XLogRecPtr endptr = LogstreamResult.Write;
+	XLogRecPtr record = InvalidXLogRecPtr;
+	XLogRecPtr replyptr = GetXLogReplayRecPtr(NULL);
+	char	   *errormsg;
+	private->endptr = endptr;
+	private->endptr_reached = false;
+	private->startptr = last_startptr;
+	private->timeline = tli;
+
+	if (replyptr >= endptr)
+	{
+		elog(DEBUG3, "replyptr >= endptr, return. %X/%X >= %X/%X", LSN_FORMAT_ARGS(replyptr), LSN_FORMAT_ARGS(endptr));
+		return;
+	}
+
+retry:
+	record = XLogFindNextRecord(xlogreader, last_startptr);
+	if (private->endptr_reached)
+	{
+		elog(DEBUG3, "%X/%X endptr reached, return.", LSN_FORMAT_ARGS(endptr));
+		return;
+	}
+
+	if (record == InvalidXLogRecPtr)
+	{
+		elog(DEBUG3, "wait wal[%X/%X,%X/%X), xlogreader->EndRecPtr = %X/%X", LSN_FORMAT_ARGS(last_startptr), LSN_FORMAT_ARGS(endptr), LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+		pg_usleep(100000L); 	// sleep 100ms
+		goto retry;
+	}
+
+	for (;;)
+	{
+		record = XLogReadRecord(xlogreader, &errormsg);
+		if (endptr <= xlogreader->EndRecPtr || private->endptr_reached)
+		{
+			elog(DEBUG3, "wal[%X/%X,%X/%X) is ready for read.", LSN_FORMAT_ARGS(last_startptr), LSN_FORMAT_ARGS(endptr));
+			return;
+		}
+		else if (record == InvalidXLogRecPtr)
+		{
+			elog(DEBUG3, "wait wal %d ms to read at replica. xlogreader->EndRecPtr = %X/%X", 100, LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+			pg_usleep(100000L);		/* sleep 100ms */
+			continue;
+		}
+	}
+}
+
 static bool
 XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sendTime, TimeLineID tli)
 {
 	bool ready = false;
 	const int retry = 600;
-	elog(DEBUG3, "replica wait wal [%X/%X,%X/%X).", LSN_FORMAT_ARGS(dataStart), LSN_FORMAT_ARGS(walEnd));
+	elog(DEBUG3, "replica wait wal[%X/%X,%X/%X).", LSN_FORMAT_ARGS(dataStart), LSN_FORMAT_ARGS(walEnd));
 	
 	XLogRecPtr record = InvalidXLogRecPtr;
 	char	   *errormsg;
@@ -1617,15 +1678,6 @@ XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sen
 	private->endptr_reached = false;
 	private->timeline = tli;
 
-	if (walEnd <= xlogreader->EndRecPtr)
-	{
-		elog(DEBUG3, "wal [%X/%X,%X/%X) is ready for read. xlogreader->EndRecPtr = %X/%X", 
-									LSN_FORMAT_ARGS(dataStart), 
-									LSN_FORMAT_ARGS(walEnd),
-									LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
-		return true;
-	}
-
 	if (first_read_wal)
 	{
 		int i = 0;
@@ -1634,7 +1686,7 @@ XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sen
 			record = XLogFindNextRecord(xlogreader, private->startptr);
 			if (record == InvalidXLogRecPtr)
 			{
-				elog(DEBUG3, "wait %d ms for wal %X/%X first read at replica. xlogreader->EndRecPtr = %X/%X", (i + 1), 
+				elog(DEBUG3, "wait %d ms for wal %X/%X first read at replica. xlogreader->EndRecPtr = %X/%X", (i + 1)*100, 
 							LSN_FORMAT_ARGS(dataStart),
 							LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
 				i++;
@@ -1665,6 +1717,15 @@ XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sen
 			elog(DEBUG3, "first wal %X/%X is not ready to read.", LSN_FORMAT_ARGS(dataStart));
 	}
 
+	if (walEnd <= xlogreader->EndRecPtr)
+	{
+		elog(DEBUG3, "wal[%X/%X,%X/%X) ready for read, xlogreader->EndRecPtr = %X/%X", 
+									LSN_FORMAT_ARGS(dataStart), 
+									LSN_FORMAT_ARGS(walEnd),
+									LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+		return true;
+	}
+
 	for (int i = 0; i < retry;)
 	{
 		record = XLogReadRecord(xlogreader, &errormsg);
@@ -1675,14 +1736,14 @@ XLogWalWaitReadyforRead(XLogRecPtr dataStart, XLogRecPtr walEnd, TimestampTz sen
 		}
 		else if (record == InvalidXLogRecPtr)
 		{
-			elog(DEBUG3, "wait wal %d ms to read at replica. xlogreader->EndRecPtr = %X/%X", (i + 1), LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
+			elog(DEBUG3, "wait wal %d ms to read at replica. xlogreader->EndRecPtr = %X/%X", (i + 1)*100, LSN_FORMAT_ARGS(xlogreader->EndRecPtr));
 			i++;
-			pg_usleep(100000L);		/* sleep 1000ms */
+			pg_usleep(100000L);		/* sleep 100ms */
 			continue;
 		}
 
 		i = 0;
-		elog(DEBUG3, "read wal record %X/%X, xlogreader->currRecPtr = %X/%X,  xlogreader->NextRecPtr = %X/%X", 
+		elog(DEBUG4, "read wal record %X/%X, xlogreader->currRecPtr = %X/%X,  xlogreader->NextRecPtr = %X/%X", 
 						LSN_FORMAT_ARGS(record), 
 						LSN_FORMAT_ARGS(xlogreader->currRecPtr),
 						LSN_FORMAT_ARGS(xlogreader->NextRecPtr));

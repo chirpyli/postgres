@@ -37,6 +37,8 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "utils/memutils.h"
+#include "replication/walreceiver.h"
+#include "access/xlogrecovery.h"
 #else
 #include "common/logging.h"
 #endif
@@ -1106,6 +1108,15 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 							  "invalid record length at %X/%X: wanted %u, got %u",
 							  LSN_FORMAT_ARGS(RecPtr),
 							  (uint32) SizeOfXLogRecord, record->xl_tot_len);
+#ifndef FRONTEND
+		XLogRecPtr flush = GetWalRcvFlushRecPtr(NULL, NULL);
+		XLogRecPtr replay = GetCurrentReplayRecPtr(NULL);
+		elog(DEBUG3, "fail at %X/%X, xlogreader->EndRecPtr=%X/%X, flush=%X/%X, replay=%X/%X",
+					LSN_FORMAT_ARGS(RecPtr), 
+					LSN_FORMAT_ARGS(state->EndRecPtr),
+					LSN_FORMAT_ARGS(flush),
+					LSN_FORMAT_ARGS(replay));
+#endif
 		return false;
 	}
 	if (!RmgrIdIsValid(record->xl_rmid))
