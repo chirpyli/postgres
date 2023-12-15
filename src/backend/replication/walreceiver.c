@@ -1013,6 +1013,9 @@ XLogWalRcvFlush(bool dying, TimeLineID tli)
 		WalRcvData *walrcv = WalRcv;
 
 		// issue_xlog_fsync(recvFile, recvSegNo, tli);
+		elog(DEBUG3, "update walrcv->flushedUpto=%X/%X -> %X/%X, wakeup recovery.", 
+					LSN_FORMAT_ARGS(LogstreamResult.Flush), 
+					LSN_FORMAT_ARGS(LogstreamResult.Write));
 
 		LogstreamResult.Flush = LogstreamResult.Write;
 
@@ -1294,9 +1297,6 @@ ProcessWalSndrMessage(XLogRecPtr walEnd, TimestampTz sendTime)
 	walrcv->latestWalEnd = walEnd;
 	walrcv->lastMsgSendTime = sendTime;
 	walrcv->lastMsgReceiptTime = lastMsgReceiptTime;
-
-	walrcv->flushedUpto = walEnd;
-
 	SpinLockRelease(&walrcv->mutex);
 
 	if (message_level_is_interesting(DEBUG2))
@@ -1550,7 +1550,7 @@ WALRecvOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo, TimeLineID *tli_
 			elog(DEBUG3, "open wal segment \"%s\" success.", path);
 			return;
 		}
-		if (errno == ENOENT)
+		// if (errno == ENOENT)
 		{
 			int save_errno = errno;
 			/* File not there yet, try again */
@@ -1560,8 +1560,9 @@ WALRecvOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo, TimeLineID *tli_
 			errno = save_errno;
 			continue;
 		}
+		
 		/* Any other error, fall through and fail */
-		break;
+		// break;
 	}
 
 	elog(ERROR, "could not find file \"%s\": %m", path);

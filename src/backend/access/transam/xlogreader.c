@@ -1111,7 +1111,7 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 #ifndef FRONTEND
 		XLogRecPtr flush = GetWalRcvFlushRecPtr(NULL, NULL);
 		XLogRecPtr replay = GetCurrentReplayRecPtr(NULL);
-		elog(DEBUG3, "fail at %X/%X, xlogreader->EndRecPtr=%X/%X, flush=%X/%X, replay=%X/%X",
+		elog(DEBUG3, "fail at %X/%X, xlogreader->EndRecPtr=%X/%X, walrcv->flushedUpto=%X/%X, replay=%X/%X",
 					LSN_FORMAT_ARGS(RecPtr), 
 					LSN_FORMAT_ARGS(state->EndRecPtr),
 					LSN_FORMAT_ARGS(flush),

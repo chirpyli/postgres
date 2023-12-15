@@ -3548,27 +3548,26 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					 * standby mode.
 					 */
 					Assert(StandbyMode);
-
-					elog(DEBUG3, "shut down walreceiver because of failure while streaming.");
+					elog(DEBUG3, "do not shut down walreceiver because of failure while streaming.");
 					/*
 					 * Before we leave XLOG_FROM_STREAM state, make sure that
 					 * walreceiver is not active, so that it won't overwrite
 					 * WAL that we restore from archive.
 					 */
-					XLogShutdownWalRcv();
+					// XLogShutdownWalRcv();
 
 					/*
 					 * Before we sleep, re-scan for possible new timelines if
 					 * we were requested to recover to the latest timeline.
 					 */
-					if (recoveryTargetTimeLineGoal == RECOVERY_TARGET_TIMELINE_LATEST)
-					{
-						if (rescanLatestTimeLine(replayTLI, replayLSN))
-						{
-							currentSource = XLOG_FROM_ARCHIVE;
-							break;
-						}
-					}
+					// if (recoveryTargetTimeLineGoal == RECOVERY_TARGET_TIMELINE_LATEST)
+					// {
+					// 	if (rescanLatestTimeLine(replayTLI, replayLSN))
+					// 	{
+					// 		currentSource = XLOG_FROM_ARCHIVE;
+					// 		break;
+					// 	}
+					// }
 
 					/*
 					 * XLOG_FROM_STREAM is the last state in our state
@@ -3605,7 +3604,8 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						HandleStartupProcInterrupts();
 					}
 					last_fail_time = now;
-					currentSource = XLOG_FROM_ARCHIVE;
+					// currentSource = XLOG_FROM_ARCHIVE;
+					currentSource = XLOG_FROM_STREAM;
 					break;
 
 				default:
