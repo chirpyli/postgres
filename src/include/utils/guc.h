@@ -292,6 +292,9 @@ extern PGDLLIMPORT int tcp_user_timeout;
 extern PGDLLIMPORT bool trace_sort;
 #endif
 
+extern int     database_mode;
+extern PGDLLIMPORT int	compatible_db;
+
 /*
  * Functions exported by guc.c
  */

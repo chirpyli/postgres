@@ -205,7 +205,6 @@ static void log_disconnections(int code, Datum arg);
 static void enable_statement_timeout(void);
 static void disable_statement_timeout(void);
 
-
 /* ----------------------------------------------------------------
  *		routines to obtain user input
  * ----------------------------------------------------------------
@@ -5068,3 +5067,4 @@ disable_statement_timeout(void)
 	if (get_timeout_active(STATEMENT_TIMEOUT))
 		disable_timeout(STATEMENT_TIMEOUT, false);
 }
+

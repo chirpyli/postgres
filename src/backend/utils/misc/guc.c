@@ -114,6 +114,7 @@
 #include "utils/inval.h"
 #include "utils/varlena.h"
 #include "utils/xml.h"
+#include "utils/sql_compatible.h"
 
 #ifndef PG_KRB_SRVTAB
 #define PG_KRB_SRVTAB ""
@@ -246,6 +247,12 @@ static bool check_default_with_oids(bool *newval, void **extra, GucSource source
 /* Private functions in guc-file.l that need to be called from guc.c */
 static ConfigVariable *ProcessConfigFileInternal(GucContext context,
 												 bool applySettings, int elevel);
+
+
+#define EXT_GUC_FUNC_DECLARE
+#include "ext_guc.c"
+#undef EXT_GUC_FUNC_DECLARE
+
 
 /*
  * Track whether there were any deferred checks for custom resource managers
@@ -596,6 +603,12 @@ static const struct config_enum_entry wal_compression_options[] = {
 	{NULL, 0, false}
 };
 
+
+#define EXT_GUC_VAR_STRUCT
+#include "ext_guc.c"
+#undef EXT_GUC_VAR_STRUCT
+
+
 /*
  * Options for enum values stored in other modules
  */
@@ -679,6 +692,12 @@ int			ssl_renegotiation_limit;
  */
 int			huge_pages;
 int			huge_page_size;
+
+
+#define EXT_GUC_VAR_DEFINE
+#include "ext_guc.c"
+#undef EXT_GUC_VAR_DEFINE
+
 
 /*
  * These variables are all dummies that don't do anything, except in some
@@ -5109,6 +5128,10 @@ static struct config_enum ConfigureNamesEnum[] =
 		NULL, NULL, NULL
 	},
 
+	#define EXT_GUC_ENUM_PARAMS
+	#include "ext_guc.c"
+	#undef EXT_GUC_ENUM_PARAMS
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, 0, NULL, NULL, NULL, NULL
@@ -5172,6 +5195,10 @@ static bool validate_option_array_item(const char *name, const char *value,
 static void write_auto_conf_file(int fd, const char *filename, ConfigVariable *head_p);
 static void replace_auto_config_value(ConfigVariable **head_p, ConfigVariable **tail_p,
 									  const char *name, const char *value);
+
+#define EXT_GUC_FUNC_DEFINE
+#include "ext_guc.c"
+#undef EXT_GUC_FUNC_DEFINE
 
 
 /*
