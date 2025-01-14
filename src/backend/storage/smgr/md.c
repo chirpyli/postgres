@@ -691,6 +691,74 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
+ *	mdbulkread() -- Read bulk of blocks from a relation.
+ *
+ *  Caller must ensure that the blockcount does not exceed the length of the relation file.
+ */
+void
+mdbulkread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
+	       char *buffer, int blockCount)
+{
+	off_t		seekpos;
+	int			nbytes;
+	MdfdVec    *v;
+	int         amount = blockCount * BLCKSZ;
+
+	TRACE_POSTGRESQL_SMGR_MD_READ_START(forknum, blocknum,
+										reln->smgr_rnode.node.spcNode,
+										reln->smgr_rnode.node.dbNode,
+										reln->smgr_rnode.node.relNode,
+										reln->smgr_rnode.backend);
+
+	v = _mdfd_getseg(reln, forknum, blocknum, false, EXTENSION_FAIL);
+
+	seekpos = (off_t) BLCKSZ * (blocknum % ((BlockNumber) RELSEG_SIZE));
+
+	Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
+	Assert(seekpos + (off_t) amount <= (off_t) BLCKSZ * RELSEG_SIZE);
+
+	nbytes = FileRead(v->mdfd_vfd, buffer, amount, seekpos, WAIT_EVENT_DATA_FILE_READ);
+
+	TRACE_POSTGRESQL_SMGR_MD_READ_DONE(forknum, blocknum,
+									   reln->smgr_rnode.node.spcNode,
+									   reln->smgr_rnode.node.dbNode,
+									   reln->smgr_rnode.node.relNode,
+									   reln->smgr_rnode.backend,
+									   nbytes,
+									   amount);
+
+	if (nbytes != amount)
+	{
+		if (nbytes < 0)
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not read block %u in file \"%s\": %m",
+							blocknum, FilePathName(v->mdfd_vfd))));
+
+		/*
+		 * Short read: we are at or past EOF, or we read a partial block at
+		 * EOF.  Normally this is an error; upper levels should never try to
+		 * read a nonexistent block.  However, if zero_damaged_pages is ON or
+		 * we are InRecovery, we should instead return zeroes without
+		 * complaining.  This allows, for example, the case of trying to
+		 * update a block that was later truncated away.
+		 */
+		if (zero_damaged_pages || InRecovery)
+		{
+			/* only memset damaged pages to zero */
+			int damaged_pages_start_offset = nbytes - nbytes % BLCKSZ;
+			MemSet((char *) buffer + damaged_pages_start_offset, 0, amount - damaged_pages_start_offset);
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read block %u in file \"%s\": read only %d of %d bytes",
+							blocknum, FilePathName(v->mdfd_vfd),
+							nbytes, amount)));
+	}
+}
+
+/*
  *	mdwrite() -- Write the supplied block at the appropriate location.
  *
  *		This is to be used only for updating already-existing blocks of a

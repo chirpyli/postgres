@@ -66,6 +66,7 @@
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
+#include "storage/buf.h"
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -408,9 +409,38 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	 */
 	CHECK_FOR_INTERRUPTS();
 
-	/* read page using selected strategy */
-	scan->rs_cbuf = ReadBufferExtended(scan->rs_base.rs_rd, MAIN_FORKNUM, page,
-									   RBM_NORMAL, scan->rs_strategy);
+	/*
+	 * bulk read Now only support forward direction heap scan. 'page !=
+	 * scan->rs_startblock', skip bulk read for first page, it is optimization
+	 * for case that heap scan only needs to access the first page. Avoid
+	 * pre-reading unnecessary pages. For example, select *** limit 1.
+	 */
+	if (heap_bulk_read_size > 0 && ScanDirectionIsForward(scan->scan_direction) &&
+		page != scan->rs_startblock)
+	{
+		BlockNumber max_block_count = scan->rs_nblocks - page;
+		if (scan->rs_strategy != NULL)
+		{
+			int ring_size = GetBufferAccessStrategyRingSize(scan->rs_strategy);
+			max_block_count = Min(max_block_count, ring_size);
+		}
+		
+		ereport(DEBUG3, 
+			   		   (errmsg("heapgetpage trigger: heap bulk read, page:%d, max_block_count:%d", page, max_block_count)));
+		
+		scan->rs_cbuf = BulkReadBufferExtended(scan->rs_base.rs_rd, MAIN_FORKNUM, page,
+							   				   RBM_NORMAL, scan->rs_strategy, 
+											   max_block_count);
+	}
+	else
+	{
+		/* read page using selected strategy */
+		scan->rs_cbuf = ReadBufferExtended(scan->rs_base.rs_rd, MAIN_FORKNUM, page,
+										   RBM_NORMAL, scan->rs_strategy);
+	}
+	// /* read page using selected strategy */
+	// scan->rs_cbuf = ReadBufferExtended(scan->rs_base.rs_rd, MAIN_FORKNUM, page,
+	// 								   RBM_NORMAL, scan->rs_strategy);
 	scan->rs_cblock = page;
 
 	if (!(scan->rs_base.rs_flags & SO_ALLOW_PAGEMODE))
@@ -530,6 +560,9 @@ heapgettup(HeapScanDesc scan,
 	OffsetNumber lineoff;
 	int			linesleft;
 	ItemId		lpp;
+
+	/* bulk read */
+	scan->scan_direction = dir;
 
 	/*
 	 * calculate next starting lineoff, given scan direction
@@ -868,6 +901,9 @@ heapgettup_pagemode(HeapScanDesc scan,
 	OffsetNumber lineoff;
 	int			linesleft;
 	ItemId		lpp;
+
+	/* bulk read */
+	scan->scan_direction = dir;
 
 	/*
 	 * calculate next starting lineindex, given scan direction

@@ -442,4 +442,8 @@ extern void assign_search_path(const char *newval, void *extra);
 extern bool check_wal_buffers(int *newval, void **extra, GucSource source);
 extern void assign_xlog_sync_method(int new_sync_method, void *extra);
 
+
+#define HEAP_MAX_BULK_IO_SIZE 64
+extern int heap_bulk_read_size;
+
 #endif							/* GUC_H */

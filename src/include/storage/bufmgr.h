@@ -84,6 +84,10 @@ extern PGDLLIMPORT int NLocBuffer;
 extern PGDLLIMPORT Block *LocalBufferBlockPointers;
 extern PGDLLIMPORT int32 *LocalRefCount;
 
+/* bulk read */
+extern bool heap_bulk_io_is_in_progress;
+extern int heap_bulk_io_in_progress_count;
+
 /* upper limit for effective_io_concurrency */
 #define MAX_IO_CONCURRENCY 1000
 
@@ -182,6 +186,10 @@ extern Buffer ReadBuffer(Relation reln, BlockNumber blockNum);
 extern Buffer ReadBufferExtended(Relation reln, ForkNumber forkNum,
 								 BlockNumber blockNum, ReadBufferMode mode,
 								 BufferAccessStrategy strategy);
+extern Buffer BulkReadBufferExtended(Relation reln, ForkNumber forkNum, BlockNumber blockNum,
+				       ReadBufferMode mode, BufferAccessStrategy strategy,
+				       BlockNumber maxBlockCount);
+
 extern Buffer ReadBufferWithoutRelcache(RelFileNode rnode,
 										ForkNumber forkNum, BlockNumber blockNum,
 										ReadBufferMode mode, BufferAccessStrategy strategy);
@@ -245,7 +253,7 @@ extern void TestForOldSnapshot_impl(Snapshot snapshot, Relation relation);
 /* in freelist.c */
 extern BufferAccessStrategy GetAccessStrategy(BufferAccessStrategyType btype);
 extern void FreeAccessStrategy(BufferAccessStrategy strategy);
-
+extern int GetBufferAccessStrategyRingSize(BufferAccessStrategy strategy);
 
 /* inline functions */
 

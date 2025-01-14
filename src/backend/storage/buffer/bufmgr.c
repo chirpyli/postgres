@@ -54,6 +54,8 @@
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
 #include "utils/timestamp.h"
+#include "utils/guc.h"
+#include "utils/memutils.h"
 
 
 /* Note: these two macros only work on shared buffers, not local ones! */
@@ -205,6 +207,17 @@ static PrivateRefCountEntry *NewPrivateRefCountEntry(Buffer buffer);
 static PrivateRefCountEntry *GetPrivateRefCountEntry(Buffer buffer, bool do_move);
 static inline int32 GetPrivateRefCount(Buffer buffer);
 static void ForgetPrivateRefCountEntry(PrivateRefCountEntry *ref);
+
+/* for bulk io */
+static Buffer Bulk_ReadBuffer_common(Relation reln, char relpersistence, ForkNumber forkNum,
+				  	   				 BlockNumber firstBlockNum, ReadBufferMode mode,
+				  	   				 BufferAccessStrategy strategy, bool *hit,
+				  	   				 BlockNumber maxBlockCount);
+
+bool heap_bulk_io_is_in_progress = false; 
+int	heap_bulk_io_in_progress_count = 0;
+BufferDesc **heap_bulk_io_in_progress_buf = NULL;
+static bool *heap_bulk_io_is_for_input = NULL;
 
 /*
  * Ensure that the PrivateRefCountArray has sufficient space to store one more
@@ -777,6 +790,40 @@ ReadBufferExtended(Relation reln, ForkNumber forkNum, BlockNumber blockNum,
 }
 
 
+Buffer
+BulkReadBufferExtended(Relation reln, ForkNumber forkNum, BlockNumber blockNum,
+				       ReadBufferMode mode, BufferAccessStrategy strategy,
+				       BlockNumber maxBlockCount)
+{
+	bool		hit;
+	Buffer		buf;
+
+	/* Open it at the smgr level if not already done */
+	RelationGetSmgr(reln);
+
+	/*
+	 * Reject attempts to read non-local temporary relations; we would be
+	 * likely to get wrong data since we have no visibility into the owning
+	 * session's local buffers.
+	 */
+	if (RELATION_IS_OTHER_TEMP(reln))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot access temporary tables of other sessions")));
+
+	/*
+	 * Read the buffer, and update pgstat counters to reflect a cache hit or
+	 * miss.
+	 */
+	pgstat_count_buffer_read(reln);
+	buf = Bulk_ReadBuffer_common(reln, reln->rd_rel->relpersistence,
+								 forkNum, blockNum, mode, strategy, &hit, maxBlockCount);
+	if (hit)
+		pgstat_count_buffer_hit(reln);
+	return buf;
+}
+
+
 /*
  * ReadBufferWithoutRelcache -- like ReadBufferExtended, but doesn't require
  *		a relcache entry for the relation.
@@ -1086,6 +1133,347 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 									  found);
 
 	return BufferDescriptorGetBuffer(bufHdr);
+}
+
+/*
+ * Bulk_ReadBuffer_common -- common logic for bulk read multi buffer one time.
+ *
+ * Try to read as many buffers as possible, up to maxBlockCount.
+ * If first block hits shared_buffers, return immediately.
+ * If first block doesn't hit shared_buffer,
+ * 		read buffers until up to maxBlockCount or
+ * 		up to first block which hit shared_buffer.
+ *
+ * Returns: the buffer number for the first block blockNum.
+ *		The returned buffer has been pinned.
+ *		Does not return on error --- elog's instead.
+ *
+ * *hit is set to true if the first blockNum was satisfied from shared buffer cache.
+ *
+ * Deadlock avoidance：Only ascending bulk read are allowed
+ * to avoid dead lock on io_in_progress_lock.
+ */
+static Buffer
+Bulk_ReadBuffer_common(Relation reln, char relpersistence, ForkNumber forkNum,
+				  	   BlockNumber firstBlockNum, ReadBufferMode mode,
+				  	   BufferAccessStrategy strategy, bool *hit,
+				  	   BlockNumber maxBlockCount)
+{
+	SMgrRelation smgr = reln->rd_smgr;
+	BufferDesc *bufHdr;
+	BufferDesc *first_buf_hdr;
+	Block		bufBlock;
+	bool		found;
+	bool		isLocalBuf = SmgrIsTemp(smgr);
+	char	   *buf_read;
+	int			index;
+	int 		actual_bulk_io_count;
+
+	pgstat_count_bulk_read_calls(reln);
+
+	maxBlockCount = Min(maxBlockCount, heap_bulk_read_size);
+
+	if (firstBlockNum == P_NEW || maxBlockCount <= 1 || mode != RBM_NORMAL)
+		return ReadBuffer_common(smgr, relpersistence, forkNum, firstBlockNum, mode, strategy, hit);
+
+	Assert(!heap_bulk_io_is_in_progress);
+	Assert(0 == heap_bulk_io_in_progress_count);
+
+	heap_bulk_io_is_in_progress = true;
+
+	ereport(DEBUG3, 
+				   errmsg("heap bulk read %d is in progress, first block %u, maxBlockCount %u", 
+				   		   reln->rd_id, firstBlockNum, maxBlockCount));
+
+	/*
+	 * Alloc buffer for heap_bulk_io_in_progress_buf and
+	 * heap_bulk_io_is_for_input on demand. If bulk read is called once,
+	 * there is a great possibility that bulk read will be called later.
+	 * heap_bulk_io_in_progress_buf and heap_bulk_io_is_for_input will be
+	 * not free until backend exit.
+	 */
+	if (NULL == heap_bulk_io_in_progress_buf)
+	{
+		Assert(NULL == heap_bulk_io_is_for_input);
+		heap_bulk_io_in_progress_buf = MemoryContextAlloc(TopMemoryContext,
+														HEAP_MAX_BULK_IO_SIZE * sizeof(heap_bulk_io_in_progress_buf[0]));
+		heap_bulk_io_is_for_input = MemoryContextAlloc(TopMemoryContext,
+														HEAP_MAX_BULK_IO_SIZE * sizeof(heap_bulk_io_is_for_input[0]));
+	}
+	else
+	{
+		Assert(NULL != heap_bulk_io_is_for_input);
+		heap_bulk_io_is_for_input = (bool *) palloc0(sizeof(bool) * maxBlockCount);
+	}
+
+	*hit = false;
+
+	/* Make sure we will have room to remember the buffer pin */
+	ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
+
+	TRACE_POSTGRESQL_BUFFER_READ_START(forkNum, firstBlockNum,
+									   smgr->smgr_rnode.node.spcNode,
+									   smgr->smgr_rnode.node.dbNode,
+									   smgr->smgr_rnode.node.relNode,
+									   smgr->smgr_rnode.backend,
+									   false);
+
+	if (isLocalBuf)
+	{
+		bufHdr = LocalBufferAlloc(smgr, forkNum, firstBlockNum, &found);
+		if (found)
+			pgBufferUsage.local_blks_hit++;
+		else
+			pgBufferUsage.local_blks_read++;
+	}
+	else
+	{
+		/*
+		 * lookup the buffer.
+		 * IO_IN_PROGRESS is set if the requested block is not currently in memory.
+		 * If not found, heap_bulk_io_in_progress_count will be added by 1.
+		 */
+		bufHdr = BufferAlloc(smgr, relpersistence, forkNum, firstBlockNum,
+							 strategy, &found);
+		if (found)
+			pgBufferUsage.shared_blks_hit++;
+		else
+			pgBufferUsage.shared_blks_read++;
+	}
+
+	/* At this point we do NOT hold any locks. */
+
+	/* if it was already in the buffer pool, we're done */
+	if (found)
+	{
+		/* Just need to update stats before we exit */
+		*hit = true;
+		VacuumPageHit++;
+
+		if (VacuumCostActive)
+			VacuumCostBalance += VacuumCostPageHit;
+
+		TRACE_POSTGRESQL_BUFFER_READ_DONE(forkNum, firstBlockNum,
+										  smgr->smgr_rnode.node.spcNode,
+										  smgr->smgr_rnode.node.dbNode,
+										  smgr->smgr_rnode.node.relNode,
+										  smgr->smgr_rnode.backend,
+										  false,
+										  found);
+
+		Assert(0 == heap_bulk_io_in_progress_count);
+
+		/* mark bulk io end */
+		heap_bulk_io_is_in_progress = false;
+
+		ereport(DEBUG3, 
+				   		errmsg("heap bulk read %d is not in progress, hit buffer success", reln->rd_id));  
+
+		return BufferDescriptorGetBuffer(bufHdr);
+	}
+
+	/*
+	 * if we have gotten to this point, we have allocated a buffer for the
+	 * page but its contents are not yet valid.  IO_IN_PROGRESS is set for it,
+	 * if it's a shared buffer.
+	 *
+	 * Note: if smgrextend fails, we will end up with a buffer that is
+	 * allocated but not marked BM_VALID.  P_NEW will still select the same
+	 * block number (because the relation didn't get any longer on disk) and
+	 * so future attempts to extend the relation will find the same buffer (if
+	 * it's not been recycled) but come right back here to try smgrextend
+	 * again.
+	 */
+	Assert(!(pg_atomic_read_u32(&bufHdr->state) & BM_VALID));	/* spinlock not needed */
+
+	Assert(1 == heap_bulk_io_in_progress_count);
+	Assert(bufHdr == heap_bulk_io_in_progress_buf[heap_bulk_io_in_progress_count - 1]);
+
+	first_buf_hdr = bufHdr;
+
+	/*
+	 * Make sure than single bulk_read will not read blocks across files.
+	 *
+	 * (BlockNumber) RELSEG_SIZE - (blockNum % (BlockNumber) RELSEG_SIZE)
+	 * always >= 1, and maxBlockCount always >= 1, so finaly maxBlockCount
+	 * always >= 1.
+	 */
+	maxBlockCount = Min(maxBlockCount, (BlockNumber) RELSEG_SIZE - (firstBlockNum % (BlockNumber) RELSEG_SIZE));
+	for (index = 1; index < maxBlockCount; index++)
+	{
+		BlockNumber blockNum = firstBlockNum + index;
+		
+		/* Make sure we will have room to remember the buffer pin */
+		ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
+
+		/*
+		 * lookup the buffer.  IO_IN_PROGRESS is set if the requested block is
+		 * not currently in memory.
+		 *
+		 * If not found, heap_bulk_io_in_progress_count will be added by 1 by
+		 * StartBufferIO().
+		 */
+		if (isLocalBuf)
+			bufHdr = LocalBufferAlloc(smgr, forkNum, blockNum, &found);
+		else
+			bufHdr = BufferAlloc(smgr, relpersistence, forkNum, blockNum,
+								 strategy, &found);
+
+		/*
+		 * For extra block, don't update pgBufferUsage.shared_blks_hit or
+		 * pgBufferUsage.shared_blks_read, also the blocks are not used now.
+		 */
+		/* bufHdr == NULL, all buffers are pinned. */
+		if (found || bufHdr == NULL)
+		{
+			/*
+			 * important: this buffer is the upper boundary, it should be
+			 * excluded.
+			 */
+			if (bufHdr != NULL)
+			{
+				ReleaseBuffer(BufferDescriptorGetBuffer(bufHdr));
+			}
+			break;
+		}
+		Assert(!(pg_atomic_read_u32(&bufHdr->state) & BM_VALID));	/* spinlock not needed */
+	}
+
+	Assert(index == heap_bulk_io_in_progress_count);
+
+	/*
+	 * Until now, as to {blockNum + [0, heap_bulk_io_in_progress_count)}
+	 * block buffers, IO_IN_PROGRESS flag is set and io_in_progress_lock is
+	 * holded.
+	 *
+	 * Other proc(include backend sql exec、start xlog replay) which read
+	 * there buffers, would be blocked on io_in_progress_lock.
+	 *
+	 * Deadlock avoidance：Only ascending bulk read are allowed to avoid dead
+	 * lock on io_in_progress_lock.
+	 */
+
+	/*
+	 * heap_bulk_io_in_progress_count will be reduced by TerminateBufferIO(),
+	 * For safety, its copy actual_bulk_io_count is used.
+	 */
+	actual_bulk_io_count = heap_bulk_io_in_progress_count;
+
+	/* for eliminating palloc and memcpy */
+	if (1 == actual_bulk_io_count)
+		buf_read = isLocalBuf ? (char *) LocalBufHdrGetBlock(first_buf_hdr) : (char *) BufHdrGetBlock(first_buf_hdr);
+	else
+		buf_read = (char *) palloc0fast(actual_bulk_io_count * BLCKSZ);
+
+	/*
+	 * Read in the page, unless the caller intends to overwrite it and just
+	 * wants us to allocate a buffer.
+	 */
+	{
+		instr_time	io_start,
+					io_time;
+
+		if (track_io_timing)
+			INSTR_TIME_SET_CURRENT(io_start);
+
+		/* Bulk-read function, read a batch of pages from disk */
+		smgrbulkread(smgr, forkNum, firstBlockNum, buf_read, actual_bulk_io_count);
+
+		pgstat_count_bulk_read_calls_io(reln);
+		pgstat_count_bulk_read_blocks_io(reln, actual_bulk_io_count);
+
+		if (track_io_timing)
+		{
+			INSTR_TIME_SET_CURRENT(io_time);
+			INSTR_TIME_SUBTRACT(io_time, io_start);
+			pgstat_count_buffer_read_time(INSTR_TIME_GET_MICROSEC(io_time));
+			INSTR_TIME_ADD(pgBufferUsage.blk_read_time, io_time);
+		}
+
+		/* get blocks from buf_read one by one */
+		for (index = 0; index < actual_bulk_io_count; index++)
+		{
+			BlockNumber blockNum = firstBlockNum + index;
+			bufBlock = (Block) (buf_read + index * BLCKSZ);
+
+			/* check for garbage data */
+			if (!PageIsVerifiedExtended((Page) bufBlock, blockNum, 
+										PIV_LOG_WARNING | PIV_REPORT_STAT))
+			{
+				if (zero_damaged_pages)
+				{
+					ereport(WARNING,
+							(errcode(ERRCODE_DATA_CORRUPTED),
+							 errmsg("invalid page in block %u of relation %s; zeroing out page",
+									blockNum,
+									relpath(smgr->smgr_rnode, forkNum))));
+					MemSet((char *) bufBlock, 0, BLCKSZ);
+				}
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_DATA_CORRUPTED),
+							 errmsg("invalid page in block %u of relation %s",
+									blockNum,
+									relpath(smgr->smgr_rnode, forkNum))));
+			}
+		}
+	}
+
+	/* file blocks in buffers one by one */
+	for (index = actual_bulk_io_count - 1; index >= 0; index--)
+	{
+		bufHdr = heap_bulk_io_in_progress_buf[index];
+		bufBlock = isLocalBuf ? LocalBufHdrGetBlock(bufHdr) : BufHdrGetBlock(bufHdr);
+
+		if (actual_bulk_io_count != 1)
+			memcpy((char*) bufBlock, buf_read + index * BLCKSZ, BLCKSZ);
+
+		/*
+		* After TerminateBufferIO, heap_bulk_io_in_progress_buf[index] can
+		* not be used any more.
+		*/
+		if (isLocalBuf)
+		{
+			/* Only need to adjust flags */
+			uint32 buf_state = pg_atomic_read_u32(&bufHdr->state);
+
+			buf_state |= BM_VALID;
+			pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
+			/* bulk io */
+			heap_bulk_io_in_progress_count--;
+		}
+		else
+		{
+			/* Set BM_VALID, terminate IO, and wake up any waiters */
+			TerminateBufferIO(bufHdr, false, BM_VALID);
+		}
+
+		/* important: buffers except firstBlockNum should release pin */
+		if (index != 0)
+			ReleaseBuffer(BufferDescriptorGetBuffer(bufHdr));
+
+		VacuumPageMiss++;
+		if (VacuumCostActive)
+			VacuumCostBalance += VacuumCostPageMiss;
+	}
+
+	TRACE_POSTGRESQL_BUFFER_READ_DONE(forkNum, firstBlockNum,
+									  smgr->smgr_rnode.node.spcNode,
+									  smgr->smgr_rnode.node.dbNode,
+									  smgr->smgr_rnode.node.relNode,
+									  smgr->smgr_rnode.backend,
+									  false,
+									  found);	
+
+	if (actual_bulk_io_count != 1)
+		pfree(buf_read);
+
+	Assert(0 == heap_bulk_io_in_progress_count);
+
+	/* mark heap bulk io end */
+	heap_bulk_io_is_in_progress = false;
+
+	return BufferDescriptorGetBuffer(first_buf_hdr);
 }
 
 /*
@@ -4444,8 +4832,26 @@ StartBufferIO(BufferDesc *buf, bool forInput)
 	buf_state |= BM_IO_IN_PROGRESS;
 	UnlockBufHdr(buf, buf_state);
 
-	InProgressBuf = buf;
-	IsForInput = forInput;
+	// InProgressBuf = buf;
+	// IsForInput = forInput;
+	if (heap_bulk_io_is_in_progress)
+	{
+		/* bulk io */
+		heap_bulk_io_in_progress_buf[heap_bulk_io_in_progress_count] = buf;
+
+		/*
+		 * bulk read io may be mixed with temporary write io, for flushing
+		 * dirty evicted page. So heap_bulk_io_is_for_input[] is required for
+		 * error recovery.
+		 */
+		heap_bulk_io_is_for_input[heap_bulk_io_in_progress_count] = forInput;
+		heap_bulk_io_in_progress_count++;
+	}
+	else
+	{
+		InProgressBuf = buf;
+		IsForInput = forInput;
+	}
 
 	return true;
 }
@@ -4471,7 +4877,10 @@ TerminateBufferIO(BufferDesc *buf, bool clear_dirty, uint32 set_flag_bits)
 {
 	uint32		buf_state;
 
-	Assert(buf == InProgressBuf);
+	Assert(buf == InProgressBuf || heap_bulk_io_is_in_progress);
+
+	Assert(!heap_bulk_io_is_in_progress || heap_bulk_io_in_progress_count > 0);
+	Assert(!heap_bulk_io_is_in_progress || buf == heap_bulk_io_in_progress_buf[heap_bulk_io_in_progress_count - 1]);
 
 	buf_state = LockBufHdr(buf);
 
@@ -4484,7 +4893,11 @@ TerminateBufferIO(BufferDesc *buf, bool clear_dirty, uint32 set_flag_bits)
 	buf_state |= set_flag_bits;
 	UnlockBufHdr(buf, buf_state);
 
-	InProgressBuf = NULL;
+	if (heap_bulk_io_is_in_progress)
+		heap_bulk_io_in_progress_count--;
+	else
+		InProgressBuf = NULL;
+	// InProgressBuf = NULL;
 
 	ConditionVariableBroadcast(BufferDescriptorGetIOCV(buf));
 }
@@ -4503,7 +4916,14 @@ AbortBufferIO(void)
 {
 	BufferDesc *buf = InProgressBuf;
 
-	if (buf)
+heap_bulk_read:
+	/*
+	 * heap pre-read deal with local buffer(buf->buf_id < 0) local buffer doesn't
+	 * need to release source, just decrease io_in_progress_count
+	 */
+	if (buf && buf->buf_id < 0)
+		heap_bulk_io_in_progress_count--;
+	else if (buf)
 	{
 		uint32		buf_state;
 
@@ -4537,6 +4957,23 @@ AbortBufferIO(void)
 			}
 		}
 		TerminateBufferIO(buf, false, BM_IO_ERROR);
+	}
+
+	/* bulk io recovery */
+	if (heap_bulk_io_is_in_progress)
+	{
+		if (heap_bulk_io_in_progress_count > 0)
+		{
+			buf = heap_bulk_io_in_progress_buf[heap_bulk_io_in_progress_count - 1];
+			IsForInput = heap_bulk_io_is_for_input[heap_bulk_io_in_progress_count - 1];
+
+			/*
+			 * In TerminateBufferIO(), heap_bulk_io_in_progress_count was
+			 * reduced by 1.
+			 */	
+			goto heap_bulk_read;
+		}
+		heap_bulk_io_is_in_progress = false;
 	}
 }
 

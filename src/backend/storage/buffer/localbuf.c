@@ -154,6 +154,11 @@ LocalBufferAlloc(SMgrRelation smgr, ForkNumber forkNum, BlockNumber blockNum,
 			*foundPtr = true;
 		else
 		{
+			if (heap_bulk_io_is_in_progress)
+			{
+				heap_bulk_io_in_progress_buf[heap_bulk_io_in_progress_count] = bufHdr;
+				heap_bulk_io_in_progress_count++;
+			}
 			/* Previous read attempt must have failed; try again */
 			*foundPtr = false;
 		}
@@ -275,6 +280,14 @@ LocalBufferAlloc(SMgrRelation smgr, ForkNumber forkNum, BlockNumber blockNum,
 	pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
 
 	*foundPtr = false;
+
+	/* bulk read. same as StartBufferIO */
+	if (heap_bulk_io_is_in_progress)
+	{
+		heap_bulk_io_in_progress_buf[heap_bulk_io_in_progress_count] = bufHdr;
+		heap_bulk_io_in_progress_count++;
+	}
+
 	return bufHdr;
 }
 

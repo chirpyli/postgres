@@ -130,6 +130,12 @@ typedef struct PgStat_TableCounts
 
 	PgStat_Counter t_blocks_fetched;
 	PgStat_Counter t_blocks_hit;
+
+	/* bulk read */
+	PgStat_Counter bulk_read_calls;
+	PgStat_Counter bulk_read_calls_io;
+	PgStat_Counter bulk_read_blocks_io;
+
 } PgStat_TableCounts;
 
 /* Possible targets for resetting cluster-wide shared values */
@@ -1055,6 +1061,23 @@ extern void pgstat_initstats(Relation rel);
 	(pgStatActiveTime += (n))
 #define pgstat_count_conn_txn_idle_time(n)							\
 	(pgStatTransactionIdleTime += (n))
+
+/* bulk read stats */
+#define pgstat_count_bulk_read_calls(rel)							\
+	do {															\
+		if ((rel)->pgstat_info != NULL)								\
+			(rel)->pgstat_info->t_counts.bulk_read_calls++;			\
+	} while (0)
+#define pgstat_count_bulk_read_calls_io(rel)						\
+	do {															\
+		if ((rel)->pgstat_info != NULL)								\
+			(rel)->pgstat_info->t_counts.bulk_read_calls_io++;		\
+	} while (0)
+#define pgstat_count_bulk_read_blocks_io(rel, n)					\
+	do {															\
+		if ((rel)->pgstat_info != NULL)								\
+			(rel)->pgstat_info->t_counts.bulk_read_blocks_io++;		\
+	} while (0)
 
 extern void pgstat_count_heap_insert(Relation rel, PgStat_Counter n);
 extern void pgstat_count_heap_update(Relation rel, bool hot);

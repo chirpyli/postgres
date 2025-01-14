@@ -342,4 +342,7 @@ extern void DropRelFileNodeLocalBuffers(RelFileNode rnode, ForkNumber forkNum,
 extern void DropRelFileNodeAllLocalBuffers(RelFileNode rnode);
 extern void AtEOXact_LocalBuffers(bool isCommit);
 
+/* bufmgr.c */
+extern BufferDesc **heap_bulk_io_in_progress_buf;
+
 #endif							/* BUFMGR_INTERNALS_H */

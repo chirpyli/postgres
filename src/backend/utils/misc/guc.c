@@ -626,6 +626,8 @@ int			ssl_renegotiation_limit;
 int			huge_pages;
 int			huge_page_size;
 
+int heap_bulk_read_size = 0;	// heap pre read size, 0 means no pre read
+
 /*
  * These variables are all dummies that don't do anything, except in some
  * cases provide the value for SHOW to display.  The real state is elsewhere
@@ -3552,6 +3554,17 @@ static struct config_int ConfigureNamesInt[] =
 		&client_connection_check_interval,
 		0, 0, INT_MAX,
 		check_client_connection_check_interval, NULL, NULL
+	},
+
+	{
+		{"heap_bulk_read_size", PGC_USERSET, BULK_READ_EXTEND,
+			gettext_noop("Sets size of bulk read, 0 (turning this feature off). heap_bulk_read_size= 16 means 128KB."),
+			NULL,
+			GUC_UNIT_BLOCKS
+		},
+		&heap_bulk_read_size,
+		16, 0, HEAP_MAX_BULK_IO_SIZE,
+		NULL, NULL, NULL
 	},
 
 	/* End-of-list marker */

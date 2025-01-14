@@ -54,6 +54,8 @@ typedef struct f_smgr
 								  BlockNumber blocknum);
 	void		(*smgr_read) (SMgrRelation reln, ForkNumber forknum,
 							  BlockNumber blocknum, char *buffer);
+	void		(*smgr_bulkread) (SMgrRelation reln, ForkNumber forknum,
+							  	  BlockNumber blocknum, char *buffer, int blockCount);
 	void		(*smgr_write) (SMgrRelation reln, ForkNumber forknum,
 							   BlockNumber blocknum, char *buffer, bool skipFsync);
 	void		(*smgr_writeback) (SMgrRelation reln, ForkNumber forknum,
@@ -77,6 +79,7 @@ static const f_smgr smgrsw[] = {
 		.smgr_extend = mdextend,
 		.smgr_prefetch = mdprefetch,
 		.smgr_read = mdread,
+		.smgr_bulkread = mdbulkread,
 		.smgr_write = mdwrite,
 		.smgr_writeback = mdwriteback,
 		.smgr_nblocks = mdnblocks,
@@ -502,6 +505,16 @@ smgrread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		 char *buffer)
 {
 	smgrsw[reln->smgr_which].smgr_read(reln, forknum, blocknum, buffer);
+}
+
+/*
+ * smgrbulkread() -- read a contiguous range of blocks from a relation.
+ */
+void
+smgrbulkread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
+		 char *buffer, int blockCount)
+{
+	smgrsw[reln->smgr_which].smgr_bulkread(reln, forknum, blocknum, buffer, blockCount);
 }
 
 /*

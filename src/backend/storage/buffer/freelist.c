@@ -702,3 +702,12 @@ StrategyRejectBuffer(BufferAccessStrategy strategy, BufferDesc *buf)
 
 	return true;
 }
+
+/*
+ * GetBufferAccessStrategyRingSize -- returns the size of the ring
+ */
+int 
+GetBufferAccessStrategyRingSize(BufferAccessStrategy strategy)
+{
+	return strategy->ring_size;
+}
