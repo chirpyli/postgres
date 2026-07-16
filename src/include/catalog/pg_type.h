@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * pg_type.h
- *	  definition of the "type" system catalog (pg_type)
+ *	  “type”系统目录(pg_type)的定义
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -10,8 +10,7 @@
  * src/include/catalog/pg_type.h
  *
  * NOTES
- *	  The Catalog.pm module reads this file and derives schema
- *	  information.
+ *	  Catalog.pm 模块读取本文件并推导出模式信息。
  *
  *-------------------------------------------------------------------------
  */
@@ -24,238 +23,224 @@
 #include "nodes/nodes.h"
 
 /* ----------------
- *		pg_type definition.  cpp turns this into
+ *		pg_type 定义。cpp 将此转换为
  *		typedef struct FormData_pg_type
  *
- *		Some of the values in a pg_type instance are copied into
- *		pg_attribute instances.  Some parts of Postgres use the pg_type copy,
- *		while others use the pg_attribute copy, so they must match.
- *		See struct FormData_pg_attribute for details.
+ *		pg_type 实例中的部分字段会被复制到
+ *		pg_attribute 实例中。Postgres 的某些部分使用 pg_type 的副本，
+ *		而另一些部分使用 pg_attribute 的副本，因此两者必须保持一致。
+ *		详见 struct FormData_pg_attribute。
  * ----------------
  */
 CATALOG(pg_type,1247,TypeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(71,TypeRelation_Rowtype_Id) BKI_SCHEMA_MACRO
 {
-	Oid			oid;			/* oid */
+	Oid			oid;			/* OID */
 
-	/* type name */
+	/* 类型名称 */
 	NameData	typname;
 
-	/* OID of namespace containing this type */
+	/* 包含此类型的命名空间的 OID */
 	Oid			typnamespace BKI_DEFAULT(pg_catalog) BKI_LOOKUP(pg_namespace);
 
-	/* type owner */
+	/* 类型所有者 */
 	Oid			typowner BKI_DEFAULT(POSTGRES) BKI_LOOKUP(pg_authid);
 
 	/*
-	 * For a fixed-size type, typlen is the number of bytes we use to
-	 * represent a value of this type, e.g. 4 for an int4.  But for a
-	 * variable-length type, typlen is negative.  We use -1 to indicate a
-	 * "varlena" type (one that has a length word), -2 to indicate a
-	 * null-terminated C string.
+	 * 对于定长类型，typlen 表示我们用多少字节来表示该类型的一个值，
+	 * 例如 int4 为 4。而对于变长类型，typlen 为负数。我们用 -1 表示
+	 * 一种“varlena”类型(带长度字)，用 -2 表示以空字符结尾的 C 字符串。
 	 */
 	int16		typlen BKI_ARRAY_DEFAULT(-1);
 
 	/*
-	 * typbyval determines whether internal Postgres routines pass a value of
-	 * this type by value or by reference.  typbyval had better be false if
-	 * the length is not 1, 2, or 4 (or 8 on 8-byte-Datum machines).
-	 * Variable-length types are always passed by reference. Note that
-	 * typbyval can be false even if the length would allow pass-by-value; for
-	 * example, type macaddr8 is pass-by-ref even when Datum is 8 bytes.
+	 * typbyval 决定 Postgres 内部例程是按值还是按引用传递该类型的值。
+	 * 若长度不是 1、2 或 4(或在 8 字节 Datum 机器上不是 8)，
+	 * typbyval 最好为 false。变长类型总是按引用传递。注意，
+	 * 即使长度允许按值传递，typbyval 仍可以为 false；
+	 * 例如 macaddr8 类型在 Datum 为 8 字节时仍然按引用传递。
 	 */
 	bool		typbyval BKI_ARRAY_DEFAULT(f);
 
 	/*
-	 * typtype is 'b' for a base type, 'c' for a composite type (e.g., a
-	 * table's rowtype), 'd' for a domain, 'e' for an enum type, 'p' for a
-	 * pseudo-type, or 'r' for a range type. (Use the TYPTYPE macros below.)
+	 * typtype 为 'b' 表示基类型，'c' 表示组合类型(如表行类型)，
+	 * 'd' 表示域，'e' 表示枚举类型，'p' 表示伪类型，
+	 * 或 'r' 表示范围类型。(使用下方的 TYPTYPE 宏。)
 	 *
-	 * If typtype is 'c', typrelid is the OID of the class' entry in pg_class.
+	 * 若 typtype 为 'c'，则 typrelid 是该类在 pg_class 中条目的 OID。
 	 */
 	char		typtype BKI_DEFAULT(b) BKI_ARRAY_DEFAULT(b);
 
 	/*
-	 * typcategory and typispreferred help the parser distinguish preferred
-	 * and non-preferred coercions.  The category can be any single ASCII
-	 * character (but not \0).  The categories used for built-in types are
-	 * identified by the TYPCATEGORY macros below.
+	 * typcategory 与 typispreferred 帮助解析器区分首选与非首选的类型
+	 * 强制转换。类别可以是任意单个 ASCII 字符(但不能是 \0)。
+	 * 内置类型所使用的类别由下方的 TYPCATEGORY 宏标识。
 	 */
 
-	/* arbitrary type classification */
+	/* 任意类型分类 */
 	char		typcategory BKI_ARRAY_DEFAULT(A);
 
-	/* is type "preferred" within its category? */
+	/* 该类型在其类别中是否“首选”？ */
 	bool		typispreferred BKI_DEFAULT(f) BKI_ARRAY_DEFAULT(f);
 
 	/*
-	 * If typisdefined is false, the entry is only a placeholder (forward
-	 * reference).  We know the type's name and owner, but not yet anything
-	 * else about it.
+	 * 若 typisdefined 为 false，则该条目仅是一个占位符(前向引用)。
+	 * 此时我们只知道该类型的名称和所有者，对其余信息尚一无所知。
 	 */
 	bool		typisdefined BKI_DEFAULT(t);
 
-	/* delimiter for arrays of this type */
+	/* 该类型数组的分隔符 */
 	char		typdelim BKI_DEFAULT(',');
 
-	/* associated pg_class OID if a composite type, else 0 */
+	/* 若是组合类型则为关联的 pg_class OID，否则为 0 */
 	Oid			typrelid BKI_DEFAULT(0) BKI_ARRAY_DEFAULT(0) BKI_LOOKUP_OPT(pg_class);
 
 	/*
-	 * Type-specific subscripting handler.  If typsubscript is 0, it means
-	 * that this type doesn't support subscripting.  Note that various parts
-	 * of the system deem types to be "true" array types only if their
-	 * typsubscript is array_subscript_handler.
+	 * 类型特定的下标处理函数。若 typsubscript 为 0，表示该类型不支持
+	 * 下标访问。注意，系统中多处仅当某类型的 typsubscript 为
+	 * array_subscript_handler 时才将其视为“真正的”数组类型。
 	 */
 	regproc		typsubscript BKI_DEFAULT(-) BKI_ARRAY_DEFAULT(array_subscript_handler) BKI_LOOKUP_OPT(pg_proc);
 
 	/*
-	 * If typelem is not 0 then it identifies another row in pg_type, defining
-	 * the type yielded by subscripting.  This should be 0 if typsubscript is
-	 * 0.  However, it can be 0 when typsubscript isn't 0, if the handler
-	 * doesn't need typelem to determine the subscripting result type.  Note
-	 * that a typelem dependency is considered to imply physical containment
-	 * of the element type in this type; so DDL changes on the element type
-	 * might be restricted by the presence of this type.
+	 * 若 typelem 非 0，则它指向 pg_type 中的另一行，定义下标访问
+	 * 所得的类型。若 typsubscript 为 0，则此处也应为 0。但若处理函数
+	 * 不需要 typelem 来确定下标结果类型，则即使 typsubscript 非 0，
+	 * typelem 也可以为 0。注意，typelem 依赖被视为隐含该元素类型
+	 * 在本类型中的物理包含；因此对该元素类型的 DDL 变更可能会受到
+	 * 本类型存在的限制。
 	 */
 	Oid			typelem BKI_DEFAULT(0) BKI_LOOKUP_OPT(pg_type);
 
 	/*
-	 * If there is a "true" array type having this type as element type,
-	 * typarray links to it.  Zero if no associated "true" array type.
+	 * 若存在以本类型为元素类型的“真正的”数组类型，typarray 指向它。
+	 * 若没有关联的“真正的”数组类型则为 0。
 	 */
 	Oid			typarray BKI_DEFAULT(0) BKI_ARRAY_DEFAULT(0) BKI_LOOKUP_OPT(pg_type);
 
 	/*
-	 * I/O conversion procedures for the datatype.
+	 * 该数据类型的 I/O 转换过程。
 	 */
 
-	/* text format (required) */
+	/* 文本格式(必需) */
 	regproc		typinput BKI_ARRAY_DEFAULT(array_in) BKI_LOOKUP(pg_proc);
 	regproc		typoutput BKI_ARRAY_DEFAULT(array_out) BKI_LOOKUP(pg_proc);
 
-	/* binary format (optional) */
+	/* 二进制格式(可选) */
 	regproc		typreceive BKI_ARRAY_DEFAULT(array_recv) BKI_LOOKUP_OPT(pg_proc);
 	regproc		typsend BKI_ARRAY_DEFAULT(array_send) BKI_LOOKUP_OPT(pg_proc);
 
 	/*
-	 * I/O functions for optional type modifiers.
+	 * 可选类型修饰符的 I/O 函数。
 	 */
 	regproc		typmodin BKI_DEFAULT(-) BKI_LOOKUP_OPT(pg_proc);
 	regproc		typmodout BKI_DEFAULT(-) BKI_LOOKUP_OPT(pg_proc);
 
 	/*
-	 * Custom ANALYZE procedure for the datatype (0 selects the default).
+	 * 用于该数据类型的自定义 ANALYZE 过程(0 表示选择默认过程)。
 	 */
 	regproc		typanalyze BKI_DEFAULT(-) BKI_ARRAY_DEFAULT(array_typanalyze) BKI_LOOKUP_OPT(pg_proc);
 
 	/* ----------------
-	 * typalign is the alignment required when storing a value of this
-	 * type.  It applies to storage on disk as well as most
-	 * representations of the value inside Postgres.  When multiple values
-	 * are stored consecutively, such as in the representation of a
-	 * complete row on disk, padding is inserted before a datum of this
-	 * type so that it begins on the specified boundary.  The alignment
-	 * reference is the beginning of the first datum in the sequence.
+	 * typalign 是存储该类型值时所需的对齐方式。它既适用于磁盘上的
+	 * 存储，也适用于 Postgres 内部该值的大多数表示形式。当多个值
+	 * 连续存储时(例如在磁盘上完整行的表示中)，会在本类型 datum 之前
+	 * 插入填充，使其从指定的边界开始。对齐的参考点是序列中第一个
+	 * datum 的起始位置。
 	 *
-	 * 'c' = CHAR alignment, ie no alignment needed.
-	 * 's' = SHORT alignment (2 bytes on most machines).
-	 * 'i' = INT alignment (4 bytes on most machines).
-	 * 'd' = DOUBLE alignment (8 bytes on many machines, but by no means all).
-	 * (Use the TYPALIGN macros below for these.)
+	 * 'c' = CHAR 对齐，即无需对齐。
+	 * 's' = SHORT 对齐(在大多数机器上为 2 字节)。
+	 * 'i' = INT 对齐(在大多数机器上为 4 字节)。
+	 * 'd' = DOUBLE 对齐(在许多机器上为 8 字节，但并非全部)。
+	 * (对这些值使用下方的 TYPALIGN 宏。)
 	 *
-	 * See include/access/tupmacs.h for the macros that compute these
-	 * alignment requirements.  Note also that we allow the nominal alignment
-	 * to be violated when storing "packed" varlenas; the TOAST mechanism
-	 * takes care of hiding that from most code.
+	 * 计算这些对齐需求的宏参见 include/access/tupmacs.h。另请注意，
+	 * 在存储“打包”的 varlena 时，我们允许名义对齐被打破；TOAST 机制
+	 * 负责向大多数代码隐藏这一点。
 	 *
-	 * NOTE: for types used in system tables, it is critical that the
-	 * size and alignment defined in pg_type agree with the way that the
-	 * compiler will lay out the field in a struct representing a table row.
+	 * 注意：对于系统表中使用的类型，pg_type 中定义的大小与对齐方式，
+	 * 必须与编译器在表示表行结构体中对该字段的布局方式保持一致。
 	 * ----------------
 	 */
 	char		typalign;
 
 	/* ----------------
-	 * typstorage tells if the type is prepared for toasting and what
-	 * the default strategy for attributes of this type should be.
+	 * typstorage 说明该类型是否做好了 toasting 准备，以及该类型属性
+	 * 的默认策略应该是什么。
 	 *
-	 * 'p' PLAIN	  type not prepared for toasting
-	 * 'e' EXTERNAL   external storage possible, don't try to compress
-	 * 'x' EXTENDED   try to compress and store external if required
-	 * 'm' MAIN		  like 'x' but try to keep in main tuple
-	 * (Use the TYPSTORAGE macros below for these.)
+	 * 'p' PLAIN	  未做 toasting 准备的类型
+	 * 'e' EXTERNAL   可外部存储，不做压缩尝试
+	 * 'x' EXTENDED   必要时尝试压缩并外部存储
+	 * 'm' MAIN		  与 'x' 类似，但尽量保留在主元组中
+	 * (对这些值使用下方的 TYPSTORAGE 宏。)
 	 *
-	 * Note that 'm' fields can also be moved out to secondary storage,
-	 * but only as a last resort ('e' and 'x' fields are moved first).
+	 * 注意，'m' 字段也可以被移出到二级存储，但仅作为最后手段
+	 * ('e' 和 'x' 字段会优先被移出)。
 	 * ----------------
 	 */
 	char		typstorage BKI_DEFAULT(p) BKI_ARRAY_DEFAULT(x);
 
 	/*
-	 * This flag represents a "NOT NULL" constraint against this datatype.
+	 * 该标志表示该数据类型上的“NOT NULL”约束。
 	 *
-	 * If true, the attnotnull column for a corresponding table column using
-	 * this datatype will always enforce the NOT NULL constraint.
+	 * 若为 true，则使用此数据类型的相应表列的 attnotnull 字段将始终
+	 * 强制执行 NOT NULL 约束。
 	 *
-	 * Used primarily for domain types.
+	 * 主要用于域类型。
 	 */
 	bool		typnotnull BKI_DEFAULT(f);
 
 	/*
-	 * Domains use typbasetype to show the base (or domain) type that the
-	 * domain is based on.  Zero if the type is not a domain.
+	 * 域使用 typbasetype 来指明其所基于的基类型(或域类型)。
+	 * 若该类型不是域，则为 0。
 	 */
 	Oid			typbasetype BKI_DEFAULT(0) BKI_LOOKUP_OPT(pg_type);
 
 	/*
-	 * Domains use typtypmod to record the typmod to be applied to their base
-	 * type (-1 if base type does not use a typmod).  -1 if this type is not a
-	 * domain.
+	 * 域使用 typtypmod 记录应用到其基类型的 typmod
+	 * (若基类型不使用 typmod 则为 -1)。若该类型不是域则为 -1。
 	 */
 	int32		typtypmod BKI_DEFAULT(-1);
 
 	/*
-	 * typndims is the declared number of dimensions for an array domain type
-	 * (i.e., typbasetype is an array type).  Otherwise zero.
+	 * typndims 是数组域类型(即 typbasetype 为数组类型)声明的维度数。
+	 * 否则为 0。
 	 */
 	int32		typndims BKI_DEFAULT(0);
 
 	/*
-	 * Collation: 0 if type cannot use collations, nonzero (typically
-	 * DEFAULT_COLLATION_OID) for collatable base types, possibly some other
-	 * OID for domains over collatable types
+	 * 排序规则：若该类型不能使用排序规则则为 0；对于可排序的基类型
+	 * 为非零(通常是 DEFAULT_COLLATION_OID)；对于建立在可排序类型之上的
+	 * 域，可能为其他某个 OID。
 	 */
 	Oid			typcollation BKI_DEFAULT(0) BKI_LOOKUP_OPT(pg_collation);
 
-#ifdef CATALOG_VARLEN			/* variable-length fields start here */
+#ifdef CATALOG_VARLEN			/* 变长字段自此开始 */
 
 	/*
-	 * If typdefaultbin is not NULL, it is the nodeToString representation of
-	 * a default expression for the type.  Currently this is only used for
-	 * domains.
+	 * 若 typdefaultbin 非 NULL，它是该类型默认表达式的 nodeToString
+	 * 表示。目前仅用于域。
 	 */
 	pg_node_tree typdefaultbin BKI_DEFAULT(_null_) BKI_ARRAY_DEFAULT(_null_);
 
 	/*
-	 * typdefault is NULL if the type has no associated default value. If
-	 * typdefaultbin is not NULL, typdefault must contain a human-readable
-	 * version of the default expression represented by typdefaultbin. If
-	 * typdefaultbin is NULL and typdefault is not, then typdefault is the
-	 * external representation of the type's default value, which may be fed
-	 * to the type's input converter to produce a constant.
+	 * 若类型没有关联的默认值，则 typdefault 为 NULL。若 typdefaultbin
+	 * 非 NULL，则 typdefault 必须包含由 typdefaultbin 所表示默认表达式
+	 * 的可读版本。若 typdefaultbin 为 NULL 而 typdefault 非 NULL，则
+	 * typdefault 是该类型默认值的外部表示，可喂给该类型的输入转换器
+	 * 以生成一个常量。
 	 */
 	text		typdefault BKI_DEFAULT(_null_) BKI_ARRAY_DEFAULT(_null_);
 
 	/*
-	 * Access permissions
+	 * 访问权限
 	 */
 	aclitem		typacl[1] BKI_DEFAULT(_null_);
 #endif
 } FormData_pg_type;
 
 /* ----------------
- *		Form_pg_type corresponds to a pointer to a row with
- *		the format of pg_type relation.
+ *		Form_pg_type 对应于一个指向具有
+ *		pg_type 关系格式行的指针。
  * ----------------
  */
 typedef FormData_pg_type *Form_pg_type;
@@ -271,7 +256,7 @@ MAKE_SYSCACHE(TYPENAMENSP, pg_type_typname_nsp_index, 64);
 #ifdef EXPOSE_TO_CLIENT_CODE
 
 /*
- * macros for values of poor-mans-enumerated-type columns
+ * 用于“穷人版枚举类型”列的宏的取值
  */
 #define  TYPTYPE_BASE		'b' /* base type (ordinary scalar type) */
 #define  TYPTYPE_COMPOSITE	'c' /* composite (e.g., table's rowtype) */
@@ -309,12 +294,12 @@ MAKE_SYSCACHE(TYPENAMENSP, pg_type_typname_nsp_index, 64);
 #define  TYPSTORAGE_EXTENDED	'x' /* fully toastable */
 #define  TYPSTORAGE_MAIN		'm' /* like 'x' but try to store inline */
 
-/* Is a type OID a polymorphic pseudotype?	(Beware of multiple evaluation) */
+/* 一个类型 OID 是否为多态伪类型？	(注意多次求值问题) */
 #define IsPolymorphicType(typid)  \
 	(IsPolymorphicTypeFamily1(typid) || \
 	 IsPolymorphicTypeFamily2(typid))
 
-/* Code not part of polymorphic type resolution should not use these macros: */
+/* 非多态类型解析的代码不应使用这些宏： */
 #define IsPolymorphicTypeFamily1(typid)  \
 	((typid) == ANYELEMENTOID || \
 	 (typid) == ANYARRAYOID || \
@@ -330,14 +315,14 @@ MAKE_SYSCACHE(TYPENAMENSP, pg_type_typname_nsp_index, 64);
 	 (typid) == ANYCOMPATIBLERANGEOID || \
 	 (typid) == ANYCOMPATIBLEMULTIRANGEOID)
 
-/* Is this a "true" array type?  (Requires fmgroids.h) */
+/* 这是否是一个“真正的”数组类型？(需要 fmgroids.h) */
 #define IsTrueArrayType(typeForm)  \
 	(OidIsValid((typeForm)->typelem) && \
 	 (typeForm)->typsubscript == F_ARRAY_SUBSCRIPT_HANDLER)
 
 /*
- * Backwards compatibility for ancient random spellings of pg_type OID macros.
- * Don't use these names in new code.
+ * 对 pg_type OID 宏各种古老随意拼写的向后兼容。
+ * 新代码中不要使用这些名称。
  */
 #define CASHOID	MONEYOID
 #define LSNOID	PG_LSNOID

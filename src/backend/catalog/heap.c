@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * heap.c
- *	  code to create and destroy POSTGRES heap relations
+ *	  用于创建和销毁 POSTGRES 堆关系的代码
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -12,17 +12,16 @@
  *
  *
  * INTERFACE ROUTINES
- *		heap_create()			- Create an uncataloged heap relation
- *		heap_create_with_catalog() - Create a cataloged relation
- *		heap_drop_with_catalog() - Removes named relation from catalogs
+ *		heap_create()			- 创建未编目的堆关系
+ *		heap_create_with_catalog() - 创建已编目的关系
+ *		heap_drop_with_catalog() - 从系统目录中移除指定名称的关系
  *
  * NOTES
- *	  this code taken from access/heap/create.c, which contains
- *	  the old heap_create_with_catalog, amcreate, and amdestroy.
- *	  those routines will soon call these routines using the function
- *	  manager,
- *	  just like the poorly named "NewXXX" routines do.  The
- *	  "New" routines are all going to die soon, once and for all!
+ *	  本代码取自 access/heap/create.c，其中包含了旧的
+ *	  heap_create_with_catalog、amcreate 和 amdestroy。
+ *	  这些例程很快会通过函数管理器来调用这些新例程，
+ *	  就像那些命名拙劣的 "NewXXX" 例程所做的那样。而
+ *	  "New" 系列例程终将彻底消亡，一劳永逸！
  *		-cim 1/13/91
  *
  *-------------------------------------------------------------------------
@@ -77,7 +76,7 @@
 #include "utils/syscache.h"
 
 
-/* Potentially set by pg_upgrade_support functions */
+/* 可能被 pg_upgrade_support 函数设置 */
 Oid			binary_upgrade_next_heap_pg_class_oid = InvalidOid;
 Oid			binary_upgrade_next_toast_pg_class_oid = InvalidOid;
 RelFileNumber binary_upgrade_next_heap_pg_class_relfilenumber = InvalidRelFileNumber;
@@ -119,26 +118,25 @@ static Node *cookConstraint(ParseState *pstate,
 
 
 /* ----------------------------------------------------------------
- *				XXX UGLY HARD CODED BADNESS FOLLOWS XXX
+ *				XXX 丑陋的硬编码不良代码自此开始 XXX
  *
- *		these should all be moved to someplace in the lib/catalog
- *		module, if not obliterated first.
+ *		这些最好全部移到 lib/catalog 模块的某个位置，
+ *		或者干脆先彻底删除。
  * ----------------------------------------------------------------
  */
 
 
 /*
- * Note:
- *		Should the system special case these attributes in the future?
- *		Advantage:	consume much less space in the ATTRIBUTE relation.
- *		Disadvantage:  special cases will be all over the place.
+ * 注意：
+ *		今后系统是否应该对这些属性做特殊处理？
+ *		优点：在 ATTRIBUTE 关系中占用更少的空间。
+ *		缺点：特例会散落得到处都是。
  */
 
 /*
- * The initializers below do not include trailing variable length fields,
- * but that's OK - we're never going to reference anything beyond the
- * fixed-size portion of the structure anyway.  Fields that can default
- * to zeroes are also not mentioned.
+ * 下方的初始化器未包含尾随的变长字段，
+ * 但这没有问题——我们无论如何都不会引用该结构固定大小
+ * 部分之外的任何内容。可以默认为零的字段也未在此列出。
  */
 
 static const FormData_pg_attribute a1 = {
@@ -207,10 +205,9 @@ static const FormData_pg_attribute a5 = {
 };
 
 /*
- * We decided to call this attribute "tableoid" rather than say
- * "classoid" on the basis that in the future there may be more than one
- * table of a particular class/type. In any case table is still the word
- * used in SQL.
+ * 我们决定将本属性命名为 "tableoid" 而非 "classoid"，
+ * 其理由是未来某个特定类/类型可能会有不止一个表。
+ * 无论如何，SQL 中使用的词仍然是 table。
  */
 static const FormData_pg_attribute a6 = {
 	.attname = {"tableoid"},
@@ -228,9 +225,9 @@ static const FormData_pg_attribute a6 = {
 static const FormData_pg_attribute *const SysAtt[] = {&a1, &a2, &a3, &a4, &a5, &a6};
 
 /*
- * This function returns a Form_pg_attribute pointer for a system attribute.
- * Note that we elog if the presented attno is invalid, which would only
- * happen if there's a problem upstream.
+ * 本函数返回一个指向系统属性的 Form_pg_attribute 指针。
+ * 注意，若传入的 attno 无效我们会 elog，而这只会在
+ * 上游出现问题时才会发生。
  */
 const FormData_pg_attribute *
 SystemAttributeDefinition(AttrNumber attno)
@@ -241,8 +238,8 @@ SystemAttributeDefinition(AttrNumber attno)
 }
 
 /*
- * If the given name is a system attribute name, return a Form_pg_attribute
- * pointer for a prototype definition.  If not, return NULL.
+ * 若给定名称是一个系统属性名，则返回用于原型定义的
+ * Form_pg_attribute 指针；否则返回 NULL。
  */
 const FormData_pg_attribute *
 SystemAttributeByName(const char *attname)
@@ -262,23 +259,22 @@ SystemAttributeByName(const char *attname)
 
 
 /* ----------------------------------------------------------------
- *				XXX END OF UGLY HARD CODED BADNESS XXX
+ *				XXX 丑陋硬编码不良代码至此结束 XXX
  * ---------------------------------------------------------------- */
 
 
 /* ----------------------------------------------------------------
- *		heap_create		- Create an uncataloged heap relation
+ *		heap_create		- 创建未编目的堆关系
  *
- *		Note API change: the caller must now always provide the OID
- *		to use for the relation.  The relfilenumber may be (and in
- *		the simplest cases is) left unspecified.
+ *		注意 API 变更：调用者现在必须始终提供用于该关系的 OID。
+ *		relfilenumber 可以不指定(在最简单的情况下确实如此)。
  *
- *		create_storage indicates whether or not to create the storage.
- *		However, even if create_storage is true, no storage will be
- *		created if the relkind is one that doesn't have storage.
+ *		create_storage 指示是否要创建存储。
+ *		不过，即便 create_storage 为 true，若 relkind 属于
+ *		不具有存储的类型，也不会创建任何存储。
  *
- *		rel->rd_rel is initialized by RelationBuildLocalRelation,
- *		and is mostly zeroes at return.
+ *		rel->rd_rel 由 RelationBuildLocalRelation 初始化，
+ *		返回时基本全为零。
  * ----------------------------------------------------------------
  */
 Relation
@@ -300,17 +296,17 @@ heap_create(const char *relname,
 {
 	Relation	rel;
 
-	/* The caller must have provided an OID for the relation. */
+	/* 调用者必须已经为该关系提供了一个 OID。 */
 	Assert(OidIsValid(relid));
 
 	/*
-	 * Don't allow creating relations in pg_catalog directly, even though it
-	 * is allowed to move user defined relations there. Semantics with search
-	 * paths including pg_catalog are too confusing for now.
+	 * 不允许直接在 pg_catalog 中创建关系，尽管允许将用户定义的
+	 * 关系移动到那里。包含 pg_catalog 的搜索路径在语义上目前
+	 * 过于混乱。
 	 *
-	 * But allow creating indexes on relations in pg_catalog even if
-	 * allow_system_table_mods = off, upper layers already guarantee it's on a
-	 * user defined relation, not a system one.
+	 * 但允许在 pg_catalog 中的关系上创建索引，即使
+	 * allow_system_table_mods = off，上层已经保证它位于一个
+	 * 用户定义的关系上，而非系统关系。
 	 */
 	if (!allow_system_table_mods &&
 		((IsCatalogNamespace(relnamespace) && relkind != RELKIND_INDEX) ||
@@ -326,39 +322,38 @@ heap_create(const char *relname,
 	*relminmxid = InvalidMultiXactId;
 
 	/*
-	 * Force reltablespace to zero if the relation kind does not support
-	 * tablespaces.  This is mainly just for cleanliness' sake.
+	 * 若该关系种类不支持表空间，则强制将 reltablespace 置零。
+	 * 这主要是为了整洁起见。
 	 */
 	if (!RELKIND_HAS_TABLESPACE(relkind))
 		reltablespace = InvalidOid;
 
-	/* Don't create storage for relkinds without physical storage. */
+	/* 不要为没有物理存储的 relkind 创建存储。 */
 	if (!RELKIND_HAS_STORAGE(relkind))
 		create_storage = false;
 	else
 	{
-		/*
-		 * If relfilenumber is unspecified by the caller then create storage
-		 * with oid same as relid.
-		 */
+			/*
+			 * 若调用者未指定 relfilenumber，则以与 relid 相同的
+			 * oid 创建存储。
+			 */
 		if (!RelFileNumberIsValid(relfilenumber))
 			relfilenumber = relid;
 	}
 
 	/*
-	 * Never allow a pg_class entry to explicitly specify the database's
-	 * default tablespace in reltablespace; force it to zero instead. This
-	 * ensures that if the database is cloned with a different default
-	 * tablespace, the pg_class entry will still match where CREATE DATABASE
-	 * will put the physically copied relation.
+	 * 绝不允许 pg_class 条目在 reltablespace 中显式指定数据库的
+	 * 默认表空间；而是将其强制置零。这确保当数据库以不同的默认
+	 * 表空间被克隆时，pg_class 条目仍能匹配 CREATE DATABASE
+	 * 放置物理复制关系的位置。
 	 *
-	 * Yes, this is a bit of a hack.
+	 * 是的，这有点像个 hack。
 	 */
 	if (reltablespace == MyDatabaseTableSpace)
 		reltablespace = InvalidOid;
 
 	/*
-	 * build the relcache entry.
+	 * 构建 relcache 条目。
 	 */
 	rel = RelationBuildLocalRelation(relname,
 									 relnamespace,
@@ -373,11 +368,10 @@ heap_create(const char *relname,
 									 relkind);
 
 	/*
-	 * Have the storage manager create the relation's disk file, if needed.
+	 * 若需要，让存储管理器创建该关系的磁盘文件。
 	 *
-	 * For tables, the AM callback creates both the main and the init fork.
-	 * For others, only the main fork is created; the other forks will be
-	 * created on demand.
+	 * 对于表，AM 回调会同时创建主 fork 和 init fork。
+	 * 对于其他关系，只创建主 fork；其余 fork 将按需创建。
 	 */
 	if (create_storage)
 	{
@@ -392,47 +386,44 @@ heap_create(const char *relname,
 	}
 
 	/*
-	 * If a tablespace is specified, removal of that tablespace is normally
-	 * protected by the existence of a physical file; but for relations with
-	 * no files, add a pg_shdepend entry to account for that.
+	 * 若指定了表空间，通常该表空间的移除会由物理文件的存在来保护；
+	 * 但对于没有文件的关系，需要添加一条 pg_shdepend 条目来记录这一点。
 	 */
 	if (!create_storage && reltablespace != InvalidOid)
 		recordDependencyOnTablespace(RelationRelationId, relid,
 									 reltablespace);
 
-	/* ensure that stats are dropped if transaction aborts */
+	/* 确保若事务中止则丢弃统计信息 */
 	pgstat_create_relation(rel);
 
 	return rel;
 }
 
 /* ----------------------------------------------------------------
- *		heap_create_with_catalog		- Create a cataloged relation
+ *		heap_create_with_catalog		- 创建已编目的关系
  *
- *		this is done in multiple steps:
+ *		这分多个步骤完成：
  *
- *		1) CheckAttributeNamesTypes() is used to make certain the tuple
- *		   descriptor contains a valid set of attribute names and types
+ *		1) 使用 CheckAttributeNamesTypes() 确保元组
+ *		   描述符包含一组有效的属性名与类型
  *
- *		2) pg_class is opened and get_relname_relid()
- *		   performs a scan to ensure that no relation with the
- *		   same name already exists.
+ *		2) 打开 pg_class，并由 get_relname_relid()
+ *		   执行扫描以确保不存在同名关系。
  *
- *		3) heap_create() is called to create the new relation on disk.
+ *		3) 调用 heap_create() 在磁盘上创建新关系。
  *
- *		4) TypeCreate() is called to define a new type corresponding
- *		   to the new relation.
+ *		4) 调用 TypeCreate() 定义对应于新关系的
+ *		   一个新类型。
  *
- *		5) AddNewRelationTuple() is called to register the
- *		   relation in pg_class.
+ *		5) 调用 AddNewRelationTuple() 将该关系
+ *		   登记到 pg_class 中。
  *
- *		6) AddNewAttributeTuples() is called to register the
- *		   new relation's schema in pg_attribute.
+ *		6) 调用 AddNewAttributeTuples() 将该
+ *		   新关系的模式登记到 pg_attribute 中。
  *
  *		7) StoreConstraints() is called			- vadim 08/22/97
  *
- *		8) the relations are closed and the new relation's oid
- *		   is returned.
+ *		8) 关系被关闭，并返回新关系的 oid。
  *
  * ----------------------------------------------------------------
  */
@@ -440,12 +431,11 @@ heap_create(const char *relname,
 /* --------------------------------
  *		CheckAttributeNamesTypes
  *
- *		this is used to make certain the tuple descriptor contains a
- *		valid set of attribute names and datatypes.  a problem simply
- *		generates ereport(ERROR) which aborts the current transaction.
+ *		用于确保元组描述符包含一组有效的属性名与数据类型。
+ *		一旦发现问题，直接生成 ereport(ERROR) 中止当前事务。
  *
- *		relkind is the relkind of the relation to be created.
- *		flags controls which datatypes are allowed, cf CheckAttributeType.
+ *		relkind 为待创建关系的 relkind。
+ *		flags 控制允许哪些数据类型，参见 CheckAttributeType。
  * --------------------------------
  */
 void
@@ -456,7 +446,7 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 	int			j;
 	int			natts = tupdesc->natts;
 
-	/* Sanity check on column count */
+	/* 对列数做合理性检查 */
 	if (natts < 0 || natts > MaxHeapAttributeNumber)
 		ereport(ERROR,
 				(errcode(ERRCODE_TOO_MANY_COLUMNS),
@@ -464,10 +454,9 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 						MaxHeapAttributeNumber)));
 
 	/*
-	 * first check for collision with system attribute names
+	 * 首先检查是否与系统属性名冲突
 	 *
-	 * Skip this for a view or type relation, since those don't have system
-	 * attributes.
+	 * 对于视图或类型关系跳过此步，因为它们没有系统属性。
 	 */
 	if (relkind != RELKIND_VIEW && relkind != RELKIND_COMPOSITE_TYPE)
 	{
@@ -484,7 +473,7 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 	}
 
 	/*
-	 * next check for repeated attribute names
+	 * 接下来检查重复的属性名
 	 */
 	for (i = 1; i < natts; i++)
 	{
@@ -500,7 +489,7 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 	}
 
 	/*
-	 * next check the attribute types
+	 * 接下来检查属性的类型
 	 */
 	for (i = 0; i < natts; i++)
 	{
@@ -519,29 +508,26 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 /* --------------------------------
  *		CheckAttributeType
  *
- *		Verify that the proposed datatype of an attribute is legal.
- *		This is needed mainly because there are types (and pseudo-types)
- *		in the catalogs that we do not support as elements of real tuples.
- *		We also check some other properties required of a table column.
+ *		验证属性提议使用的数据类型是否合法。
+ *		这主要是因为在目录中存在一些(伪)类型，我们并不支持
+ *		将它们作为真实元组的元素。我们还会检查一个表列所需的
+ *		其他一些属性。
  *
- * If the attribute is being proposed for addition to an existing table or
- * composite type, pass a one-element list of the rowtype OID as
- * containing_rowtypes.  When checking a to-be-created rowtype, it's
- * sufficient to pass NIL, because there could not be any recursive reference
- * to a not-yet-existing rowtype.
+ * 若该属性是被提议添加到已有的表或组合类型上，请传入一个
+ * 仅含该 rowtype OID 的单元素列表作为 containing_rowtypes。
+ * 当检查一个待创建的行类型时，传入 NIL 即可，因为不可能存在
+ * 对尚未存在的行类型的递归引用。
  *
- * flags is a bitmask controlling which datatypes we allow.  For the most
- * part, pseudo-types are disallowed as attribute types, but there are some
- * exceptions: ANYARRAYOID, RECORDOID, and RECORDARRAYOID can be allowed
- * in some cases.  (This works because values of those type classes are
- * self-identifying to some extent.  However, RECORDOID and RECORDARRAYOID
- * are reliably identifiable only within a session, since the identity info
- * may use a typmod that is only locally assigned.  The caller is expected
- * to know whether these cases are safe.)
+ * flags 是一个位掩码，控制允许哪些数据类型。在大多数情况下，
+ * 伪类型不允许作为属性类型，但也有一些例外：ANYARRAYOID、
+ * RECORDOID 和 RECORDARRAYOID 在某些情况下可以被允许。
+ * (这之所以可行，是因为这些类型类的值在某种程度上是自描述的。
+ * 不过 RECORDOID 和 RECORDARRAYOID 仅在会话内部才能可靠识别，
+ * 因为其标识信息可能使用了仅在本地分配的 typmod。调用者应当
+ * 了解这些情况是否安全。)
  *
- * flags can also control the phrasing of the error messages.  If
- * CHKATYPE_IS_PARTKEY is specified, "attname" should be a partition key
- * column number as text, not a real column name.
+ * flags 还可以控制错误消息的措辞。若指定了 CHKATYPE_IS_PARTKEY，
+ * 则 "attname" 应为分区键列号(文本形式)，而非真实的列名。
  * --------------------------------
  */
 void
@@ -553,20 +539,18 @@ CheckAttributeType(const char *attname,
 	char		att_typtype = get_typtype(atttypid);
 	Oid			att_typelem;
 
-	/* since this function recurses, it could be driven to stack overflow */
+	/* 由于本函数会递归，可能被驱动到栈溢出 */
 	check_stack_depth();
 
 	if (att_typtype == TYPTYPE_PSEUDO)
 	{
 		/*
-		 * We disallow pseudo-type columns, with the exception of ANYARRAY,
-		 * RECORD, and RECORD[] when the caller says that those are OK.
+		 * 我们禁止伪类型列，但 ANYARRAY、RECORD 和 RECORD[] 在调用者
+		 * 声明允许的情况下是例外。
 		 *
-		 * We don't need to worry about recursive containment for RECORD and
-		 * RECORD[] because (a) no named composite type should be allowed to
-		 * contain those, and (b) two "anonymous" record types couldn't be
-		 * considered to be the same type, so infinite recursion isn't
-		 * possible.
+		 * 对于 RECORD 和 RECORD[]，我们不必担心递归包含，因为
+		 * (a) 不允许任何命名的组合类型包含它们，(b) 两个“匿名”记录类型
+		 * 不可能被视为同一类型，因此不可能出现无限递归。
 		 */
 		if (!((atttypid == ANYARRAYOID && (flags & CHKATYPE_ANYARRAY)) ||
 			  (atttypid == RECORDOID && (flags & CHKATYPE_ANYRECORD)) ||
@@ -588,10 +572,8 @@ CheckAttributeType(const char *attname,
 	else if (att_typtype == TYPTYPE_DOMAIN)
 	{
 		/*
-		 * Prevent virtual generated columns from having a domain type.  We
-		 * would have to enforce domain constraints when columns underlying
-		 * the generated column change.  This could possibly be implemented,
-		 * but it's not.
+		 * 防止虚拟生成列使用域类型。否则当生成列底层的列发生变化时，
+		 * 我们必须强制实施域约束。这或许可以实现，但目前没有。
 		 */
 		if (flags & CHKATYPE_IS_VIRTUAL)
 			ereport(ERROR,
@@ -599,7 +581,7 @@ CheckAttributeType(const char *attname,
 					errmsg("virtual generated column \"%s\" cannot have a domain type", attname));
 
 		/*
-		 * If it's a domain, recurse to check its base type.
+		 * 若是域，则递归检查其基类型。
 		 */
 		CheckAttributeType(attname, getBaseType(atttypid), attcollation,
 						   containing_rowtypes,
@@ -608,17 +590,16 @@ CheckAttributeType(const char *attname,
 	else if (att_typtype == TYPTYPE_COMPOSITE)
 	{
 		/*
-		 * For a composite type, recurse into its attributes.
+		 * 对于组合类型，递归检查其属性。
 		 */
 		Relation	relation;
 		TupleDesc	tupdesc;
 		int			i;
 
 		/*
-		 * Check for self-containment.  Eventually we might be able to allow
-		 * this (just return without complaint, if so) but it's not clear how
-		 * many other places would require anti-recursion defenses before it
-		 * would be safe to allow tables to contain their own rowtype.
+		 * 检查自包含。将来我们或许允许这种情况(若如此则直接无错误地
+		 * 返回)，但目前尚不清楚在允许表包含自身行类型之前，还有多少
+		 * 其他位置需要防御性的反递归保护才能确保安全。
 		 */
 		if (list_member_oid(containing_rowtypes, atttypid))
 			ereport(ERROR,
@@ -651,7 +632,7 @@ CheckAttributeType(const char *attname,
 	else if (att_typtype == TYPTYPE_RANGE)
 	{
 		/*
-		 * If it's a range, recurse to check its subtype.
+		 * 若是范围类型，递归检查其子类型。
 		 */
 		CheckAttributeType(attname, get_range_subtype(atttypid),
 						   get_range_collation(atttypid),
@@ -661,7 +642,7 @@ CheckAttributeType(const char *attname,
 	else if (att_typtype == TYPTYPE_MULTIRANGE)
 	{
 		/*
-		 * If it's a multirange, recurse to check its plain range type.
+		 * 若是多范围类型，递归检查其普通范围类型。
 		 */
 		CheckAttributeType(attname, get_multirange_range(atttypid),
 						   InvalidOid,	/* range types are not collatable */
@@ -671,7 +652,7 @@ CheckAttributeType(const char *attname,
 	else if (OidIsValid((att_typelem = get_element_type(atttypid))))
 	{
 		/*
-		 * Must recurse into array types, too, in case they are composite.
+		 * 也必须递归进入数组类型，以防它们是组合类型。
 		 */
 		CheckAttributeType(attname, att_typelem, attcollation,
 						   containing_rowtypes,
@@ -679,7 +660,7 @@ CheckAttributeType(const char *attname,
 	}
 
 	/*
-	 * For consistency with check_virtual_generated_security().
+	 * 为了与 check_virtual_generated_security() 保持一致。
 	 */
 	if ((flags & CHKATYPE_IS_VIRTUAL) && atttypid >= FirstUnpinnedObjectId)
 		ereport(ERROR,
@@ -688,8 +669,8 @@ CheckAttributeType(const char *attname,
 				errdetail("Virtual generated columns that make use of user-defined types are not yet supported."));
 
 	/*
-	 * This might not be strictly invalid per SQL standard, but it is pretty
-	 * useless, and it cannot be dumped, so we must disallow it.
+	 * 按 SQL 标准这未必严格非法，但它相当无用，且无法被转储，
+	 * 因此我们必须禁止它。
 	 */
 	if (!OidIsValid(attcollation) && type_is_collatable(atttypid))
 	{
@@ -711,21 +692,19 @@ CheckAttributeType(const char *attname,
 
 /*
  * InsertPgAttributeTuples
- *		Construct and insert a set of tuples in pg_attribute.
+ *		在 pg_attribute 中构造并插入一组元组。
  *
- * Caller has already opened and locked pg_attribute.  tupdesc contains the
- * attributes to insert.  tupdesc_extra supplies the values for certain
- * variable-length/nullable pg_attribute fields and must contain the same
- * number of elements as tupdesc or be NULL.  The other variable-length fields
- * of pg_attribute are always initialized to null values.
+ * 调用者已打开并锁定 pg_attribute。tupdesc 包含要插入的属性。
+ * tupdesc_extra 为某些变长/可空 pg_attribute 字段提供取值，它必须与
+ * tupdesc 包含相同数量的元素，或为 NULL。pg_attribute 的其他变长字段
+ * 始终被初始化为 null 值。
  *
- * indstate is the index state for CatalogTupleInsertWithInfo.  It can be
- * passed as NULL, in which case we'll fetch the necessary info.  (Don't do
- * this when inserting multiple attributes, because it's a tad more
- * expensive.)
+ * indstate 是供 CatalogTupleInsertWithInfo 使用的索引状态。它可以被
+ * 传入 NULL，此时我们会自行获取必要信息。(插入多个属性时不要这样做，
+ * 因为那样会稍微昂贵一些。)
  *
- * new_rel_oid is the relation OID assigned to the attributes inserted.
- * If set to InvalidOid, the relation OID from tupdesc is used instead.
+ * new_rel_oid 是分配给被插入属性的关系 OID。
+ * 若设为 InvalidOid，则改用 tupdesc 中的关系 OID。
  */
 void
 InsertPgAttributeTuples(Relation pg_attribute_rel,
@@ -743,7 +722,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 
 	td = RelationGetDescr(pg_attribute_rel);
 
-	/* Initialize the number of slots to use */
+	/* 初始化要使用的槽数量 */
 	nslots = Min(tupdesc->natts,
 				 (MAX_CATALOG_MULTI_INSERT_BYTES / sizeof(FormData_pg_attribute)));
 	slot = palloc(sizeof(TupleTableSlot *) * nslots);
@@ -799,7 +778,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 		}
 
 		/*
-		 * The remaining fields are not set for new columns.
+		 * 其余字段不会为新列设置。
 		 */
 		slot[slotCount]->tts_isnull[Anum_pg_attribute_attacl - 1] = true;
 		slot[slotCount]->tts_isnull[Anum_pg_attribute_attfdwoptions - 1] = true;
@@ -809,19 +788,18 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 		slotCount++;
 
 		/*
-		 * If slots are full or the end of processing has been reached, insert
-		 * a batch of tuples.
+		 * 若槽已满或处理已到达末尾，则插入一批元组。
 		 */
 		if (slotCount == nslots || natts == tupdesc->natts - 1)
 		{
-			/* fetch index info only when we know we need it */
+			/* 只在确知需要时才获取索引信息 */
 			if (!indstate)
 			{
 				indstate = CatalogOpenIndexes(pg_attribute_rel);
 				close_index = true;
 			}
 
-			/* insert the new tuples and update the indexes */
+			/* 插入新元组并更新索引 */
 			CatalogTuplesMultiInsertWithInfo(pg_attribute_rel, slot, slotCount,
 											 indstate);
 			slotCount = 0;
@@ -840,8 +818,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 /* --------------------------------
  *		AddNewAttributeTuples
  *
- *		this registers the new relation's schema by adding
- *		tuples to pg_attribute.
+ *		通过向 pg_attribute 添加元组，登记新关系的模式。
  * --------------------------------
  */
 static void
@@ -856,7 +833,7 @@ AddNewAttributeTuples(Oid new_rel_oid,
 				referenced;
 
 	/*
-	 * open pg_attribute and its indexes.
+	 * 打开 pg_attribute 及其索引。
 	 */
 	rel = table_open(AttributeRelationId, RowExclusiveLock);
 
@@ -864,7 +841,7 @@ AddNewAttributeTuples(Oid new_rel_oid,
 
 	InsertPgAttributeTuples(rel, tupdesc, new_rel_oid, NULL, indstate);
 
-	/* add dependencies on their datatypes and collations */
+	/* 添加对数据类型与排序规则的依赖 */
 	for (int i = 0; i < natts; i++)
 	{
 		Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
@@ -872,12 +849,12 @@ AddNewAttributeTuples(Oid new_rel_oid,
 		if (attr->attisdropped)
 			continue;
 
-		/* Add dependency info */
+		/* 添加依赖信息 */
 		ObjectAddressSubSet(myself, RelationRelationId, new_rel_oid, i + 1);
 		ObjectAddressSet(referenced, TypeRelationId, attr->atttypid);
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
-		/* The default collation is pinned, so don't bother recording it */
+		/* 默认排序规则是固定的，无需费心记录它 */
 		if (OidIsValid(attr->attcollation) &&
 			attr->attcollation != DEFAULT_COLLATION_OID)
 		{
@@ -888,9 +865,8 @@ AddNewAttributeTuples(Oid new_rel_oid,
 	}
 
 	/*
-	 * Next we add the system attributes.  Skip all for a view or type
-	 * relation.  We don't bother with making datatype dependencies here,
-	 * since presumably all these types are pinned.
+	 * 接下来添加系统属性。对于视图或类型关系则全部跳过。
+	 * 这里不必建立数据类型依赖，因为这些类型大概都是固定的。
 	 */
 	if (relkind != RELKIND_VIEW && relkind != RELKIND_COMPOSITE_TYPE)
 	{
@@ -903,7 +879,7 @@ AddNewAttributeTuples(Oid new_rel_oid,
 	}
 
 	/*
-	 * clean up
+	 * 清理
 	 */
 	CatalogCloseIndexes(indstate);
 
@@ -913,14 +889,12 @@ AddNewAttributeTuples(Oid new_rel_oid,
 /* --------------------------------
  *		InsertPgClassTuple
  *
- *		Construct and insert a new tuple in pg_class.
+ *		在 pg_class 中构造并插入一个新元组。
  *
- * Caller has already opened and locked pg_class.
- * Tuple data is taken from new_rel_desc->rd_rel, except for the
- * variable-width fields which are not present in a cached reldesc.
- * relacl and reloptions are passed in Datum form (to avoid having
- * to reference the data types in heap.h).  Pass (Datum) 0 to set them
- * to NULL.
+ * 调用者已打开并锁定 pg_class。
+ * 元组数据取自 new_rel_desc->rd_rel，但缓存的 reldesc 中不存在的
+ * 变宽字段除外。relacl 和 reloptions 以 Datum 形式传入(以避免
+ * 在 heap.h 中引用这些数据类型)。传入 (Datum) 0 可将其置为 NULL。
  * --------------------------------
  */
 void
@@ -935,7 +909,7 @@ InsertPgClassTuple(Relation pg_class_desc,
 	bool		nulls[Natts_pg_class];
 	HeapTuple	tup;
 
-	/* This is a tad tedious, but way cleaner than what we used to do... */
+	/* 这有点繁琐，但比我们过去的做法要干净得多... */
 	memset(values, 0, sizeof(values));
 	memset(nulls, false, sizeof(nulls));
 
@@ -979,12 +953,12 @@ InsertPgClassTuple(Relation pg_class_desc,
 	else
 		nulls[Anum_pg_class_reloptions - 1] = true;
 
-	/* relpartbound is set by updating this tuple, if necessary */
+	/* 如有必要，relpartbound 通过更新本元组来设置 */
 	nulls[Anum_pg_class_relpartbound - 1] = true;
 
 	tup = heap_form_tuple(RelationGetDescr(pg_class_desc), values, nulls);
 
-	/* finally insert the new tuple, update the indexes, and clean up */
+	/* 最后插入新元组，更新索引，并清理 */
 	CatalogTupleInsert(pg_class_desc, tup);
 
 	heap_freetuple(tup);
@@ -993,8 +967,7 @@ InsertPgClassTuple(Relation pg_class_desc,
 /* --------------------------------
  *		AddNewRelationTuple
  *
- *		this registers the new relation in the catalogs by
- *		adding a tuple to pg_class.
+ *		通过向 pg_class 添加元组，将新关系登记到系统目录中。
  * --------------------------------
  */
 static void
@@ -1013,18 +986,17 @@ AddNewRelationTuple(Relation pg_class_desc,
 	Form_pg_class new_rel_reltup;
 
 	/*
-	 * first we update some of the information in our uncataloged relation's
-	 * relation descriptor.
+	 * 首先更新我们未编目关系的部分信息于其关系描述符中。
 	 */
 	new_rel_reltup = new_rel_desc->rd_rel;
 
-	/* The relation is empty */
+	/* 该关系为空 */
 	new_rel_reltup->relpages = 0;
 	new_rel_reltup->reltuples = -1;
 	new_rel_reltup->relallvisible = 0;
 	new_rel_reltup->relallfrozen = 0;
 
-	/* Sequences always have a known size */
+	/* 序列总是拥有已知的尺寸 */
 	if (relkind == RELKIND_SEQUENCE)
 	{
 		new_rel_reltup->relpages = 1;
@@ -1037,14 +1009,14 @@ AddNewRelationTuple(Relation pg_class_desc,
 	new_rel_reltup->reltype = new_type_oid;
 	new_rel_reltup->reloftype = reloftype;
 
-	/* relispartition is always set by updating this tuple later */
+	/* relispartition 总是由稍后更新本元组来设置 */
 	new_rel_reltup->relispartition = false;
 
-	/* fill rd_att's type ID with something sane even if reltype is zero */
+	/* 即便 reltype 为零，也用合理的值填充 rd_att 的类型 ID */
 	new_rel_desc->rd_att->tdtypeid = new_type_oid ? new_type_oid : RECORDOID;
 	new_rel_desc->rd_att->tdtypmod = -1;
 
-	/* Now build and insert the tuple */
+	/* 现在构建并插入元组 */
 	InsertPgClassTuple(pg_class_desc, new_rel_desc, new_rel_oid,
 					   relacl, reloptions);
 }
@@ -1053,7 +1025,7 @@ AddNewRelationTuple(Relation pg_class_desc,
 /* --------------------------------
  *		AddNewRelationType -
  *
- *		define a composite type corresponding to the new relation
+ *		定义对应于新关系的组合类型
  * --------------------------------
  */
 static ObjectAddress
@@ -1103,36 +1075,36 @@ AddNewRelationType(const char *typeName,
 /* --------------------------------
  *		heap_create_with_catalog
  *
- *		creates a new cataloged relation.  see comments above.
+ *		创建一个新编目关系。详见上方注释。
  *
- * Arguments:
- *	relname: name to give to new rel
- *	relnamespace: OID of namespace it goes in
- *	reltablespace: OID of tablespace it goes in
- *	relid: OID to assign to new rel, or InvalidOid to select a new OID
- *	reltypeid: OID to assign to rel's rowtype, or InvalidOid to select one
- *	reloftypeid: if a typed table, OID of underlying type; else InvalidOid
- *	ownerid: OID of new rel's owner
- *	accessmtd: OID of new rel's access method
- *	tupdesc: tuple descriptor (source of column definitions)
- *	cooked_constraints: list of precooked check constraints and defaults
- *	relkind: relkind for new rel
- *	relpersistence: rel's persistence status (permanent, temp, or unlogged)
- *	shared_relation: true if it's to be a shared relation
- *	mapped_relation: true if the relation will use the relfilenumber map
- *	oncommit: ON COMMIT marking (only relevant if it's a temp table)
- *	reloptions: reloptions in Datum form, or (Datum) 0 if none
- *	use_user_acl: true if should look for user-defined default permissions;
- *		if false, relacl is always set NULL
- *	allow_system_table_mods: true to allow creation in system namespaces
- *	is_internal: is this a system-generated catalog?
- *	relrewrite: link to original relation during a table rewrite
+ * 参数:
+ *	relname: 赋予新关系的名称
+ *	relnamespace: 关系所在命名空间的 OID
+ *	reltablespace: 关系所在表空间的 OID
+ *	relid: 分配给新关系的 OID，或 InvalidOid 以选择一个新的 OID
+ *	reltypeid: 分配给关系行类型的 OID，或 InvalidOid 以选择一个新的
+ *	reloftypeid: 若是类型化表，则为底层类型的 OID；否则为 InvalidOid
+ *	ownerid: 新关系所有者的 OID
+ *	accessmtd: 新关系访问方法的 OID
+ *	tupdesc: 元组描述符（列定义的来源）
+ *	cooked_constraints: 预加工好的 CHECK 约束与默认值列表
+ *	relkind: 新关系的 relkind
+ *	relpersistence: 关系的持久化状态（永久、临时或未记录）
+ *	shared_relation: 若为共享关系则为 true
+ *	mapped_relation: 若关系将使用 relfilenumber 映射则为 true
+ *	oncommit: ON COMMIT 标记（仅当它是临时表时才相关）
+ *	reloptions: 以 Datum 形式给出的 reloptions，若无则为 (Datum) 0
+ *	use_user_acl: 若应查找用户定义的默认权限则为 true；
+ *		若为 false，则 relacl 始终设为 NULL
+ *	allow_system_table_mods: 若为 true 则允许在系统命名空间中创建
+ *	is_internal: 这是否是一个系统生成的编目？
+ *	relrewrite: 表重写期间指向原始关系的链接
  *
- * Output parameters:
- *	typaddress: if not null, gets the object address of the new pg_type entry
- *	(this must be null if the relkind is one that doesn't get a pg_type entry)
+ * 输出参数:
+ *	typaddress: 若非 NULL，则接收新 pg_type 项的对象地址
+ *	（若该 relkind 不会获得 pg_type 项，则必须为 NULL）
  *
- * Returns the OID of the new relation
+ * 返回新关系的 OID
  * --------------------------------
  */
 Oid
@@ -1165,7 +1137,7 @@ heap_create_with_catalog(const char *relname,
 	Oid			old_type_oid;
 	Oid			new_type_oid;
 
-	/* By default set to InvalidOid unless overridden by binary-upgrade */
+	/* 默认设为 InvalidOid，除非被 binary-upgrade 覆盖 */
 	RelFileNumber relfilenumber = InvalidRelFileNumber;
 	TransactionId relfrozenxid;
 	MultiXactId relminmxid;
@@ -1173,21 +1145,21 @@ heap_create_with_catalog(const char *relname,
 	pg_class_desc = table_open(RelationRelationId, RowExclusiveLock);
 
 	/*
-	 * sanity checks
+	 * 合理性检查
 	 */
 	Assert(IsNormalProcessingMode() || IsBootstrapProcessingMode());
 
 	/*
-	 * Validate proposed tupdesc for the desired relkind.  If
-	 * allow_system_table_mods is on, allow ANYARRAY to be used; this is a
-	 * hack to allow creating pg_statistic and cloning it during VACUUM FULL.
+	 * 为期望的 relkind 校验提议的 tupdesc。若开启了
+	 * allow_system_table_mods，则允许使用 ANYARRAY；这是一个
+	 * 用于在 VACUUM FULL 期间创建并克隆 pg_statistic 的 hack。
 	 */
 	CheckAttributeNamesTypes(tupdesc, relkind,
 							 allow_system_table_mods ? CHKATYPE_ANYARRAY : 0);
 
 	/*
-	 * This would fail later on anyway, if the relation already exists.  But
-	 * by catching it here we can emit a nicer error message.
+	 * 若关系已存在，这无论如何稍后也会失败。但在此处捕获它，
+	 * 我们便能给出更友好的错误消息。
 	 */
 	existing_relid = get_relname_relid(relname, relnamespace);
 	if (existing_relid != InvalidOid)
@@ -1196,10 +1168,9 @@ heap_create_with_catalog(const char *relname,
 				 errmsg("relation \"%s\" already exists", relname)));
 
 	/*
-	 * Since we are going to create a rowtype as well, also check for
-	 * collision with an existing type name.  If there is one and it's an
-	 * autogenerated array, we can rename it out of the way; otherwise we can
-	 * at least give a good error message.
+	 * 由于我们还要创建一个行类型，因此也要检查是否与已有的
+	 * 类型名冲突。若冲突对象是一个自动生成的数组类型，我们可以将其
+	 * 重命名让开；否则我们至少能给出一条良好的错误消息。
 	 */
 	old_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
 								   CStringGetDatum(relname),
@@ -1216,32 +1187,32 @@ heap_create_with_catalog(const char *relname,
 	}
 
 	/*
-	 * Shared relations must be in pg_global (last-ditch check)
+	 * 共享关系必须位于 pg_global 中(最后一道检查)
 	 */
 	if (shared_relation && reltablespace != GLOBALTABLESPACE_OID)
 		elog(ERROR, "shared relations must be placed in pg_global tablespace");
 
 	/*
-	 * Allocate an OID for the relation, unless we were told what to use.
+	 * 为关系分配一个 OID，除非已被告知使用哪个。
 	 *
-	 * The OID will be the relfilenumber as well, so make sure it doesn't
-	 * collide with either pg_class OIDs or existing physical files.
+	 * 该 OID 也将作为 relfilenumber，因此要确保它既不与 pg_class 的
+	 * OID 冲突，也不与已有的物理文件冲突。
 	 */
 	if (!OidIsValid(relid))
 	{
-		/* Use binary-upgrade override for pg_class.oid and relfilenumber */
+		/* 为 pg_class.oid 与 relfilenumber 使用 binary-upgrade 覆盖值 */
 		if (IsBinaryUpgrade)
 		{
 			/*
-			 * Indexes are not supported here; they use
-			 * binary_upgrade_next_index_pg_class_oid.
+			 * 此处不支持索引；它们使用
+			 * binary_upgrade_next_index_pg_class_oid。
 			 */
 			Assert(relkind != RELKIND_INDEX);
 			Assert(relkind != RELKIND_PARTITIONED_INDEX);
 
 			if (relkind == RELKIND_TOASTVALUE)
 			{
-				/* There might be no TOAST table, so we have to test for it. */
+				/* 可能并不存在 TOAST 表，因此我们必须先测试它是否存在。 */
 				if (OidIsValid(binary_upgrade_next_toast_pg_class_oid))
 				{
 					relid = binary_upgrade_next_toast_pg_class_oid;
@@ -1285,14 +1256,14 @@ heap_create_with_catalog(const char *relname,
 	}
 
 	/*
-	 * Other sessions' catalog scans can't find this until we commit.  Hence,
-	 * it doesn't hurt to hold AccessExclusiveLock.  Do it here so callers
-	 * can't accidentally vary in their lock mode or acquisition timing.
+	 * 在其他会话提交之前，它们的目录扫描都无法找到本关系。因此，
+	 * 持有 AccessExclusiveLock 并无害处。在此处加锁，调用者就无法
+	 * 在锁模式或获取时机上意外地发生改变。
 	 */
 	LockRelationOid(relid, AccessExclusiveLock);
 
 	/*
-	 * Determine the relation's initial permissions.
+	 * 确定关系的初始权限。
 	 */
 	if (use_user_acl)
 	{
@@ -1319,13 +1290,11 @@ heap_create_with_catalog(const char *relname,
 		relacl = NULL;
 
 	/*
-	 * Create the relcache entry (mostly dummy at this point) and the physical
-	 * disk file.  (If we fail further down, it's the smgr's responsibility to
-	 * remove the disk file again.)
+	 * 创建 relcache 条目(目前基本是空壳)与物理磁盘文件。
+	 * (若后续失败，移除磁盘文件是 smgr 的责任。)
 	 *
-	 * NB: Note that passing create_storage = true is correct even for binary
-	 * upgrade.  The storage we create here will be replaced later, but we
-	 * need to have something on disk in the meanwhile.
+	 * 注意：即便对于二进制升级，传入 create_storage = true 也是正确的。
+	 * 我们在此创建的存储稍后会被替换，但在此期间磁盘上需要有内容。
 	 */
 	new_rel_desc = heap_create(relname,
 							   relnamespace,
@@ -1348,9 +1317,9 @@ heap_create_with_catalog(const char *relname,
 	new_rel_desc->rd_rel->relrewrite = relrewrite;
 
 	/*
-	 * Decide whether to create a pg_type entry for the relation's rowtype.
-	 * These types are made except where the use of a relation as such is an
-	 * implementation detail: toast tables, sequences and indexes.
+	 * 决定是否要为关系的行类型创建一个 pg_type 条目。
+	 * 这些类型都会被创建，除非关系的使用仅仅是个实现细节：
+	 * toast 表、序列和索引。
 	 */
 	if (!(relkind == RELKIND_SEQUENCE ||
 		  relkind == RELKIND_TOASTVALUE ||
@@ -1362,19 +1331,18 @@ heap_create_with_catalog(const char *relname,
 		char	   *relarrayname;
 
 		/*
-		 * We'll make an array over the composite type, too.  For largely
-		 * historical reasons, the array type's OID is assigned first.
+		 * 我们也会创建该组合类型之上的数组类型。主要出于
+		 * 历史原因，数组类型的 OID 先被分配。
 		 */
 		new_array_oid = AssignTypeArrayOid();
 
 		/*
-		 * Make the pg_type entry for the composite type.  The OID of the
-		 * composite type can be preselected by the caller, but if reltypeid
-		 * is InvalidOid, we'll generate a new OID for it.
+		 * 为组合类型创建 pg_type 条目。组合类型的 OID 可由调用者
+		 * 预先选定，但若 reltypeid 为 InvalidOid，我们会为其生成
+		 * 一个新的 OID。
 		 *
-		 * NOTE: we could get a unique-index failure here, in case someone
-		 * else is creating the same type name in parallel but hadn't
-		 * committed yet when we checked for a duplicate name above.
+		 * 注意：这里可能会遇到唯一索引冲突，因为可能另有某个会话
+		 * 在并行创建相同的类型名，而我们在上方检查重名时它尚未提交。
 		 */
 		new_type_addr = AddNewRelationType(relname,
 										   relnamespace,
@@ -1387,7 +1355,7 @@ heap_create_with_catalog(const char *relname,
 		if (typaddress)
 			*typaddress = new_type_addr;
 
-		/* Now create the array type. */
+		/* 现在创建数组类型。 */
 		relarrayname = makeArrayTypeName(relname, relnamespace);
 
 		TypeCreate(new_array_oid,	/* force the type's OID to this */
@@ -1427,7 +1395,7 @@ heap_create_with_catalog(const char *relname,
 	}
 	else
 	{
-		/* Caller should not be expecting a type to be created. */
+		/* 调用者不应期望会创建一个类型。 */
 		Assert(reltypeid == InvalidOid);
 		Assert(typaddress == NULL);
 
@@ -1435,11 +1403,10 @@ heap_create_with_catalog(const char *relname,
 	}
 
 	/*
-	 * now create an entry in pg_class for the relation.
+	 * 现在为关系在 pg_class 中创建一条条目。
 	 *
-	 * NOTE: we could get a unique-index failure here, in case someone else is
-	 * creating the same relation name in parallel but hadn't committed yet
-	 * when we checked for a duplicate name above.
+	 * 注意：这里可能会遇到唯一索引冲突，因为可能另有某个会话
+	 * 在并行创建相同的关系名，而我们在上方检查重名时它尚未提交。
 	 */
 	AddNewRelationTuple(pg_class_desc,
 						new_rel_desc,
@@ -1454,24 +1421,23 @@ heap_create_with_catalog(const char *relname,
 						reloptions);
 
 	/*
-	 * now add tuples to pg_attribute for the attributes in our new relation.
+	 * 现在为我们新关系的属性向 pg_attribute 添加元组。
 	 */
 	AddNewAttributeTuples(relid, new_rel_desc->rd_att, relkind);
 
 	/*
-	 * Make a dependency link to force the relation to be deleted if its
-	 * namespace is.  Also make a dependency link to its owner, as well as
-	 * dependencies for any roles mentioned in the default ACL.
+	 * 建立依赖链接，使得当其命名空间被删除时，该关系也被强制删除。
+	 * 同时建立指向其所有者的依赖链接，以及针对默认 ACL 中
+	 * 提到的任何角色的依赖。
 	 *
-	 * For composite types, these dependencies are tracked for the pg_type
-	 * entry, so we needn't record them here.  Likewise, TOAST tables don't
-	 * need a namespace dependency (they live in a pinned namespace) nor an
-	 * owner dependency (they depend indirectly through the parent table), nor
-	 * should they have any ACL entries.  The same applies for extension
-	 * dependencies.
+	 * 对于组合类型，这些依赖是针对 pg_type 条目跟踪的，
+	 * 因此这里无需记录。同样地，TOAST 表不需要命名空间依赖
+	 * (它们位于固定的命名空间中)，也不需要所有者依赖
+	 * (它们通过父表间接依赖)，也不应有任何 ACL 条目。
+	 * 扩展依赖也同理。
 	 *
-	 * Also, skip this in bootstrap mode, since we don't make dependencies
-	 * while bootstrapping.
+	 * 另外，在 bootstrap 模式下跳过此步，因为我们不会在
+	 * bootstrapping 期间建立依赖。
 	 */
 	if (relkind != RELKIND_COMPOSITE_TYPE &&
 		relkind != RELKIND_TOASTVALUE &&
@@ -1501,12 +1467,11 @@ heap_create_with_catalog(const char *relname,
 		}
 
 		/*
-		 * Make a dependency link to force the relation to be deleted if its
-		 * access method is.
+		 * 建立依赖链接，使得当关系的访问方法被删除时，
+		 * 该关系也被强制删除。
 		 *
-		 * No need to add an explicit dependency for the toast table, as the
-		 * main table depends on it.  Partitioned tables may not have an
-		 * access method set.
+		 * 无需为 toast 表添加显式依赖，因为主表依赖于它。
+		 * 分区表可能没有设置访问方法。
 		 */
 		if ((RELKIND_HAS_TABLE_AM(relkind) && relkind != RELKIND_TOASTVALUE) ||
 			(relkind == RELKIND_PARTITIONED_TABLE && OidIsValid(accessmtd)))
@@ -1519,27 +1484,27 @@ heap_create_with_catalog(const char *relname,
 		free_object_addresses(addrs);
 	}
 
-	/* Post creation hook for new relation */
+	/* 针对新关系的创建后钩子 */
 	InvokeObjectPostCreateHookArg(RelationRelationId, relid, 0, is_internal);
 
 	/*
-	 * Store any supplied CHECK constraints and defaults.
+	 * 存储任何提供的 CHECK 约束与默认值。
 	 *
-	 * NB: this may do a CommandCounterIncrement and rebuild the relcache
-	 * entry, so the relation must be valid and self-consistent at this point.
-	 * In particular, there are not yet constraints and defaults anywhere.
+	 * 注意：这可能会执行 CommandCounterIncrement 并重建 relcache
+	 * 条目，因此关系到此必须有效且自洽。尤其重要的是，此刻任何地方
+	 * 都还没有约束与默认值。
 	 */
 	StoreConstraints(new_rel_desc, cooked_constraints, is_internal);
 
 	/*
-	 * If there's a special on-commit action, remember it
+	 * 若存在特殊的 on-commit 动作，则记录它
 	 */
 	if (oncommit != ONCOMMIT_NOOP)
 		register_on_commit_action(relid, oncommit);
 
 	/*
-	 * ok, the relation has been cataloged, so close our relations and return
-	 * the OID of the newly created relation.
+	 * 好了，关系已被编目，因此关闭我们的关系并返回
+	 * 新创建关系的 OID。
 	 */
 	table_close(new_rel_desc, NoLock);	/* do not unlock till end of xact */
 	table_close(pg_class_desc, RowExclusiveLock);
@@ -1550,11 +1515,10 @@ heap_create_with_catalog(const char *relname,
 /*
  *		RelationRemoveInheritance
  *
- * Formerly, this routine checked for child relations and aborted the
- * deletion if any were found.  Now we rely on the dependency mechanism
- * to check for or delete child relations.  By the time we get here,
- * there are no children and we need only remove any pg_inherits rows
- * linking this relation to its parent(s).
+ * 以往，本例程会检查子关系，若发现任何子关系则中止删除。
+ * 现在我们依赖依赖机制来检查或删除子关系。等到执行到这里时，
+ * 已经没有任何子关系，我们只需移除将这个关系链接到其
+ * 父关系的任何 pg_inherits 行。
  */
 static void
 RelationRemoveInheritance(Oid relid)
@@ -1584,10 +1548,9 @@ RelationRemoveInheritance(Oid relid)
 /*
  *		DeleteRelationTuple
  *
- * Remove pg_class row for the given relid.
+ * 移除给定 relid 对应的 pg_class 行。
  *
- * Note: this is shared by relation deletion and index deletion.  It's
- * not intended for use anyplace else.
+ * 注意：本例程由关系删除与索引删除共用，不打算用于任何其他地方。
  */
 void
 DeleteRelationTuple(Oid relid)
@@ -1595,14 +1558,14 @@ DeleteRelationTuple(Oid relid)
 	Relation	pg_class_desc;
 	HeapTuple	tup;
 
-	/* Grab an appropriate lock on the pg_class relation */
+	/* 在 pg_class 关系上获取适当的锁 */
 	pg_class_desc = table_open(RelationRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for relation %u", relid);
 
-	/* delete the relation tuple from pg_class, and finish up */
+	/* 从 pg_class 中删除关系元组，并收尾 */
 	CatalogTupleDelete(pg_class_desc, &tup->t_self);
 
 	ReleaseSysCache(tup);
@@ -1613,10 +1576,9 @@ DeleteRelationTuple(Oid relid)
 /*
  *		DeleteAttributeTuples
  *
- * Remove pg_attribute rows for the given relid.
+ * 移除给定 relid 对应的 pg_attribute 行。
  *
- * Note: this is shared by relation deletion and index deletion.  It's
- * not intended for use anyplace else.
+ * 注意：本例程由关系删除与索引删除共用，不打算用于任何其他地方。
  */
 void
 DeleteAttributeTuples(Oid relid)
@@ -1626,10 +1588,10 @@ DeleteAttributeTuples(Oid relid)
 	ScanKeyData key[1];
 	HeapTuple	atttup;
 
-	/* Grab an appropriate lock on the pg_attribute relation */
+	/* 在 pg_attribute 关系上获取适当的锁 */
 	attrel = table_open(AttributeRelationId, RowExclusiveLock);
 
-	/* Use the index to scan only attributes of the target relation */
+	/* 使用索引仅扫描目标关系的属性 */
 	ScanKeyInit(&key[0],
 				Anum_pg_attribute_attrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -1638,11 +1600,11 @@ DeleteAttributeTuples(Oid relid)
 	scan = systable_beginscan(attrel, AttributeRelidNumIndexId, true,
 							  NULL, 1, key);
 
-	/* Delete all the matching tuples */
+	/* 删除所有匹配的元组 */
 	while ((atttup = systable_getnext(scan)) != NULL)
 		CatalogTupleDelete(attrel, &atttup->t_self);
 
-	/* Clean up after the scan */
+	/* 扫描结束后清理 */
 	systable_endscan(scan);
 	table_close(attrel, RowExclusiveLock);
 }
@@ -1650,10 +1612,10 @@ DeleteAttributeTuples(Oid relid)
 /*
  *		DeleteSystemAttributeTuples
  *
- * Remove pg_attribute rows for system columns of the given relid.
+ * 移除给定 relid 的系统列对应的 pg_attribute 行。
  *
- * Note: this is only used when converting a table to a view.  Views don't
- * have system columns, so we should remove them from pg_attribute.
+ * 注意：本例程仅用于将表转换为视图时使用。视图没有
+ * 系统列，因此我们应当将其从 pg_attribute 中移除。
  */
 void
 DeleteSystemAttributeTuples(Oid relid)
@@ -1663,10 +1625,10 @@ DeleteSystemAttributeTuples(Oid relid)
 	ScanKeyData key[2];
 	HeapTuple	atttup;
 
-	/* Grab an appropriate lock on the pg_attribute relation */
+	/* 在 pg_attribute 关系上获取适当的锁 */
 	attrel = table_open(AttributeRelationId, RowExclusiveLock);
 
-	/* Use the index to scan only system attributes of the target relation */
+	/* 使用索引仅扫描目标关系的系统属性 */
 	ScanKeyInit(&key[0],
 				Anum_pg_attribute_attrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -1679,11 +1641,11 @@ DeleteSystemAttributeTuples(Oid relid)
 	scan = systable_beginscan(attrel, AttributeRelidNumIndexId, true,
 							  NULL, 2, key);
 
-	/* Delete all the matching tuples */
+	/* 删除所有匹配的元组 */
 	while ((atttup = systable_getnext(scan)) != NULL)
 		CatalogTupleDelete(attrel, &atttup->t_self);
 
-	/* Clean up after the scan */
+	/* 扫描结束后清理 */
 	systable_endscan(scan);
 	table_close(attrel, RowExclusiveLock);
 }
@@ -1691,10 +1653,10 @@ DeleteSystemAttributeTuples(Oid relid)
 /*
  *		RemoveAttributeById
  *
- * This is the guts of ALTER TABLE DROP COLUMN: actually mark the attribute
- * deleted in pg_attribute.  We also remove pg_statistic entries for it.
- * (Everything else needed, such as getting rid of any pg_attrdef entry,
- * is handled by dependency.c.)
+ * 这是 ALTER TABLE DROP COLUMN 的核心：真正在 pg_attribute 中
+ * 将该属性标记为已删除。我们还会移除它的 pg_statistic 条目。
+ * (其余所需工作，例如清除任何 pg_attrdef 条目，
+ * 由 dependency.c 处理。)
  */
 void
 RemoveAttributeById(Oid relid, AttrNumber attnum)
@@ -1709,10 +1671,9 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 	bool		replacesAtt[Natts_pg_attribute] = {0};
 
 	/*
-	 * Grab an exclusive lock on the target table, which we will NOT release
-	 * until end of transaction.  (In the simple case where we are directly
-	 * dropping this column, ATExecDropColumn already did this ... but when
-	 * cascading from a drop of some other object, we may not have any lock.)
+	 * 在目标表上获取排他锁，我们将一直持有到事务结束。
+	 * (在直接删除本列的简单情况下，ATExecDropColumn 已经做过这件事……；
+	 * 但当从删除其他对象级联而来时，我们可能没有任何锁。)
 	 */
 	rel = relation_open(relid, AccessExclusiveLock);
 
@@ -1726,40 +1687,39 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 			 attnum, relid);
 	attStruct = (Form_pg_attribute) GETSTRUCT(tuple);
 
-	/* Mark the attribute as dropped */
+	/* 将该属性标记为已删除 */
 	attStruct->attisdropped = true;
 
 	/*
-	 * Set the type OID to invalid.  A dropped attribute's type link cannot be
-	 * relied on (once the attribute is dropped, the type might be too).
-	 * Fortunately we do not need the type row --- the only really essential
-	 * information is the type's typlen and typalign, which are preserved in
-	 * the attribute's attlen and attalign.  We set atttypid to zero here as a
-	 * means of catching code that incorrectly expects it to be valid.
+	 * 将类型 OID 设为无效。被删除属性的类型链接不可信赖
+	 * (一旦属性被删除，其类型也可能随之消失)。所幸我们并不需要
+	 * 类型行——唯一真正必要的信息是类型的 typlen 和 typalign，
+	 * 它们保存在属性的 attlen 和 attalign 中。我们在此将 atttypid
+	 * 置零，以此捕获那些错误地期望它仍然有效的代码。
 	 */
 	attStruct->atttypid = InvalidOid;
 
-	/* Remove any not-null constraint the column may have */
+	/* 移除该列可能带有的任何 NOT NULL 约束 */
 	attStruct->attnotnull = false;
 
-	/* Unset this so no one tries to look up the generation expression */
+	/* 清除此项，以免有人尝试查找生成表达式 */
 	attStruct->attgenerated = '\0';
 
 	/*
-	 * Change the column name to something that isn't likely to conflict
+	 * 将列名改为一个不太可能冲突的名称
 	 */
 	snprintf(newattname, sizeof(newattname),
 			 "........pg.dropped.%d........", attnum);
 	namestrcpy(&(attStruct->attname), newattname);
 
-	/* Clear the missing value */
+	/* 清除缺失值 */
 	attStruct->atthasmissing = false;
 	nullsAtt[Anum_pg_attribute_attmissingval - 1] = true;
 	replacesAtt[Anum_pg_attribute_attmissingval - 1] = true;
 
 	/*
-	 * Clear the other nullable fields.  This saves some space in pg_attribute
-	 * and removes no longer useful information.
+	 * 清除其他可空字段。这能在 pg_attribute 中节省一些空间，
+	 * 并移除不再有用的信息。
 	 */
 	nullsAtt[Anum_pg_attribute_attstattarget - 1] = true;
 	replacesAtt[Anum_pg_attribute_attstattarget - 1] = true;
@@ -1776,9 +1736,8 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 	CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
 
 	/*
-	 * Because updating the pg_attribute row will trigger a relcache flush for
-	 * the target relation, we need not do anything else to notify other
-	 * backends of the change.
+	 * 因为更新 pg_attribute 行会触发目标关系的 relcache 刷新，
+	 * 我们无需再做其他事情来通知其他后端这一变更。
 	 */
 
 	table_close(attr_rel, RowExclusiveLock);
@@ -1789,13 +1748,12 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 }
 
 /*
- * heap_drop_with_catalog	- removes specified relation from catalogs
+ * heap_drop_with_catalog	- 从系统目录中移除指定关系
  *
- * Note that this routine is not responsible for dropping objects that are
- * linked to the pg_class entry via dependencies (for example, indexes and
- * constraints).  Those are deleted by the dependency-tracing logic in
- * dependency.c before control gets here.  In general, therefore, this routine
- * should never be called directly; go through performDeletion() instead.
+ * 注意，本例程不负责删除那些通过依赖链接到 pg_class 条目的对象
+ * (例如索引和约束)。这些对象在控制权到达这里之前，已由
+ * dependency.c 中的依赖追踪逻辑删除。因此一般而言，本例程
+ * 不应被直接调用；请改为经由 performDeletion() 调用。
  */
 void
 heap_drop_with_catalog(Oid relid)
@@ -1806,14 +1764,12 @@ heap_drop_with_catalog(Oid relid)
 				defaultPartOid = InvalidOid;
 
 	/*
-	 * To drop a partition safely, we must grab exclusive lock on its parent,
-	 * because another backend might be about to execute a query on the parent
-	 * table.  If it relies on previously cached partition descriptor, then it
-	 * could attempt to access the just-dropped relation as its partition. We
-	 * must therefore take a table lock strong enough to prevent all queries
-	 * on the table from proceeding until we commit and send out a
-	 * shared-cache-inval notice that will make them update their partition
-	 * descriptors.
+	 * 为了安全地删除一个分区，我们必须在它的父表上获取排他锁，
+	 * 因为另一个后端可能正要在父表上执行查询。若它依赖之前缓存的
+	 * 分区描述符，就可能试图访问刚刚删除的关系作为其分区。
+	 * 因此我们必须在提交之前获取足够强的表锁，阻止该表上的所有查询
+	 * 继续进行，直到我们发出共享缓存失效通知，使它们更新各自的分区
+	 * 描述符。
 	 */
 	tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tuple))
@@ -1821,16 +1777,16 @@ heap_drop_with_catalog(Oid relid)
 	if (((Form_pg_class) GETSTRUCT(tuple))->relispartition)
 	{
 		/*
-		 * We have to lock the parent if the partition is being detached,
-		 * because it's possible that some query still has a partition
-		 * descriptor that includes this partition.
+		 * 若分区正在被 detach，我们必须锁定其父表，
+		 * 因为可能仍有某个查询持有包含本分区的
+		 * 分区描述符。
 		 */
 		parentOid = get_partition_parent(relid, true);
 		LockRelationOid(parentOid, AccessExclusiveLock);
 
 		/*
-		 * If this is not the default partition, dropping it will change the
-		 * default partition's partition constraint, so we must lock it.
+		 * 若这不是默认分区，删除它会改变默认分区的
+		 * 分区约束，因此我们必须锁定它。
 		 */
 		defaultPartOid = get_default_partition_oid(parentOid);
 		if (OidIsValid(defaultPartOid) && relid != defaultPartOid)
@@ -1840,27 +1796,25 @@ heap_drop_with_catalog(Oid relid)
 	ReleaseSysCache(tuple);
 
 	/*
-	 * Open and lock the relation.
+	 * 打开并锁定该关系。
 	 */
 	rel = relation_open(relid, AccessExclusiveLock);
 
 	/*
-	 * There can no longer be anyone *else* touching the relation, but we
-	 * might still have open queries or cursors, or pending trigger events, in
-	 * our own session.
+	 * 不会再有其他会话触碰该关系，但在我们自己的会话中
+	 * 仍可能有打开的查询或游标，或待处理的触发器事件。
 	 */
 	CheckTableNotInUse(rel, "DROP TABLE");
 
 	/*
-	 * This effectively deletes all rows in the table, and may be done in a
-	 * serializable transaction.  In that case we must record a rw-conflict in
-	 * to this transaction from each transaction holding a predicate lock on
-	 * the table.
+	 * 这会有效地删除表中的所有行，且可能在一个可串行化事务中执行。
+	 * 在这种情况下，我们必须为每个持有该表谓词锁的事务，
+	 * 记录一条指向本事务的读写冲突。
 	 */
 	CheckTableForSerializableConflictIn(rel);
 
 	/*
-	 * Delete pg_foreign_table tuple first.
+	 * 首先删除 pg_foreign_table 元组。
 	 */
 	if (rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
 	{
@@ -1880,89 +1834,87 @@ heap_drop_with_catalog(Oid relid)
 	}
 
 	/*
-	 * If a partitioned table, delete the pg_partitioned_table tuple.
+	 * 若是分区表，删除 pg_partitioned_table 元组。
 	 */
 	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 		RemovePartitionKeyByRelId(relid);
 
 	/*
-	 * If the relation being dropped is the default partition itself,
-	 * invalidate its entry in pg_partitioned_table.
+	 * 若被删除的关系本身就是默认分区，
+	 * 则使其 pg_partitioned_table 中的条目失效。
 	 */
 	if (relid == defaultPartOid)
 		update_default_partition_oid(parentOid, InvalidOid);
 
 	/*
-	 * Schedule unlinking of the relation's physical files at commit.
+	 * 安排在提交时解除该关系物理文件的链接。
 	 */
 	if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind))
 		RelationDropStorage(rel);
 
-	/* ensure that stats are dropped if transaction commits */
+	/* 确保若事务提交则丢弃统计信息 */
 	pgstat_drop_relation(rel);
 
 	/*
-	 * Close relcache entry, but *keep* AccessExclusiveLock on the relation
-	 * until transaction commit.  This ensures no one else will try to do
-	 * something with the doomed relation.
+	 * 关闭 relcache 条目，但*保留*该关系上的 AccessExclusiveLock
+	 * 直到事务提交。这确保不会有其他会话试图对这个注定被删除的
+	 * 关系做些什么。
 	 */
 	relation_close(rel, NoLock);
 
 	/*
-	 * Remove any associated relation synchronization states.
+	 * 移除任何关联的 relation 同步状态。
 	 */
 	RemoveSubscriptionRel(InvalidOid, relid);
 
 	/*
-	 * Forget any ON COMMIT action for the rel
+	 * 忘记该关系的任何 ON COMMIT 动作
 	 */
 	remove_on_commit_action(relid);
 
 	/*
-	 * Flush the relation from the relcache.  We want to do this before
-	 * starting to remove catalog entries, just to be certain that no relcache
-	 * entry rebuild will happen partway through.  (That should not really
-	 * matter, since we don't do CommandCounterIncrement here, but let's be
-	 * safe.)
+	 * 将关系从 relcache 中刷除。我们希望在着手移除目录条目之前
+	 * 完成此操作，以确信不会在过程中途发生 relcache 条目重建。
+	 * (这其实本应无关紧要，因为我们在此不做
+	 * CommandCounterIncrement，但为了安全还是这么做。)
 	 */
 	RelationForgetRelation(relid);
 
 	/*
-	 * remove inheritance information
+	 * 移除继承信息
 	 */
 	RelationRemoveInheritance(relid);
 
 	/*
-	 * delete statistics
+	 * 删除统计信息
 	 */
 	RemoveStatistics(relid, 0);
 
 	/*
-	 * delete attribute tuples
+	 * 删除属性元组
 	 */
 	DeleteAttributeTuples(relid);
 
 	/*
-	 * delete relation tuple
+	 * 删除关系元组
 	 */
 	DeleteRelationTuple(relid);
 
 	if (OidIsValid(parentOid))
 	{
 		/*
-		 * If this is not the default partition, the partition constraint of
-		 * the default partition has changed to include the portion of the key
-		 * space previously covered by the dropped partition.
+		 * 若这不是默认分区，默认分区的分区约束已经改变，
+		 * 以纳入原本由被删除分区覆盖的那部分键空间。
 		 */
 		if (OidIsValid(defaultPartOid) && relid != defaultPartOid)
 			CacheInvalidateRelcacheByRelid(defaultPartOid);
 
 		/*
-		 * Invalidate the parent's relcache so that the partition is no longer
-		 * included in its partition descriptor.
+		 * 使父表的 relcache 失效，使该分区不再
+		 * 被包含在其分区描述符中。
 		 */
 		CacheInvalidateRelcacheByRelid(parentOid);
-		/* keep the lock */
+		/* 保留该锁 */
 	}
 }
 
@@ -1970,12 +1922,12 @@ heap_drop_with_catalog(Oid relid)
 /*
  * RelationClearMissing
  *
- * Set atthasmissing and attmissingval to false/null for all attributes
- * where they are currently set. This can be safely and usefully done if
- * the table is rewritten (e.g. by VACUUM FULL or CLUSTER) where we know there
- * are no rows left with less than a full complement of attributes.
+ * 对所有当前已设置 atthasmissing 和 attmissingval 的属性，将它们
+ * 设为 false/null。若表被重写(例如经 VACUUM FULL 或 CLUSTER)，
+ * 我们可以安全且有效地这样做，因为我们知道不会再有行具有
+ * 少于完整数量的属性。
  *
- * The caller must have an AccessExclusive lock on the relation.
+ * 调用者必须持有该关系的 AccessExclusive 锁。
  */
 void
 RelationClearMissing(Relation rel)
@@ -2002,10 +1954,10 @@ RelationClearMissing(Relation rel)
 	repl_repl[Anum_pg_attribute_attmissingval - 1] = true;
 
 
-	/* Get a lock on pg_attribute */
+	/* 获取 pg_attribute 上的锁 */
 	attr_rel = table_open(AttributeRelationId, RowExclusiveLock);
 
-	/* process each non-system attribute, including any dropped columns */
+	/* 处理每个非系统属性，包括任何已删除的列 */
 	for (attnum = 1; attnum <= natts; attnum++)
 	{
 		tuple = SearchSysCache2(ATTNUM,
@@ -2017,7 +1969,7 @@ RelationClearMissing(Relation rel)
 
 		attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
 
-		/* ignore any where atthasmissing is not true */
+		/* 忽略任何 atthasmissing 不为 true 的属性 */
 		if (attrtuple->atthasmissing)
 		{
 			newtuple = heap_modify_tuple(tuple, RelationGetDescr(attr_rel),
@@ -2032,8 +1984,8 @@ RelationClearMissing(Relation rel)
 	}
 
 	/*
-	 * Our update of the pg_attribute rows will force a relcache rebuild, so
-	 * there's nothing else to do here.
+	 * 我们对 pg_attribute 行的更新会强制进行一次 relcache 重建，
+	 * 因此这里无需再做其他事情。
 	 */
 	table_close(attr_rel, RowExclusiveLock);
 }
@@ -2041,7 +1993,7 @@ RelationClearMissing(Relation rel)
 /*
  * StoreAttrMissingVal
  *
- * Set the missing value of a single attribute.
+ * 设置单个属性的缺失值。
  */
 void
 StoreAttrMissingVal(Relation rel, AttrNumber attnum, Datum missingval)
@@ -2054,10 +2006,10 @@ StoreAttrMissingVal(Relation rel, AttrNumber attnum, Datum missingval)
 	HeapTuple	atttup,
 				newtup;
 
-	/* This is only supported for plain tables */
+	/* 仅支持普通表 */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION);
 
-	/* Fetch the pg_attribute row */
+	/* 获取 pg_attribute 行 */
 	attrrel = table_open(AttributeRelationId, RowExclusiveLock);
 
 	atttup = SearchSysCache2(ATTNUM,
@@ -2068,7 +2020,7 @@ StoreAttrMissingVal(Relation rel, AttrNumber attnum, Datum missingval)
 			 attnum, RelationGetRelid(rel));
 	attStruct = (Form_pg_attribute) GETSTRUCT(atttup);
 
-	/* Make a one-element array containing the value */
+	/* 构造一个包含该值的单元素数组 */
 	missingval = PointerGetDatum(construct_array(&missingval,
 												 1,
 												 attStruct->atttypid,
@@ -2076,7 +2028,7 @@ StoreAttrMissingVal(Relation rel, AttrNumber attnum, Datum missingval)
 												 attStruct->attbyval,
 												 attStruct->attalign));
 
-	/* Update the pg_attribute row */
+	/* 更新 pg_attribute 行 */
 	valuesAtt[Anum_pg_attribute_atthasmissing - 1] = BoolGetDatum(true);
 	replacesAtt[Anum_pg_attribute_atthasmissing - 1] = true;
 
@@ -2087,7 +2039,7 @@ StoreAttrMissingVal(Relation rel, AttrNumber attnum, Datum missingval)
 							   valuesAtt, nullsAtt, replacesAtt);
 	CatalogTupleUpdate(attrrel, &newtup->t_self, newtup);
 
-	/* clean up */
+	/* 清理 */
 	ReleaseSysCache(atttup);
 	table_close(attrrel, RowExclusiveLock);
 }
@@ -2095,9 +2047,8 @@ StoreAttrMissingVal(Relation rel, AttrNumber attnum, Datum missingval)
 /*
  * SetAttrMissing
  *
- * Set the missing value of a single attribute. This should only be used by
- * binary upgrade. Takes an AccessExclusive lock on the relation owning the
- * attribute.
+ * 设置单个属性的缺失值。这应仅由二进制升级使用。会对
+ * 拥有该属性的关系取 AccessExclusive 锁。
  */
 void
 SetAttrMissing(Oid relid, char *attname, char *value)
@@ -2112,17 +2063,17 @@ SetAttrMissing(Oid relid, char *attname, char *value)
 	HeapTuple	atttup,
 				newtup;
 
-	/* lock the table the attribute belongs to */
+	/* 锁定该属性所属的表 */
 	tablerel = table_open(relid, AccessExclusiveLock);
 
-	/* Don't do anything unless it's a plain table */
+	/* 除非是普通表，否则什么都不做 */
 	if (tablerel->rd_rel->relkind != RELKIND_RELATION)
 	{
 		table_close(tablerel, AccessExclusiveLock);
 		return;
 	}
 
-	/* Lock the attribute row and get the data */
+	/* 锁定属性行并获取数据 */
 	attrrel = table_open(AttributeRelationId, RowExclusiveLock);
 	atttup = SearchSysCacheAttName(relid, attname);
 	if (!HeapTupleIsValid(atttup))
@@ -2130,13 +2081,13 @@ SetAttrMissing(Oid relid, char *attname, char *value)
 			 attname, relid);
 	attStruct = (Form_pg_attribute) GETSTRUCT(atttup);
 
-	/* get an array value from the value string */
+	/* 从值字符串获取一个数组值 */
 	missingval = OidFunctionCall3(F_ARRAY_IN,
 								  CStringGetDatum(value),
 								  ObjectIdGetDatum(attStruct->atttypid),
 								  Int32GetDatum(attStruct->atttypmod));
 
-	/* update the tuple - set atthasmissing and attmissingval */
+	/* 更新元组 - 设置 atthasmissing 与 attmissingval */
 	valuesAtt[Anum_pg_attribute_atthasmissing - 1] = BoolGetDatum(true);
 	replacesAtt[Anum_pg_attribute_atthasmissing - 1] = true;
 	valuesAtt[Anum_pg_attribute_attmissingval - 1] = missingval;
@@ -2146,19 +2097,20 @@ SetAttrMissing(Oid relid, char *attname, char *value)
 							   valuesAtt, nullsAtt, replacesAtt);
 	CatalogTupleUpdate(attrrel, &newtup->t_self, newtup);
 
-	/* clean up */
+	/* 清理 */
 	ReleaseSysCache(atttup);
 	table_close(attrrel, RowExclusiveLock);
 	table_close(tablerel, AccessExclusiveLock);
 }
 
 /*
- * Store a check-constraint expression for the given relation.
+ * 为给定关系存储一个 CHECK 约束表达式。
+ * 为给定关系存储一个 CHECK 约束表达式。
  *
- * Caller is responsible for updating the count of constraints
- * in the pg_class entry for the relation.
+ * 调用者负责更新该关系的 pg_class 条目中
+ * 约束的数量。
  *
- * The OID of the new constraint is returned.
+ * 返回新约束的 OID。
  */
 static Oid
 StoreRelCheck(Relation rel, const char *ccname, Node *expr,
@@ -2172,16 +2124,15 @@ StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 	Oid			constrOid;
 
 	/*
-	 * Flatten expression to string form for storage.
+	 * 将表达式扁平化为字符串形式以便存储。
 	 */
 	ccbin = nodeToString(expr);
 
 	/*
-	 * Find columns of rel that are used in expr
+	 * 找出 expr 中使用的 rel 的列
 	 *
-	 * NB: pull_var_clause is okay here only because we don't allow subselects
-	 * in check constraints; it would fail to examine the contents of
-	 * subselects.
+	 * 注意：pull_var_clause 在此处可用，仅因为我们不允许 CHECK 约束中
+	 * 出现子查询；否则它将无法检查子查询的内容。
 	 */
 	varList = pull_var_clause(expr, 0);
 	keycount = list_length(varList);
@@ -2209,8 +2160,8 @@ StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 		attNos = NULL;
 
 	/*
-	 * Partitioned tables do not contain any rows themselves, so a NO INHERIT
-	 * constraint makes no sense.
+	 * 分区表自身不包含任何行，因此 NO INHERIT
+	 * 约束毫无意义。
 	 */
 	if (is_no_inherit &&
 		rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
@@ -2220,7 +2171,7 @@ StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 						RelationGetRelationName(rel))));
 
 	/*
-	 * Create the Check Constraint
+	 * 创建 CHECK 约束
 	 */
 	constrOid =
 		CreateConstraintEntry(ccname,	/* Constraint Name */
@@ -2263,9 +2214,10 @@ StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 }
 
 /*
- * Store a not-null constraint for the given relation
+ * 为给定关系存储一个 NOT NULL 约束。
+ * 为给定关系存储一个 NOT NULL 约束。
  *
- * The OID of the new constraint is returned.
+ * 返回新约束的 OID。
  */
 static Oid
 StoreRelNotNull(Relation rel, const char *nnname, AttrNumber attnum,
@@ -2314,14 +2266,14 @@ StoreRelNotNull(Relation rel, const char *nnname, AttrNumber attnum,
 }
 
 /*
- * Store defaults and CHECK constraints (passed as a list of CookedConstraint).
+ * 存储默认值与 CHECK 约束(以 CookedConstraint 列表形式传入)。
  *
- * Each CookedConstraint struct is modified to store the new catalog tuple OID.
+ * 每个 CookedConstraint 结构体都会被修改，以存入新的目录元组 OID。
  *
- * NOTE: only pre-cooked expressions will be passed this way, which is to
- * say expressions inherited from an existing relation.  Newly parsed
- * expressions can be added later, by direct calls to StoreAttrDefault
- * and StoreRelCheck (see AddRelationNewConstraints()).
+ * 注意：仅预加工的(cooked)表达式会以这种方式传入，也就是说，
+ * 是从已有关系继承而来的表达式。新解析的表达式可以稍后通过
+ * 直接调用 StoreAttrDefault 和 StoreRelCheck 来添加
+ * (见 AddRelationNewConstraints())。
  */
 static void
 StoreConstraints(Relation rel, List *cooked_constraints, bool is_internal)
@@ -2333,9 +2285,9 @@ StoreConstraints(Relation rel, List *cooked_constraints, bool is_internal)
 		return;					/* nothing to do */
 
 	/*
-	 * Deparsing of constraint expressions will fail unless the just-created
-	 * pg_attribute tuples for this relation are made visible.  So, bump the
-	 * command counter.  CAUTION: this will cause a relcache entry rebuild.
+	 * 除非让刚创建的 pg_attribute 元组对本关系可见，否则约束表达式的
+	 * 反解析会失败。因此，递增命令计数器。注意：这将导致 relcache
+	 * 条目重建。
 	 */
 	CommandCounterIncrement();
 
@@ -2371,32 +2323,29 @@ StoreConstraints(Relation rel, List *cooked_constraints, bool is_internal)
 /*
  * AddRelationNewConstraints
  *
- * Add new column default expressions and/or constraint check expressions
- * to an existing relation.  This is defined to do both for efficiency in
- * DefineRelation, but of course you can do just one or the other by passing
- * empty lists.
+ * 向一个已有关系添加新的列默认表达式和/或约束检查表达式。
+ * 这里定义为两者都做，是为了在 DefineRelation 中提高效率，
+ * 但当然你可以通过传入空列表而只做其中一件事。
  *
- * rel: relation to be modified
- * newColDefaults: list of RawColumnDefault structures
- * newConstraints: list of Constraint nodes
- * allow_merge: true if check constraints may be merged with existing ones
- * is_local: true if definition is local, false if it's inherited
- * is_internal: true if result of some internal process, not a user request
- * queryString: used during expression transformation of default values and
- *		cooked CHECK constraints
+ * rel: 待修改的关系
+ * newColDefaults: RawColumnDefault 结构体列表
+ * newConstraints: Constraint 节点列表
+ * allow_merge: 若为 true，CHECK 约束可与其已有的约束合并
+ * is_local: 若定义为本地则为 true，若为继承则为 false
+ * is_internal: 若为某些内部过程(而非用户请求)的结果则为 true
+ * queryString: 在默认值和已加工的 CHECK 约束的表达式转换期间使用
  *
- * All entries in newColDefaults will be processed.  Entries in newConstraints
- * will be processed only if they are CONSTR_CHECK or CONSTR_NOTNULL types.
+ * newColDefaults 中的所有条目都会被处理。newConstraints 中的条目
+ * 仅当其为 CONSTR_CHECK 或 CONSTR_NOTNULL 类型时才会被处理。
  *
- * Returns a list of CookedConstraint nodes that shows the cooked form of
- * the default and constraint expressions added to the relation.
+ * 返回一个 CookedConstraint 节点列表，展示添加到该关系的
+ * 默认与约束表达式的加工后形式。
  *
- * NB: caller should have opened rel with some self-conflicting lock mode,
- * and should hold that lock till end of transaction; for normal cases that'll
- * be AccessExclusiveLock, but if caller knows that the constraint is already
- * enforced by some other means, it can be ShareUpdateExclusiveLock.  Also, we
- * assume the caller has done a CommandCounterIncrement if necessary to make
- * the relation's catalog tuples visible.
+ * 注意：调用者应当以某种自冲突的锁模式打开 rel，并在事务结束前
+ * 一直持有该锁；普通情况下应为 AccessExclusiveLock，但如果调用者
+ * 知道该约束已由其他手段强制执行，则可以是 ShareUpdateExclusiveLock。
+ * 此外，我们假设调用者已在必要时执行了 CommandCounterIncrement，
+ * 以使该关系的目录元组可见。
  */
 List *
 AddRelationNewConstraints(Relation rel,
@@ -2420,7 +2369,7 @@ AddRelationNewConstraints(Relation rel,
 	CookedConstraint *cooked;
 
 	/*
-	 * Get info about existing constraints.
+	 * 获取已有约束的信息。
 	 */
 	tupleDesc = RelationGetDescr(rel);
 	oldconstr = tupleDesc->constr;
@@ -2430,8 +2379,8 @@ AddRelationNewConstraints(Relation rel,
 		numoldchecks = 0;
 
 	/*
-	 * Create a dummy ParseState and insert the target relation as its sole
-	 * rangetable entry.  We need a ParseState for transformExpr.
+	 * 创建一个虚拟的 ParseState，并将目标关系作为它唯一的
+	 * 范围表项插入。transformExpr 需要一个 ParseState。
 	 */
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
@@ -2444,7 +2393,7 @@ AddRelationNewConstraints(Relation rel,
 	addNSItemToQuery(pstate, nsitem, true, true, true);
 
 	/*
-	 * Process column default expressions.
+	 * 处理列默认表达式。
 	 */
 	foreach_ptr(RawColumnDefault, colDef, newColDefaults)
 	{
@@ -2457,16 +2406,14 @@ AddRelationNewConstraints(Relation rel,
 						   atp->attgenerated);
 
 		/*
-		 * If the expression is just a NULL constant, we do not bother to make
-		 * an explicit pg_attrdef entry, since the default behavior is
-		 * equivalent.  This applies to column defaults, but not for
-		 * generation expressions.
+		 * 若表达式仅仅是一个 NULL 常量，我们就不必去创建一个显式的
+		 * pg_attrdef 条目，因为默认行为与之等价。这适用于列默认值，
+		 * 但不适用于生成表达式。
 		 *
-		 * Note a nonobvious property of this test: if the column is of a
-		 * domain type, what we'll get is not a bare null Const but a
-		 * CoerceToDomain expr, so we will not discard the default.  This is
-		 * critical because the column default needs to be retained to
-		 * override any default that the domain might have.
+		 * 注意本测试一个不显见的性质：若列的类型是域类型，我们得到的
+		 * 就不是一个裸的 null Const，而是一个 CoerceToDomain 表达式，
+		 * 因此我们不会丢弃该默认值。这很关键，因为列的默认值需要被保留，
+		 * 以覆盖该域可能拥有的任何默认值。
 		 */
 		if (expr == NULL ||
 			(!colDef->generated &&
@@ -2491,7 +2438,7 @@ AddRelationNewConstraints(Relation rel,
 	}
 
 	/*
-	 * Process constraint expressions.
+	 * 处理约束表达式。
 	 */
 	numchecks = numoldchecks;
 	checknames = NIL;
@@ -2509,8 +2456,8 @@ AddRelationNewConstraints(Relation rel,
 				Assert(cdef->cooked_expr == NULL);
 
 				/*
-				 * Transform raw parsetree to executable expression, and
-				 * verify it's valid as a CHECK constraint.
+				 * 将原始解析树转换为可执行表达式，并
+				 * 验证其作为 CHECK 约束的有效性。
 				 */
 				expr = cookConstraint(pstate, cdef->raw_expr,
 									  RelationGetRelationName(rel));
@@ -2520,20 +2467,20 @@ AddRelationNewConstraints(Relation rel,
 				Assert(cdef->cooked_expr != NULL);
 
 				/*
-				 * Here, we assume the parser will only pass us valid CHECK
-				 * expressions, so we do no particular checking.
+				 * 在这里，我们假设解析器只会向我们传入有效的 CHECK
+				 * 表达式，因此不做特别的检查。
 				 */
 				expr = stringToNode(cdef->cooked_expr);
 			}
 
-			/*
-			 * Check name uniqueness, or generate a name if none was given.
-			 */
-			if (cdef->conname != NULL)
+		/*
+		 * 检查名称唯一性，若未给定名称则生成一个。
+		 */
+		if (cdef->conname != NULL)
 			{
 				ccname = cdef->conname;
-				/* Check against other new constraints */
-				/* Needed because we don't do CommandCounterIncrement in loop */
+				/* 与其它新约束进行比对 */
+				/* 需要这样做，因为循环中我们没有执行 CommandCounterIncrement */
 				foreach_ptr(char, chkname, checknames)
 				{
 					if (strcmp(chkname, ccname) == 0)
@@ -2543,14 +2490,13 @@ AddRelationNewConstraints(Relation rel,
 										ccname)));
 				}
 
-				/* save name for future checks */
+				/* 保存名称以备后续检查 */
 				checknames = lappend(checknames, ccname);
 
 				/*
-				 * Check against pre-existing constraints.  If we are allowed
-				 * to merge with an existing constraint, there's no more to do
-				 * here. (We omit the duplicate constraint from the result,
-				 * which is what ATAddCheckNNConstraint wants.)
+				 * 与已有的约束进行比对。若允许与某个已有约束合并，
+				 * 则此处无需再做其他事情。(我们会从结果中省略这条重复的
+				 * 约束，这正是 ATAddCheckNNConstraint 所期望的。)
 				 */
 				if (MergeWithExistingConstraint(rel, ccname, expr,
 												allow_merge, is_local,
@@ -2562,24 +2508,21 @@ AddRelationNewConstraints(Relation rel,
 			else
 			{
 				/*
-				 * When generating a name, we want to create "tab_col_check"
-				 * for a column constraint and "tab_check" for a table
-				 * constraint.  We no longer have any info about the syntactic
-				 * positioning of the constraint phrase, so we approximate
-				 * this by seeing whether the expression references more than
-				 * one column.  (If the user played by the rules, the result
-				 * is the same...)
+				 * 生成名称时，我们希望为列约束创建 "tab_col_check"，
+				 * 为表约束创建 "tab_check"。我们不再拥有关于约束短语
+				 * 语法位置的任何信息，因此通过观察表达式是否引用了
+				 * 多个列来近似判断。(如果用户遵守规则，结果是一样的……)
 				 *
-				 * Note: pull_var_clause() doesn't descend into sublinks, but
-				 * we eliminated those above; and anyway this only needs to be
-				 * an approximate answer.
+				 * 注意：pull_var_clause() 不会下钻到子链接中，但我们在
+				 * 上面已经消除了那些；而且无论如何这里只需要一个
+				 * 近似的答案。
 				 */
 				List	   *vars;
 				char	   *colname;
 
 				vars = pull_var_clause(expr, 0);
 
-				/* eliminate duplicates */
+				/* 消除重复项 */
 				vars = list_union(NIL, vars);
 
 				if (list_length(vars) == 1)
@@ -2595,12 +2538,12 @@ AddRelationNewConstraints(Relation rel,
 											  RelationGetNamespace(rel),
 											  checknames);
 
-				/* save name for future checks */
+				/* 保存名称以备后续检查 */
 				checknames = lappend(checknames, ccname);
 			}
 
 			/*
-			 * OK, store it.
+			 * 好了，存储它。
 			 */
 			constrOid =
 				StoreRelCheck(rel, ccname, expr, cdef->is_enforced,
@@ -2630,7 +2573,7 @@ AddRelationNewConstraints(Relation rel,
 			int16		inhcount = is_local ? 0 : 1;
 			char	   *nnname;
 
-			/* Determine which column to modify */
+			/* 确定要修改哪一列 */
 			colnum = get_attnum(RelationGetRelid(rel), strVal(linitial(cdef->keys)));
 			if (colnum == InvalidAttrNumber)
 				ereport(ERROR,
@@ -2646,10 +2589,9 @@ AddRelationNewConstraints(Relation rel,
 			Assert(cdef->initially_valid != cdef->skip_validation);
 
 			/*
-			 * If the column already has a not-null constraint, we don't want
-			 * to add another one; adjust inheritance status as needed.  This
-			 * also checks whether the existing constraint matches the
-			 * requested validity.
+			 * 若该列已经有一个 NOT NULL 约束，我们不想
+			 * 再添加另一个；按需调整继承状态。这也会检查
+			 * 已有约束是否与所请求的有效性相匹配。
 			 */
 			if (AdjustNotNullInheritance(RelationGetRelid(rel), colnum,
 										 cdef->conname,
@@ -2658,8 +2600,8 @@ AddRelationNewConstraints(Relation rel,
 				continue;
 
 			/*
-			 * If a constraint name is specified, check that it isn't already
-			 * used.  Otherwise, choose a non-conflicting one ourselves.
+			 * 若指定了约束名，则检查它尚未被使用。
+			 * 否则，我们自己选一个不冲突的名称。
 			 */
 			if (cdef->conname)
 			{
@@ -2704,11 +2646,10 @@ AddRelationNewConstraints(Relation rel,
 	}
 
 	/*
-	 * Update the count of constraints in the relation's pg_class tuple. We do
-	 * this even if there was no change, in order to ensure that an SI update
-	 * message is sent out for the pg_class tuple, which will force other
-	 * backends to rebuild their relcache entries for the rel. (This is
-	 * critical if we added defaults but not constraints.)
+	 * 更新该关系 pg_class 元组中的约束数量。即使没有任何变化我们也这样做，
+	 * 以确保为 pg_class 元组发出一条 SI 更新消息，从而强制其他后端
+	 * 重建它们对该关系的 relcache 条目。(如果我们添加了默认值但没添加
+	 * 约束，这一点至关重要。)
 	 */
 	SetRelationNumChecks(rel, numchecks);
 
@@ -2716,14 +2657,13 @@ AddRelationNewConstraints(Relation rel,
 }
 
 /*
- * Check for a pre-existing check constraint that conflicts with a proposed
- * new one, and either adjust its conislocal/coninhcount settings or throw
- * error as needed.
+ * 检查是否存在与提议的新 CHECK 约束冲突的已有 CHECK 约束，
+ * 并视情况调整其 conislocal/coninhcount 设置或抛出错误。
  *
- * Returns true if merged (constraint is a duplicate), or false if it's
- * got a so-far-unique name, or throws error if conflict.
+ * 若合并成功(约束为重复)则返回 true，若得到一个迄今唯一的名称
+ * 则返回 false，若冲突则抛出错误。
  *
- * XXX See MergeConstraintsIntoExisting too if you change this code.
+ * 注意：若你修改这段代码，也请一并查看 MergeConstraintsIntoExisting。
  */
 static bool
 MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
@@ -2738,7 +2678,7 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 	ScanKeyData skey[3];
 	HeapTuple	tup;
 
-	/* Search for a pg_constraint entry with same name and relation */
+	/* 查找同名且同关系的 pg_constraint 条目 */
 	conDesc = table_open(ConstraintRelationId, RowExclusiveLock);
 
 	found = false;
@@ -2759,12 +2699,12 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 	conscan = systable_beginscan(conDesc, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 3, skey);
 
-	/* There can be at most one matching row */
+	/* 最多只能有一个匹配的行 */
 	if (HeapTupleIsValid(tup = systable_getnext(conscan)))
 	{
 		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tup);
 
-		/* Found it.  Conflicts if not identical check constraint */
+		/* 找到了。若不是相同的 CHECK 约束则冲突 */
 		if (con->contype == CONSTRAINT_CHECK)
 		{
 			Datum		val;
@@ -2781,12 +2721,11 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 		}
 
 		/*
-		 * If the existing constraint is purely inherited (no local
-		 * definition) then interpret addition of a local constraint as a
-		 * legal merge.  This allows ALTER ADD CONSTRAINT on parent and child
-		 * tables to be given in either order with same end state.  However if
-		 * the relation is a partition, all inherited constraints are always
-		 * non-local, including those that were merged.
+		 * 若已有约束纯粹是继承而来的(没有本地定义)，则将添加一个
+		 * 本地约束解释为一次合法的合并。这允许对父表和子表
+		 * 的 ALTER ADD CONSTRAINT 以任意顺序给出，最终状态相同。
+		 * 但如果关系是分区，所有继承来的约束始终是非本地的，
+		 * 包括那些已被合并的。
 		 */
 		if (is_local && !con->conislocal && !rel->rd_rel->relispartition)
 			allow_merge = true;
@@ -2797,7 +2736,7 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 					 errmsg("constraint \"%s\" for relation \"%s\" already exists",
 							ccname, RelationGetRelationName(rel))));
 
-		/* If the child constraint is "no inherit" then cannot merge */
+		/* 若子约束是 "no inherit"，则不能合并 */
 		if (con->connoinherit)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -2805,9 +2744,8 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 							ccname, RelationGetRelationName(rel))));
 
 		/*
-		 * Must not change an existing inherited constraint to "no inherit"
-		 * status.  That's because inherited constraints should be able to
-		 * propagate to lower-level children.
+		 * 绝不能将已有的继承约束改为 "no inherit" 状态。
+		 * 这是因为继承约束应当能够传播到更低层级的子表。
 		 */
 		if (con->coninhcount > 0 && is_no_inherit)
 			ereport(ERROR,
@@ -2816,8 +2754,7 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 							ccname, RelationGetRelationName(rel))));
 
 		/*
-		 * If the child constraint is "not valid" then cannot merge with a
-		 * valid parent constraint.
+		 * 若子约束是 "not valid"，则不能与有效的父约束合并。
 		 */
 		if (is_initially_valid && con->conenforced && !con->convalidated)
 			ereport(ERROR,
@@ -2826,9 +2763,8 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 							ccname, RelationGetRelationName(rel))));
 
 		/*
-		 * A non-enforced child constraint cannot be merged with an enforced
-		 * parent constraint. However, the reverse is allowed, where the child
-		 * constraint is enforced.
+		 * 非强制的子约束不能与强制的父约束合并。但反向是允许的，
+		 * 即子约束为强制时。
 		 */
 		if ((!is_local && is_enforced && !con->conenforced) ||
 			(is_local && !is_enforced && con->conenforced))
@@ -2837,7 +2773,7 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 					 errmsg("constraint \"%s\" conflicts with NOT ENFORCED constraint on relation \"%s\"",
 							ccname, RelationGetRelationName(rel))));
 
-		/* OK to update the tuple */
+		/* 可以更新该元组 */
 		ereport(NOTICE,
 				(errmsg("merging constraint \"%s\" with inherited definition",
 						ccname)));
@@ -2846,9 +2782,8 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 		con = (Form_pg_constraint) GETSTRUCT(tup);
 
 		/*
-		 * In case of partitions, an inherited constraint must be inherited
-		 * only once since it cannot have multiple parents and it is never
-		 * considered local.
+		 * 对于分区，继承约束必须只被继承一次，因为它不可能有多个
+		 * 父表，且永远不会被视为本地的。
 		 */
 		if (rel->rd_rel->relispartition)
 		{
@@ -2873,10 +2808,9 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 		}
 
 		/*
-		 * If the child constraint is required to be enforced while the parent
-		 * constraint is not, this should be allowed by marking the child
-		 * constraint as enforced. In the reverse case, an error would have
-		 * already been thrown before reaching this point.
+		 * 若要求子约束被强制，而父约束未被强制，则应当允许，
+		 * 方法是将子约束标记为强制。反向的情况则会在到达此点之前
+		 * 就已经抛出错误。
 		 */
 		if (is_enforced && !con->conenforced)
 		{
@@ -2895,20 +2829,17 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 }
 
 /*
- * Create the not-null constraints when creating a new relation
+ * 在创建新关系时创建 NOT NULL 约束
  *
- * These come from two sources: the 'constraints' list (of Constraint) is
- * specified directly by the user; the 'old_notnulls' list (of
- * CookedConstraint) comes from inheritance.  We create one constraint
- * for each column, giving priority to user-specified ones, and setting
- * inhcount according to how many parents cause each column to get a
- * not-null constraint.  If a user-specified name clashes with another
- * user-specified name, an error is raised.  'existing_constraints'
- * is a list of already defined constraint names, which should be avoided
- * when generating further ones.
+ * 这些约束来自两个来源：'constraints' 列表(Constraint)由用户
+ * 直接指定；'old_notnulls' 列表(CookedConstraint)来自继承。
+ * 我们为每一列创建一个约束，优先采用用户指定的，并按导致
+ * 每一列获得 NOT NULL 约束的父表数量设置 inhcount。
+ * 若用户指定的名称与另一个用户指定的名称冲突，则抛出错误。
+ * 'existing_constraints' 是已定义约束名称的列表，在生成
+ * 更多约束时应避免使用这些名称。
  *
- * Returns a list of AttrNumber for columns that need to have the attnotnull
- * flag set.
+ * 返回一个 AttrNumber 列表，列出需要设置 attnotnull 标志的列。
  */
 List *
 AddRelationNotNullConstraints(Relation rel, List *constraints,
@@ -2919,27 +2850,25 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 	List	   *nncols = NIL;
 
 	/*
-	 * We track two lists of names: nnnames keeps all the constraint names,
-	 * givennames tracks user-generated names.  The distinction is important,
-	 * because we must raise error for user-generated name conflicts, but for
-	 * system-generated name conflicts we just generate another.
+	 * 我们维护两个名称列表：nnnames 保存所有约束名，
+	 * givennames 跟踪用户生成的名称。这一区分很重要，
+	 * 因为对于用户生成的名称冲突我们必须报错，而对于
+	 * 系统生成的名称冲突，我们只需再生成一个。
 	 */
 	nnnames = list_copy(existing_constraints);	/* don't scribble on input */
 	givennames = NIL;
 
 	/*
-	 * First, create all not-null constraints that are directly specified by
-	 * the user.  Note that inheritance might have given us another source for
-	 * each, so we must scan the old_notnulls list and increment inhcount for
-	 * each element with identical attnum.  We delete from there any element
-	 * that we process.
+	 * 首先，创建所有由用户直接指定的 NOT NULL 约束。注意，继承可能
+	 * 为每一个都提供了另一个来源，因此我们必须扫描 old_notnulls 列表，
+	 * 并为每个具有相同 attnum 的元素递增 inhcount。我们会从那里
+	 * 删除任何已被处理的元素。
 	 *
-	 * We don't use foreach() here because we have two nested loops over the
-	 * constraint list, with possible element deletions in the inner one. If
-	 * we used foreach_delete_current() it could only fix up the state of one
-	 * of the loops, so it seems cleaner to use looping over list indexes for
-	 * both loops.  Note that any deletion will happen beyond where the outer
-	 * loop is, so its index never needs adjustment.
+	 * 这里不使用 foreach()，因为我们有两层嵌套循环遍历约束列表，
+	 * 内层可能会删除元素。如果我们使用 foreach_delete_current()，
+	 * 它只能修复其中一个循环的状态，因此对于两个循环都使用基于
+	 * 列表索引的循环看起来更清晰。注意任何删除都会发生在外层循环
+	 * 当前位置之后，因此外层循环的索引永远无需调整。
 	 */
 	for (int outerpos = 0; outerpos < list_length(constraints); outerpos++)
 	{
@@ -2967,9 +2896,8 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 						   strVal(linitial(constr->keys))));
 
 		/*
-		 * A column can only have one not-null constraint, so discard any
-		 * additional ones that appear for columns we already saw; but check
-		 * that the NO INHERIT flags match.
+		 * 一列只能有一个 NOT NULL 约束，因此丢弃任何针对我们
+		 * 已见过列的额外约束；但要检查 NO INHERIT 标志是否匹配。
 		 */
 		for (int restpos = outerpos + 1; restpos < list_length(constraints);)
 		{
@@ -2985,10 +2913,10 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 							errmsg("conflicting NO INHERIT declaration for not-null constraint on column \"%s\"",
 								   strVal(linitial(constr->keys))));
 
-				/*
-				 * Preserve constraint name if one is specified, but raise an
-				 * error if conflicting ones are specified.
-				 */
+		/*
+		 * 若指定了约束名则保留它，但若指定了相互冲突的
+		 * 名称则抛出错误。
+		 */
 				if (other->conname)
 				{
 					if (!constr->conname)
@@ -3000,7 +2928,7 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 									   constr->conname, other->conname));
 				}
 
-				/* XXX do we need to verify any other fields? */
+				/* 我们还需要验证其他字段吗？ */
 				constraints = list_delete_nth_cell(constraints, restpos);
 			}
 			else
@@ -3008,22 +2936,21 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 		}
 
 		/*
-		 * Search in the list of inherited constraints for any entries on the
-		 * same column; determine an inheritance count from that.  Also, if at
-		 * least one parent has a constraint for this column, then we must not
-		 * accept a user specification for a NO INHERIT one.  Any constraint
-		 * from parents that we process here is deleted from the list: we no
-		 * longer need to process it in the loop below.
+		 * 在继承约束列表中搜索同一列上的任何条目；并据此确定一个
+		 * 继承计数。此外，若至少有一个父表对该列有约束，我们就不能
+		 * 接受用户关于 NO INHERIT 的指定。我们在此处理的任何来自
+		 * 父表的约束都会从列表中删除：我们不再需要在下面的循环中
+		 * 处理它。
 		 */
 		foreach_ptr(CookedConstraint, old, old_notnulls)
 		{
 			if (old->attnum == attnum)
 			{
-				/*
-				 * If we get a constraint from the parent, having a local NO
-				 * INHERIT one doesn't work.
-				 */
-				if (constr->is_no_inherit)
+			/*
+			 * 若我们从父表得到一个约束，那么拥有本地的 NO
+			 * INHERIT 约束是行不通的。
+			 */
+			if (constr->is_no_inherit)
 					ereport(ERROR,
 							(errcode(ERRCODE_DATATYPE_MISMATCH),
 							 errmsg("cannot define not-null constraint with NO INHERIT on column \"%s\"",
@@ -3036,9 +2963,8 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 		}
 
 		/*
-		 * Determine a constraint name, which may have been specified by the
-		 * user, or raise an error if a conflict exists with another
-		 * user-specified name.
+		 * 确定一个约束名称，它可能已由用户指定；若与另一个
+		 * 用户指定的名称存在冲突，则报错。
 		 */
 		if (constr->conname)
 		{
@@ -3072,18 +2998,16 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 	}
 
 	/*
-	 * If any column remains in the old_notnulls list, we must create a not-
-	 * null constraint marked not-local for that column.  Because multiple
-	 * parents could specify a not-null constraint for the same column, we
-	 * must count how many there are and set an appropriate inhcount
-	 * accordingly, deleting elements we've already processed.
+	 * 若 old_notnulls 列表中仍有任何列残留，我们必须为那一列创建一个
+	 * 标记为 non-local 的 NOT NULL 约束。因为多个父表都可能对同一列
+	 * 指定 NOT NULL 约束，我们必须统计有多少个，并设置相应的
+	 * inhcount，同时删除已经处理过的元素。
 	 *
-	 * We don't use foreach() here because we have two nested loops over the
-	 * constraint list, with possible element deletions in the inner one. If
-	 * we used foreach_delete_current() it could only fix up the state of one
-	 * of the loops, so it seems cleaner to use looping over list indexes for
-	 * both loops.  Note that any deletion will happen beyond where the outer
-	 * loop is, so its index never needs adjustment.
+	 * 这里不使用 foreach()，因为我们有两层嵌套循环遍历约束列表，
+	 * 内层可能会删除元素。如果我们使用 foreach_delete_current()，
+	 * 它只能修复其中一个循环的状态，因此对于两个循环都使用基于
+	 * 列表索引的循环看起来更清晰。注意任何删除都会发生在外层循环
+	 * 当前位置之后，因此外层循环的索引永远无需调整。
 	 */
 	for (int outerpos = 0; outerpos < list_length(old_notnulls); outerpos++)
 	{
@@ -3096,7 +3020,7 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 		Assert(cooked->name);
 
 		/*
-		 * Preserve the first non-conflicting constraint name we come across.
+		 * 保留我们遇到的第一个不冲突的约束名称。
 		 */
 		if (conname == NULL)
 			conname = cooked->name;
@@ -3119,7 +3043,7 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 				restpos++;
 		}
 
-		/* If we got a name, make sure it isn't one we've already used */
+		/* 若我们得到了一个名称，确保它不是已经用过的 */
 		if (conname != NULL)
 		{
 			foreach_ptr(char, thisname, nnnames)
@@ -3132,7 +3056,7 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 			}
 		}
 
-		/* and choose a name, if needed */
+		/* 并在需要时选择一个名称 */
 		if (conname == NULL)
 			conname = ChooseConstraintName(RelationGetRelationName(rel),
 										   get_attname(RelationGetRelid(rel),
@@ -3142,7 +3066,7 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 										   nnnames);
 		nnnames = lappend(nnnames, conname);
 
-		/* ignore the origin constraint's is_local and inhcount */
+		/* 忽略源约束的 is_local 与 inhcount */
 		StoreRelNotNull(rel, conname, cooked->attnum, true,
 						false, inhcount, false);
 
@@ -3153,14 +3077,14 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 }
 
 /*
- * Update the count of constraints in the relation's pg_class tuple.
+ * 更新该关系 pg_class 元组中的约束数量。
  *
- * Caller had better hold exclusive lock on the relation.
+ * 调用者最好持有该关系的排他锁。
  *
- * An important side effect is that a SI update message will be sent out for
- * the pg_class tuple, which will force other backends to rebuild their
- * relcache entries for the rel.  Also, this backend will rebuild its
- * own relcache entry at the next CommandCounterIncrement.
+ * 一个重要的副作用是，会为 pg_class 元组发出一条 SI 更新消息，
+ * 从而强制其他后端重建它们对该关系的 relcache 条目。此外，
+ * 本后端会在下一次 CommandCounterIncrement 时重建它自己的
+ * relcache 条目。
  */
 static void
 SetRelationNumChecks(Relation rel, int numchecks)
@@ -3185,7 +3109,7 @@ SetRelationNumChecks(Relation rel, int numchecks)
 	}
 	else
 	{
-		/* Skip the disk update, but force relcache inval anyway */
+		/* 跳过磁盘更新，但仍强制令 relcache 失效 */
 		CacheInvalidateRelcache(rel);
 	}
 
@@ -3194,7 +3118,7 @@ SetRelationNumChecks(Relation rel, int numchecks)
 }
 
 /*
- * Check for references to generated columns
+ * 检查对生成列的引用
  */
 static bool
 check_nested_generated_walker(Node *node, void *context)
@@ -3211,7 +3135,7 @@ check_nested_generated_walker(Node *node, void *context)
 
 		relid = rt_fetch(var->varno, pstate->p_rtable)->relid;
 		if (!OidIsValid(relid))
-			return false;		/* XXX shouldn't we raise an error? */
+			return false;		/* 我们是否应该抛出错误？ */
 
 		attnum = var->varattno;
 
@@ -3222,14 +3146,14 @@ check_nested_generated_walker(Node *node, void *context)
 							get_attname(relid, attnum, false)),
 					 errdetail("A generated column cannot reference another generated column."),
 					 parser_errposition(pstate, var->location)));
-		/* A whole-row Var is necessarily self-referential, so forbid it */
+		/* 整行 Var 必然是自我引用的，因此禁止它 */
 		if (attnum == 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("cannot use whole-row variable in column generation expression"),
 					 errdetail("This would cause the generated column to depend on its own value."),
 					 parser_errposition(pstate, var->location)));
-		/* System columns were already checked in the parser */
+		/* 系统列已在解析器中检查过 */
 
 		return false;
 	}
@@ -3245,30 +3169,26 @@ check_nested_generated(ParseState *pstate, Node *node)
 }
 
 /*
- * Check security of virtual generated column expression.
+ * 检查虚拟生成列表达式的安全性。
  *
- * Just like selecting from a view is exploitable (CVE-2024-7348), selecting
- * from a table with virtual generated columns is exploitable.  Users who are
- * concerned about this can avoid selecting from views, but telling them to
- * avoid selecting from tables is less practical.
+ * 就像从视图中选择数据可能被利用(CVE-2024-7348)一样，从带有
+ * 虚拟生成列的表中选择数据也可能被利用。关注此问题的用户可以
+ * 避免从视图中选择，但告诉他们避免从表中选择则不切实际。
  *
- * To address this, this restricts generation expressions for virtual
- * generated columns are restricted to using built-in functions and types.  We
- * assume that built-in functions and types cannot be exploited for this
- * purpose.  Note the overall security also requires that all functions in use
- * a immutable.  (For example, there are some built-in non-immutable functions
- * that can run arbitrary SQL.)  The immutability is checked elsewhere, since
- * that is a property that needs to hold independent of security
- * considerations.
+ * 为了解决这个问题，这里将虚拟生成列的生成表达式限制为只能
+ * 使用内置函数和类型。我们假设内置函数和类型无法被用于此目的。
+ * 注意，整体的安全性还要求所使用的所有函数都是不可变的。
+ * (例如，存在一些可以执行任意 SQL 的内置非不可变函数。)
+ * 不可变性在别处检查，因为这是一种与安全考量无关、
+ * 必须成立的属性。
  *
- * In the future, this could be expanded by some new mechanism to declare
- * other functions and types as safe or trusted for this purpose, but that is
- * to be designed.
+ * 将来，可以通过某种新机制来声明其他函数与类型在此用途下是
+ * 安全或可信的，从而扩展本功能，但这尚待设计。
  */
 
 /*
- * Callback for check_functions_in_node() that determines whether a function
- * is user-defined.
+ * 供 check_functions_in_node() 使用的回调，用于判断一个函数
+ * 是否为用户定义的。
  */
 static bool
 contains_user_functions_checker(Oid func_id, void *context)
@@ -3277,9 +3197,8 @@ contains_user_functions_checker(Oid func_id, void *context)
 }
 
 /*
- * Checks for all the things we don't want in the generation expressions of
- * virtual generated columns for security reasons.  Errors out if it finds
- * one.
+ * 出于安全原因，检查虚拟生成列生成表达式中所有我们不希望
+ * 出现的内容。一旦发现就抛出错误。
  */
 static bool
 check_virtual_generated_security_walker(Node *node, void *context)
@@ -3299,13 +3218,13 @@ check_virtual_generated_security_walker(Node *node, void *context)
 					parser_errposition(pstate, exprLocation(node)));
 
 		/*
-		 * check_functions_in_node() doesn't check some node types (see
-		 * comment there).  We handle CoerceToDomain and MinMaxExpr by
-		 * checking for built-in types.  The other listed node types cannot
-		 * call user-definable SQL-visible functions.
+		 * check_functions_in_node() 不检查某些节点类型(参见
+		 * 那里的注释)。我们通过检查内置类型来处理 CoerceToDomain
+		 * 和 MinMaxExpr。其他列出的节点类型无法调用可由用户定义的
+		 * SQL 可见函数。
 		 *
-		 * We furthermore need this type check to handle built-in, immutable
-		 * polymorphic functions such as array_eq().
+		 * 此外，我们还需要这一类型检查来处理诸如 array_eq() 这样的
+		 * 内置、不可变的多态函数。
 		 */
 		if (exprType(node) >= FirstUnpinnedObjectId)
 			ereport(ERROR,
@@ -3325,16 +3244,15 @@ check_virtual_generated_security(ParseState *pstate, Node *node)
 }
 
 /*
- * Take a raw default and convert it to a cooked format ready for
- * storage.
+ * 取一个原始默认值，并将其转换为可用于存储的加工后格式。
  *
- * Parse state should be set up to recognize any vars that might appear
- * in the expression.  (Even though we plan to reject vars, it's more
- * user-friendly to give the correct error message than "unknown var".)
+ * 解析状态应当设置好，以识别表达式中可能出现的任何变量。
+ * (尽管我们计划拒绝变量，但给出正确的错误消息比"未知变量"
+ * 更加对用户友好。)
  *
- * If atttypid is not InvalidOid, coerce the expression to the specified
- * type (and typmod atttypmod).   attname is only needed in this case:
- * it is used in the error message, if any.
+ * 若 atttypid 不是 InvalidOid，则将表达式强制转换为指定的
+ * 类型(以及 typmod atttypmod)。attname 仅在此情况下需要：
+ * 它用于(若有)错误消息中。
  */
 Node *
 cookDefault(ParseState *pstate,
@@ -3349,38 +3267,38 @@ cookDefault(ParseState *pstate,
 	Assert(raw_default != NULL);
 
 	/*
-	 * Transform raw parsetree to executable expression.
+	 * 将原始解析树转换为可执行表达式。
 	 */
 	expr = transformExpr(pstate, raw_default, attgenerated ? EXPR_KIND_GENERATED_COLUMN : EXPR_KIND_COLUMN_DEFAULT);
 
 	if (attgenerated)
 	{
-		/* Disallow refs to other generated columns */
+		/* 禁止引用其他生成列 */
 		check_nested_generated(pstate, expr);
 
-		/* Disallow mutable functions */
+		/* 禁止可变函数 */
 		if (contain_mutable_functions_after_planning((Expr *) expr))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("generation expression is not immutable")));
 
-		/* Check security of expressions for virtual generated column */
+		/* 检查虚拟生成列表达式的安全性 */
 		if (attgenerated == ATTRIBUTE_GENERATED_VIRTUAL)
 			check_virtual_generated_security(pstate, expr);
 	}
 	else
 	{
 		/*
-		 * For a default expression, transformExpr() should have rejected
-		 * column references.
+		 * 对于默认表达式，transformExpr() 应当已经拒绝了
+		 * 列引用。
 		 */
 		Assert(!contain_var_clause(expr));
 	}
 
 	/*
-	 * Coerce the expression to the correct type and typmod, if given. This
-	 * should match the parser's processing of non-defaulted expressions ---
-	 * see transformAssignedExpr().
+	 * 若给定，将表达式强制转换为正确的类型与 typmod。这应当
+	 * 与解析器对非默认值表达式的处理保持一致——参见
+	 * transformAssignedExpr()。
 	 */
 	if (OidIsValid(atttypid))
 	{
@@ -3403,7 +3321,7 @@ cookDefault(ParseState *pstate,
 	}
 
 	/*
-	 * Finally, take care of collations in the finished expression.
+	 * 最后，处理已完成表达式中的排序规则。
 	 */
 	assign_expr_collations(pstate, expr);
 
@@ -3411,11 +3329,10 @@ cookDefault(ParseState *pstate,
 }
 
 /*
- * Take a raw CHECK constraint expression and convert it to a cooked format
- * ready for storage.
+ * 取一个原始 CHECK 约束表达式，并将其转换为可用于存储的
+ * 加工后格式。
  *
- * Parse state must be set up to recognize any vars that might appear
- * in the expression.
+ * 解析状态必须设置好，以识别表达式中可能出现的任何变量。
  */
 static Node *
 cookConstraint(ParseState *pstate,
@@ -3425,23 +3342,23 @@ cookConstraint(ParseState *pstate,
 	Node	   *expr;
 
 	/*
-	 * Transform raw parsetree to executable expression.
+	 * 将原始解析树转换为可执行表达式。
 	 */
 	expr = transformExpr(pstate, raw_constraint, EXPR_KIND_CHECK_CONSTRAINT);
 
 	/*
-	 * Make sure it yields a boolean result.
+	 * 确保它产生一个布尔结果。
 	 */
 	expr = coerce_to_boolean(pstate, expr, "CHECK");
 
 	/*
-	 * Take care of collations.
+	 * 处理排序规则。
 	 */
 	assign_expr_collations(pstate, expr);
 
 	/*
-	 * Make sure no outside relations are referred to (this is probably dead
-	 * code now that add_missing_from is history).
+	 * 确保没有引用外部关系(既然 add_missing_from 已成为历史，
+	 * 这大概已经是死代码了)。
 	 */
 	if (list_length(pstate->p_rtable) != 1)
 		ereport(ERROR,
@@ -3453,7 +3370,7 @@ cookConstraint(ParseState *pstate,
 }
 
 /*
- * CopyStatistics --- copy entries in pg_statistic from one rel to another
+ * CopyStatistics --- 将 pg_statistic 中的条目从一关系复制到另一关系
  */
 void
 CopyStatistics(Oid fromrelid, Oid torelid)
@@ -3466,7 +3383,7 @@ CopyStatistics(Oid fromrelid, Oid torelid)
 
 	statrel = table_open(StatisticRelationId, RowExclusiveLock);
 
-	/* Now search for stat records */
+	/* 现在查找统计记录 */
 	ScanKeyInit(&key[0],
 				Anum_pg_statistic_starelid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -3479,14 +3396,14 @@ CopyStatistics(Oid fromrelid, Oid torelid)
 	{
 		Form_pg_statistic statform;
 
-		/* make a modifiable copy */
+		/* 制作一个可修改的副本 */
 		tup = heap_copytuple(tup);
 		statform = (Form_pg_statistic) GETSTRUCT(tup);
 
-		/* update the copy of the tuple and insert it */
+		/* 更新元组的副本并插入它 */
 		statform->starelid = torelid;
 
-		/* fetch index information when we know we need it */
+		/* 在确知需要时才获取索引信息 */
 		if (indstate == NULL)
 			indstate = CatalogOpenIndexes(statrel);
 
@@ -3503,10 +3420,9 @@ CopyStatistics(Oid fromrelid, Oid torelid)
 }
 
 /*
- * RemoveStatistics --- remove entries in pg_statistic for a rel or column
+ * RemoveStatistics --- 移除某关系或某列的 pg_statistic 条目
  *
- * If attnum is zero, remove all entries for rel; else remove only the one(s)
- * for that column.
+ * 若 attnum 为零，移除该关系的所有条目；否则仅移除该列的条目。
  */
 void
 RemoveStatistics(Oid relid, AttrNumber attnum)
@@ -3538,7 +3454,7 @@ RemoveStatistics(Oid relid, AttrNumber attnum)
 	scan = systable_beginscan(pgstatistic, StatisticRelidAttnumInhIndexId, true,
 							  NULL, nkeys, key);
 
-	/* we must loop even when attnum != 0, in case of inherited stats */
+	/* 即便 attnum != 0 我们也必须循环，以防存在继承的统计信息 */
 	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
 		CatalogTupleDelete(pgstatistic, &tuple->t_self);
 
@@ -3549,47 +3465,45 @@ RemoveStatistics(Oid relid, AttrNumber attnum)
 
 
 /*
- * RelationTruncateIndexes - truncate all indexes associated
- * with the heap relation to zero tuples.
+ * RelationTruncateIndexes --- 将与堆关系关联的所有索引截断为零元组。
  *
- * The routine will truncate and then reconstruct the indexes on
- * the specified relation.  Caller must hold exclusive lock on rel.
+ * 该例程会截断并随后重建指定关系上的索引。
+ * 调用者必须持有该关系的排他锁。
  */
 static void
 RelationTruncateIndexes(Relation heapRelation)
 {
 	ListCell   *indlist;
 
-	/* Ask the relcache to produce a list of the indexes of the rel */
+	/* 请 relcache 生成该关系的索引列表 */
 	foreach(indlist, RelationGetIndexList(heapRelation))
 	{
 		Oid			indexId = lfirst_oid(indlist);
 		Relation	currentIndex;
 		IndexInfo  *indexInfo;
 
-		/* Open the index relation; use exclusive lock, just to be sure */
+		/* 打开索引关系；为稳妥起见使用排他锁 */
 		currentIndex = index_open(indexId, AccessExclusiveLock);
 
 		/*
-		 * Fetch info needed for index_build.  Since we know there are no
-		 * tuples that actually need indexing, we can use a dummy IndexInfo.
-		 * This is slightly cheaper to build, but the real point is to avoid
-		 * possibly running user-defined code in index expressions or
-		 * predicates.  We might be getting invoked during ON COMMIT
-		 * processing, and we don't want to run any such code then.
+		 * 获取 index_build 所需的信息。由于我们知道没有真正需要建立索引的
+		 * 元组，因此可以使用一个虚拟的 IndexInfo。这样构建略微廉价一些，
+		 * 但真正的目的是避免可能运行索引表达式或谓词中的用户定义代码。
+		 * 我们可能会在 ON COMMIT 处理期间被调用，而那时我们不想运行任何
+		 * 此类代码。
 		 */
 		indexInfo = BuildDummyIndexInfo(currentIndex);
 
 		/*
-		 * Now truncate the actual file (and discard buffers).
+		 * 现在截断实际文件（并丢弃缓冲区）。
 		 */
 		RelationTruncate(currentIndex, 0);
 
-		/* Initialize the index and rebuild */
-		/* Note: we do not need to re-establish pkey setting */
+		/* 初始化索引并重建 */
+		/* 注意：我们不需要重新设置主键设置 */
 		index_build(heapRelation, currentIndex, indexInfo, true, false);
 
-		/* We're done with this index */
+		/* 该索引处理完毕 */
 		index_close(currentIndex, NoLock);
 	}
 }
@@ -3597,11 +3511,11 @@ RelationTruncateIndexes(Relation heapRelation)
 /*
  *	 heap_truncate
  *
- *	 This routine deletes all data within all the specified relations.
+ *	 该例程删除所有指定关系内的全部数据。
  *
- * This is not transaction-safe!  There is another, transaction-safe
- * implementation in commands/tablecmds.c.  We now use this only for
- * ON COMMIT truncation of temporary tables, where it doesn't matter.
+ * 这不是事务安全的！在 commands/tablecmds.c 中存在另一个事务安全的
+ * 实现。我们现在仅将其用于临时表的 ON COMMIT 截断，此时是否事务安全
+ * 无关紧要。
  */
 void
 heap_truncate(List *relids)
@@ -3609,7 +3523,7 @@ heap_truncate(List *relids)
 	List	   *relations = NIL;
 	ListCell   *cell;
 
-	/* Open relations for processing, and grab exclusive access on each */
+	/* 打开关系以进行处理，并对每个关系获取排他访问 */
 	foreach(cell, relids)
 	{
 		Oid			rid = lfirst_oid(cell);
@@ -3619,18 +3533,18 @@ heap_truncate(List *relids)
 		relations = lappend(relations, rel);
 	}
 
-	/* Don't allow truncate on tables that are referenced by foreign keys */
+	/* 不允许对已被外键引用的表执行截断 */
 	heap_truncate_check_FKs(relations, true);
 
-	/* OK to do it */
+	/* 可以执行了 */
 	foreach(cell, relations)
 	{
 		Relation	rel = lfirst(cell);
 
-		/* Truncate the relation */
+		/* 截断该关系 */
 		heap_truncate_one_rel(rel);
 
-		/* Close the relation, but keep exclusive lock on it until commit */
+		/* 关闭关系，但保留其上的排他锁直到提交 */
 		table_close(rel, NoLock);
 	}
 }
@@ -3638,11 +3552,10 @@ heap_truncate(List *relids)
 /*
  *	 heap_truncate_one_rel
  *
- *	 This routine deletes all data within the specified relation.
+ *	 该例程删除指定关系内的全部数据。
  *
- * This is not transaction-safe, because the truncation is done immediately
- * and cannot be rolled back later.  Caller is responsible for having
- * checked permissions etc, and must have obtained AccessExclusiveLock.
+ * 这不是事务安全的，因为截断是立即执行的，且之后无法回滚。
+ * 调用者负责已完成权限等检查，并且必须已经获取了 AccessExclusiveLock。
  */
 void
 heap_truncate_one_rel(Relation rel)
@@ -3650,19 +3563,18 @@ heap_truncate_one_rel(Relation rel)
 	Oid			toastrelid;
 
 	/*
-	 * Truncate the relation.  Partitioned tables have no storage, so there is
-	 * nothing to do for them here.
+	 * 截断该关系。分区表没有存储，因此此处对它们无需做任何操作。
 	 */
 	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 		return;
 
-	/* Truncate the underlying relation */
+	/* 截断底层关系 */
 	table_relation_nontransactional_truncate(rel);
 
-	/* If the relation has indexes, truncate the indexes too */
+	/* 若关系有索引，则也截断这些索引 */
 	RelationTruncateIndexes(rel);
 
-	/* If there is a toast table, truncate that too */
+	/* 若存在 toast 表，也截断它 */
 	toastrelid = rel->rd_rel->reltoastrelid;
 	if (OidIsValid(toastrelid))
 	{
@@ -3670,23 +3582,22 @@ heap_truncate_one_rel(Relation rel)
 
 		table_relation_nontransactional_truncate(toastrel);
 		RelationTruncateIndexes(toastrel);
-		/* keep the lock... */
+		/* 保留锁... */
 		table_close(toastrel, NoLock);
 	}
 }
 
 /*
  * heap_truncate_check_FKs
- *		Check for foreign keys referencing a list of relations that
- *		are to be truncated, and raise error if there are any
+ *		检查引用待截断关系列表的外键，若存在则报错
  *
- * We disallow such FKs (except self-referential ones) since the whole point
- * of TRUNCATE is to not scan the individual rows to be thrown away.
+ * 我们不允许此类外键（自引用除外），因为 TRUNCATE 的全部意义就在于
+ * 不去扫描将被丢弃的个别行。
  *
- * This is split out so it can be shared by both implementations of truncate.
- * Caller should already hold a suitable lock on the relations.
+ * 此函数被拆分出来，以便两种截断实现都能共享。调用者应当已经持有
+ * 关系上的适当锁。
  *
- * tempTables is only used to select an appropriate error message.
+ * tempTables 仅用于选择合适的错误消息。
  */
 void
 heap_truncate_check_FKs(List *relations, bool tempTables)
@@ -3696,12 +3607,11 @@ heap_truncate_check_FKs(List *relations, bool tempTables)
 	ListCell   *cell;
 
 	/*
-	 * Build a list of OIDs of the interesting relations.
+	 * 构建相关关系的 OID 列表。
 	 *
-	 * If a relation has no triggers, then it can neither have FKs nor be
-	 * referenced by a FK from another table, so we can ignore it.  For
-	 * partitioned tables, FKs have no triggers, so we must include them
-	 * anyway.
+	 * 若一个关系没有触发器，则它既不可能拥有外键，也不可能被另一个
+	 * 表的外键引用，因此可以忽略它。对于分区表，外键没有触发器，
+	 * 因此无论如何都必须将其包含进来。
 	 */
 	foreach(cell, relations)
 	{
@@ -3713,25 +3623,23 @@ heap_truncate_check_FKs(List *relations, bool tempTables)
 	}
 
 	/*
-	 * Fast path: if no relation has triggers, none has FKs either.
+	 * 快速路径：若无关系拥有触发器，则也无关系拥有外键。
 	 */
 	if (oids == NIL)
 		return;
 
 	/*
-	 * Otherwise, must scan pg_constraint.  We make one pass with all the
-	 * relations considered; if this finds nothing, then all is well.
+	 * 否则，必须扫描 pg_constraint。我们用所有关系一起做一次遍历；
+	 * 若未找到任何内容，则一切正常。
 	 */
 	dependents = heap_truncate_find_FKs(oids);
 	if (dependents == NIL)
 		return;
 
 	/*
-	 * Otherwise we repeat the scan once per relation to identify a particular
-	 * pair of relations to complain about.  This is pretty slow, but
-	 * performance shouldn't matter much in a failure path.  The reason for
-	 * doing things this way is to ensure that the message produced is not
-	 * dependent on chance row locations within pg_constraint.
+	 * 否则，我们对每个关系重复扫描一次，以找出要报错的一对特定关系。
+	 * 这种方式相当缓慢，但在失败路径中性能并不重要。采用这种做法的原因
+	 * 是为了确保所产生的消息不依赖于 pg_constraint 中行的偶然位置。
 	 */
 	foreach(cell, oids)
 	{
@@ -3771,17 +3679,15 @@ heap_truncate_check_FKs(List *relations, bool tempTables)
 
 /*
  * heap_truncate_find_FKs
- *		Find relations having foreign keys referencing any of the given rels
+ *		查找拥有引用给定任一关系的外键的关系
  *
- * Input and result are both lists of relation OIDs.  The result contains
- * no duplicates, does *not* include any rels that were already in the input
- * list, and is sorted in OID order.  (The last property is enforced mainly
- * to guarantee consistent behavior in the regression tests; we don't want
- * behavior to change depending on chance locations of rows in pg_constraint.)
+ * 输入与结果都是关系 OID 的列表。结果不包含重复项，*不* 包含输入列表
+ * 中已有的任何关系，并且按 OID 顺序排列。（最后这个属性主要是为了
+ * 保证回归测试中的行为一致；我们不希望行为依赖于 pg_constraint 中
+ * 行的偶然位置而发生变化。）
  *
- * Note: caller should already have appropriate lock on all rels mentioned
- * in relationIds.  Since adding or dropping an FK requires exclusive lock
- * on both rels, this ensures that the answer will be stable.
+ * 注意：调用者应当已经持有 relationIds 中提到的所有关系的适当锁。
+ * 由于新增或删除外键需要对两个关系都持有排他锁，这保证了结果的稳定。
  */
 List *
 heap_truncate_find_FKs(List *relationIds)
@@ -3799,8 +3705,8 @@ heap_truncate_find_FKs(List *relationIds)
 	oids = list_copy(relationIds);
 
 	/*
-	 * Must scan pg_constraint.  Right now, it is a seqscan because there is
-	 * no available index on confrelid.
+	 * 必须扫描 pg_constraint。目前这是一次顺序扫描，因为在 confrelid
+	 * 上没有可用的索引。
 	 */
 	fkeyRel = table_open(ConstraintRelationId, AccessShareLock);
 
@@ -3815,27 +3721,26 @@ restart:
 	{
 		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tuple);
 
-		/* Not a foreign key */
+		/* 不是外键 */
 		if (con->contype != CONSTRAINT_FOREIGN)
 			continue;
 
-		/* Not referencing one of our list of tables */
+		/* 未引用我们表列表中任一表 */
 		if (!list_member_oid(oids, con->confrelid))
 			continue;
 
 		/*
-		 * If this constraint has a parent constraint which we have not seen
-		 * yet, keep track of it for the second loop, below.  Tracking parent
-		 * constraints allows us to climb up to the top-level constraint and
-		 * look for all possible relations referencing the partitioned table.
+		 * 若该约束拥有一个我们尚未见过的父约束，则将其记录下来以供
+		 * 下方的第二次循环使用。跟踪父约束使我们能够向上追溯到顶层约束，
+		 * 并查找所有引用该分区表的可能关系。
 		 */
 		if (OidIsValid(con->conparentid) &&
 			!list_member_oid(parent_cons, con->conparentid))
 			parent_cons = lappend_oid(parent_cons, con->conparentid);
 
 		/*
-		 * Add referencer to result, unless present in input list.  (Don't
-		 * worry about dupes: we'll fix that below).
+		 * 将引用者加入结果，除非它已出现在输入列表中。（不必担心
+		 * 重复：我们会在下方修正。）
 		 */
 		if (!list_member_oid(relationIds, con->conrelid))
 			result = lappend_oid(result, con->conrelid);
@@ -3844,11 +3749,10 @@ restart:
 	systable_endscan(fkeyScan);
 
 	/*
-	 * Process each parent constraint we found to add the list of referenced
-	 * relations by them to the oids list.  If we do add any new such
-	 * relations, redo the first loop above.  Also, if we see that the parent
-	 * constraint in turn has a parent, add that so that we process all
-	 * relations in a single additional pass.
+	 * 处理我们找到的每个父约束，将其所引用的关系列表加入 oids 列表。
+	 * 若确实加入了任何此类新关系，则重做上方的第一次循环。此外，
+	 * 若发现父约束自身也有父约束，则将其也加入，以便我们在一次额外
+	 * 的遍历中处理所有关系。
 	 */
 	foreach(cell, parent_cons)
 	{
@@ -3868,16 +3772,13 @@ restart:
 			Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tuple);
 
 			/*
-			 * pg_constraint rows always appear for partitioned hierarchies
-			 * this way: on the each side of the constraint, one row appears
-			 * for each partition that points to the top-most table on the
-			 * other side.
-			 *
-			 * Because of this arrangement, we can correctly catch all
-			 * relevant relations by adding to 'parent_cons' all rows with
-			 * valid conparentid, and to the 'oids' list all rows with a zero
-			 * conparentid.  If any oids are added to 'oids', redo the first
-			 * loop above by setting 'restart'.
+		 * pg_constraint 行在分区层次结构中总是以这种方式出现：在约束的
+		 * 每一侧，为每个指向另一侧最顶层表的分区各出现一行。
+		 *
+		 * 由于这种安排，我们可以通过将具有有效 conparentid 的所有行
+		 * 加入 'parent_cons'，并将 conparentid 为零的所有行加入 'oids'
+		 * 列表，来正确地捕获所有相关关系。若向 'oids' 加入了任何 OID，
+		 * 则通过设置 'restart' 重做上方的第一次循环。
 			 */
 			if (OidIsValid(con->conparentid))
 				parent_cons = list_append_unique_oid(parent_cons,
@@ -3899,7 +3800,7 @@ restart:
 	table_close(fkeyRel, AccessShareLock);
 	list_free(oids);
 
-	/* Now sort and de-duplicate the result list */
+	/* 现在对结果列表排序并去重 */
 	list_sort(result, list_oid_cmp);
 	list_deduplicate_oid(result);
 
@@ -3908,7 +3809,7 @@ restart:
 
 /*
  * StorePartitionKey
- *		Store information about the partition key rel into the catalog
+ *		将分区键关系的相关信息存入系统目录
  */
 void
 StorePartitionKey(Relation rel,
@@ -3934,12 +3835,12 @@ StorePartitionKey(Relation rel,
 
 	Assert(rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 
-	/* Copy the partition attribute numbers, opclass OIDs into arrays */
+	/* 将分区属性编号、操作符类 OID 复制到数组中 */
 	partattrs_vec = buildint2vector(partattrs, partnatts);
 	partopclass_vec = buildoidvector(partopclass, partnatts);
 	partcollation_vec = buildoidvector(partcollation, partnatts);
 
-	/* Convert the expressions (if any) to a text datum */
+	/* 将表达式（若有）转换为 text datum */
 	if (partexprs)
 	{
 		char	   *exprString;
@@ -3953,7 +3854,7 @@ StorePartitionKey(Relation rel,
 
 	pg_partitioned_table = table_open(PartitionedRelationId, RowExclusiveLock);
 
-	/* Only this can ever be NULL */
+	/* 只有这个可能为 NULL */
 	if (!partexprDatum)
 		nulls[Anum_pg_partitioned_table_partexprs - 1] = true;
 
@@ -3971,17 +3872,17 @@ StorePartitionKey(Relation rel,
 	CatalogTupleInsert(pg_partitioned_table, tuple);
 	table_close(pg_partitioned_table, RowExclusiveLock);
 
-	/* Mark this relation as dependent on a few things as follows */
+	/* 将该关系标记为依赖于以下几项 */
 	addrs = new_object_addresses();
 	ObjectAddressSet(myself, RelationRelationId, RelationGetRelid(rel));
 
-	/* Operator class and collation per key column */
+	/* 每个键列的操作符类与排序规则 */
 	for (i = 0; i < partnatts; i++)
 	{
 		ObjectAddressSet(referenced, OperatorClassRelationId, partopclass[i]);
 		add_exact_object_address(&referenced, addrs);
 
-		/* The default collation is pinned, so don't bother recording it */
+		/* 默认排序规则是固定的，无需费心记录它 */
 		if (OidIsValid(partcollation[i]) &&
 			partcollation[i] != DEFAULT_COLLATION_OID)
 		{
@@ -3994,15 +3895,14 @@ StorePartitionKey(Relation rel,
 	free_object_addresses(addrs);
 
 	/*
-	 * The partitioning columns are made internally dependent on the table,
-	 * because we cannot drop any of them without dropping the whole table.
-	 * (ATExecDropColumn independently enforces that, but it's not bulletproof
-	 * so we need the dependencies too.)
+	 * 分区列在内部被设置为依赖于该表，因为若不丢弃整张表就无法丢弃
+	 * 其中任何一列。（ATExecDropColumn 会独立地强制这一点，但它并非
+	 * 无懈可击，因此我们也需要这些依赖。）
 	 */
 	for (i = 0; i < partnatts; i++)
 	{
 		if (partattrs[i] == 0)
-			continue;			/* ignore expressions here */
+			continue;			/* 此处忽略表达式 */
 
 		ObjectAddressSubSet(referenced, RelationRelationId,
 							RelationGetRelid(rel), partattrs[i]);
@@ -4010,10 +3910,9 @@ StorePartitionKey(Relation rel,
 	}
 
 	/*
-	 * Also consider anything mentioned in partition expressions.  External
-	 * references (e.g. functions) get NORMAL dependencies.  Table columns
-	 * mentioned in the expressions are handled the same as plain partitioning
-	 * columns, i.e. they become internally dependent on the whole table.
+	 * 还要考虑分区表达式中提及的任何对象。外部引用（例如函数）获得
+	 * NORMAL 依赖。表达式中提及的表列与普通的分类键列处理方式相同，
+	 * 即它们在内部依赖于整张表。
 	 */
 	if (partexprs)
 		recordDependencyOnSingleRelExpr(&myself,
@@ -4024,16 +3923,15 @@ StorePartitionKey(Relation rel,
 										true /* reverse the self-deps */ );
 
 	/*
-	 * We must invalidate the relcache so that the next
-	 * CommandCounterIncrement() will cause the same to be rebuilt using the
-	 * information in just created catalog entry.
+	 * 我们必须令 relcache 失效，以便下一次 CommandCounterIncrement()
+	 * 会使用刚刚创建的系统目录项中的信息将其重建。
 	 */
 	CacheInvalidateRelcache(rel);
 }
 
 /*
  *	RemovePartitionKeyByRelId
- *		Remove pg_partitioned_table entry for a relation
+ *		移除某关系的 pg_partitioned_table 项
  */
 void
 RemovePartitionKeyByRelId(Oid relid)
@@ -4056,15 +3954,13 @@ RemovePartitionKeyByRelId(Oid relid)
 
 /*
  * StorePartitionBound
- *		Update pg_class tuple of rel to store the partition bound and set
- *		relispartition to true
+ *		更新 rel 的 pg_class 元组以存储分区边界，并将 relispartition
+ *		设为 true
  *
- * If this is the default partition, also update the default partition OID in
- * pg_partitioned_table.
+ * 若这是默认分区，则同时更新 pg_partitioned_table 中的默认分区 OID。
  *
- * Also, invalidate the parent's relcache, so that the next rebuild will load
- * the new partition's info into its partition descriptor.  If there is a
- * default partition, we must invalidate its relcache entry as well.
+ * 此外，令父关系的 relcache 失效，以便下一次重建会将新分区的信息
+ * 加载进其分区描述符。若存在默认分区，我们也必须令其 relcache 项失效。
  */
 void
 StorePartitionBound(Relation rel, Relation parent, PartitionBoundSpec *bound)
@@ -4077,7 +3973,7 @@ StorePartitionBound(Relation rel, Relation parent, PartitionBoundSpec *bound)
 				new_repl[Natts_pg_class];
 	Oid			defaultPartOid;
 
-	/* Update pg_class tuple */
+	/* 更新 pg_class 元组 */
 	classRel = table_open(RelationRelationId, RowExclusiveLock);
 	tuple = SearchSysCacheCopy1(RELOID,
 								ObjectIdGetDatum(RelationGetRelid(rel)));
@@ -4098,7 +3994,7 @@ StorePartitionBound(Relation rel, Relation parent, PartitionBoundSpec *bound)
 	}
 #endif
 
-	/* Fill in relpartbound value */
+	/* 填入 relpartbound 值 */
 	memset(new_val, 0, sizeof(new_val));
 	memset(new_null, false, sizeof(new_null));
 	memset(new_repl, false, sizeof(new_repl));
@@ -4107,12 +4003,12 @@ StorePartitionBound(Relation rel, Relation parent, PartitionBoundSpec *bound)
 	new_repl[Anum_pg_class_relpartbound - 1] = true;
 	newtuple = heap_modify_tuple(tuple, RelationGetDescr(classRel),
 								 new_val, new_null, new_repl);
-	/* Also set the flag */
+	/* 同时设置该标志 */
 	((Form_pg_class) GETSTRUCT(newtuple))->relispartition = true;
 
 	/*
-	 * We already checked for no inheritance children, but reset
-	 * relhassubclass in case it was left over.
+	 * 我们已经检查过没有继承子表，但仍需重置 relhassubclass，
+	 * 以防它是遗留下来的值。
 	 */
 	if (rel->rd_rel->relkind == RELKIND_RELATION && rel->rd_rel->relhassubclass)
 		((Form_pg_class) GETSTRUCT(newtuple))->relhassubclass = false;
@@ -4122,21 +4018,18 @@ StorePartitionBound(Relation rel, Relation parent, PartitionBoundSpec *bound)
 	table_close(classRel, RowExclusiveLock);
 
 	/*
-	 * If we're storing bounds for the default partition, update
-	 * pg_partitioned_table too.
+	 * 若我们正在为默认分区存储边界，则同时更新 pg_partitioned_table。
 	 */
 	if (bound->is_default)
 		update_default_partition_oid(RelationGetRelid(parent),
 									 RelationGetRelid(rel));
 
-	/* Make these updates visible */
+	/* 使这些更新可见 */
 	CommandCounterIncrement();
 
 	/*
-	 * The partition constraint for the default partition depends on the
-	 * partition bounds of every other partition, so we must invalidate the
-	 * relcache entry for that partition every time a partition is added or
-	 * removed.
+	 * 默认分区的分区约束依赖于其他每个分区的分区边界，因此每当
+	 * 新增或删除一个分区时，我们都必须令该分区的 relcache 项失效。
 	 */
 	defaultPartOid =
 		get_default_oid_from_partdesc(RelationGetPartitionDesc(parent, true));

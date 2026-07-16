@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * rel.h
- *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
+ *	  POSTGRES 关系描述符（亦称 relcache 条目）的定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -31,14 +31,14 @@
 
 
 /*
- * LockRelId and LockInfo really belong to lmgr.h, but it's more convenient
- * to declare them here so we can have a LockInfoData field in a Relation.
+ * LockRelId 和 LockInfo 本应属于 lmgr.h，但在此处声明更为方便，
+ * 这样我们就可以在 Relation 中拥有一个 LockInfoData 字段。
  */
 
 typedef struct LockRelId
 {
-	Oid			relId;			/* a relation identifier */
-	Oid			dbId;			/* a database identifier */
+	Oid			relId;			/* 关系标识符 */
+	Oid			dbId;			/* 数据库标识符 */
 } LockRelId;
 
 typedef struct LockInfoData
@@ -49,265 +49,247 @@ typedef struct LockInfoData
 typedef LockInfoData *LockInfo;
 
 /*
- * Here are the contents of a relation cache entry.
+ * 以下是关系缓存条目的内容。
  */
 
 typedef struct RelationData
 {
-	RelFileLocator rd_locator;	/* relation physical identifier */
-	SMgrRelation rd_smgr;		/* cached file handle, or NULL */
-	int			rd_refcnt;		/* reference count */
-	ProcNumber	rd_backend;		/* owning backend's proc number, if temp rel */
-	bool		rd_islocaltemp; /* rel is a temp rel of this session */
-	bool		rd_isnailed;	/* rel is nailed in cache */
-	bool		rd_isvalid;		/* relcache entry is valid */
-	bool		rd_indexvalid;	/* is rd_indexlist valid? (also rd_pkindex and
-								 * rd_replidindex) */
-	bool		rd_statvalid;	/* is rd_statlist valid? */
+	RelFileLocator rd_locator;	/* 关系的物理标识符 */
+	SMgrRelation rd_smgr;		/* 缓存的文件句柄，或 NULL */
+	int			rd_refcnt;		/* 引用计数 */
+	ProcNumber	rd_backend;		/* 所属后端的进程号，如果是临时关系 */
+	bool		rd_islocaltemp; /* 关系是本会话的临时关系 */
+	bool		rd_isnailed;	/* 关系在缓存中被钉住 */
+	bool		rd_isvalid;		/* relcache 条目有效 */
+	bool		rd_indexvalid;	/* rd_indexlist 是否有效？（也包括 rd_pkindex 和
+								 * rd_replidindex） */
+	bool		rd_statvalid;	/* rd_statlist 是否有效？ */
 
 	/*----------
-	 * rd_createSubid is the ID of the highest subtransaction the rel has
-	 * survived into or zero if the rel or its storage was created before the
-	 * current top transaction.  (IndexStmt.oldNumber leads to the case of a new
-	 * rel with an old rd_locator.)  rd_firstRelfilelocatorSubid is the ID of the
-	 * highest subtransaction an rd_locator change has survived into or zero if
-	 * rd_locator matches the value it had at the start of the current top
-	 * transaction.  (Rolling back the subtransaction that
-	 * rd_firstRelfilelocatorSubid denotes would restore rd_locator to the value it
-	 * had at the start of the current top transaction.  Rolling back any
-	 * lower subtransaction would not.)  Their accuracy is critical to
-	 * RelationNeedsWAL().
+	 * rd_createSubid 是关系所存活到的最高子事务的 ID；如果关系或其存储
+	 * 是在当前顶层事务之前创建的，则为 0。（IndexStmt.oldNumber 会导致
+	 * 一个具有旧 rd_locator 的新关系的情况。）rd_firstRelfilelocatorSubid
+	 * 是 rd_locator 变更所存活到的最高子事务的 ID；如果 rd_locator 与当前
+	 * 顶层事务开始时的值相同，则为 0。（回滚 rd_firstRelfilelocatorSubid
+	 * 所指的子事务会将 rd_locator 恢复到当前顶层事务开始时的值；回滚任何
+	 * 更低层的子事务则不会。）它们的准确性对 RelationNeedsWAL() 至关重要。
 	 *
-	 * rd_newRelfilelocatorSubid is the ID of the highest subtransaction the
-	 * most-recent relfilenumber change has survived into or zero if not changed
-	 * in the current transaction (or we have forgotten changing it).  This
-	 * field is accurate when non-zero, but it can be zero when a relation has
-	 * multiple new relfilenumbers within a single transaction, with one of them
-	 * occurring in a subsequently aborted subtransaction, e.g.
+	 * rd_newRelfilelocatorSubid 是最近一次 relfilenumber 变更所存活到
+	 * 的最高子事务的 ID；如果当前事务中没有变更（或我们已忘记变更它），
+	 * 则为 0。该字段在非 0 时是准确的，但当关系在单个事务中有多个新的
+	 * relfilenumber，且其中一个出现在随后被中止的子事务中时，它可能为 0，例如：
 	 *		BEGIN;
 	 *		TRUNCATE t;
 	 *		SAVEPOINT save;
 	 *		TRUNCATE t;
 	 *		ROLLBACK TO save;
-	 *		-- rd_newRelfilelocatorSubid is now forgotten
+	 *		-- rd_newRelfilelocatorSubid 现在已被遗忘
 	 *
-	 * If every rd_*Subid field is zero, they are read-only outside
-	 * relcache.c.  Files that trigger rd_locator changes by updating
-	 * pg_class.reltablespace and/or pg_class.relfilenode call
-	 * RelationAssumeNewRelfilelocator() to update rd_*Subid.
+	 * 如果所有 rd_*Subid 字段都为 0，则它们对于 relcache.c 之外是只读的。
+	 * 那些通过更新 pg_class.reltablespace 和/或 pg_class.relfilenode 来触发
+	 * rd_locator 变更的文件会调用 RelationAssumeNewRelfilelocator() 来更新
+	 * rd_*Subid。
 	 *
-	 * rd_droppedSubid is the ID of the highest subtransaction that a drop of
-	 * the rel has survived into.  In entries visible outside relcache.c, this
-	 * is always zero.
+	 * rd_droppedSubid 是关系的删除所存活到的最高子事务的 ID。在 relcache.c
+	 * 之外可见的条目中，此值始终为 0。
 	 */
-	SubTransactionId rd_createSubid;	/* rel was created in current xact */
-	SubTransactionId rd_newRelfilelocatorSubid; /* highest subxact changing
-												 * rd_locator to current value */
-	SubTransactionId rd_firstRelfilelocatorSubid;	/* highest subxact
-													 * changing rd_locator to
-													 * any value */
-	SubTransactionId rd_droppedSubid;	/* dropped with another Subid set */
+	SubTransactionId rd_createSubid;	/* 关系在当前事务中创建 */
+	SubTransactionId rd_newRelfilelocatorSubid; /* 将 rd_locator 改为当前值的最高子事务 */
+	SubTransactionId rd_firstRelfilelocatorSubid;	/* 将 rd_locator 改为任意值的最高子事务 */
+	SubTransactionId rd_droppedSubid;	/* 删除时设置了另一个 Subid */
 
-	Form_pg_class rd_rel;		/* RELATION tuple */
-	TupleDesc	rd_att;			/* tuple descriptor */
-	Oid			rd_id;			/* relation's object id */
-	LockInfoData rd_lockInfo;	/* lock mgr's info for locking relation */
-	RuleLock   *rd_rules;		/* rewrite rules */
-	MemoryContext rd_rulescxt;	/* private memory cxt for rd_rules, if any */
-	TriggerDesc *trigdesc;		/* Trigger info, or NULL if rel has none */
-	/* use "struct" here to avoid needing to include rowsecurity.h: */
-	struct RowSecurityDesc *rd_rsdesc;	/* row security policies, or NULL */
+	Form_pg_class rd_rel;		/* RELATION 元组 */
+	TupleDesc	rd_att;			/* 元组描述符 */
+	Oid			rd_id;			/* 关系的对象 ID */
+	LockInfoData rd_lockInfo;	/* 锁管理器用于锁定关系的信息 */
+	RuleLock   *rd_rules;		/* 重写规则 */
+	MemoryContext rd_rulescxt;	/* rd_rules 的私有内存上下文（如果有） */
+	TriggerDesc *trigdesc;		/* 触发器信息；若关系没有则为 NULL */
+	/* 此处使用 "struct" 以避免需要包含 rowsecurity.h： */
+	struct RowSecurityDesc *rd_rsdesc;	/* 行级安全策略，或 NULL */
 
-	/* data managed by RelationGetFKeyList: */
-	List	   *rd_fkeylist;	/* list of ForeignKeyCacheInfo (see below) */
-	bool		rd_fkeyvalid;	/* true if list has been computed */
+	/* 由 RelationGetFKeyList 管理的数据： */
+	List	   *rd_fkeylist;	/* ForeignKeyCacheInfo 列表（见下文） */
+	bool		rd_fkeyvalid;	/* 若列表已计算则为 true */
 
-	/* data managed by RelationGetPartitionKey: */
-	PartitionKey rd_partkey;	/* partition key, or NULL */
-	MemoryContext rd_partkeycxt;	/* private context for rd_partkey, if any */
+	/* 由 RelationGetPartitionKey 管理的数据： */
+	PartitionKey rd_partkey;	/* 分区键，或 NULL */
+	MemoryContext rd_partkeycxt;	/* rd_partkey 的私有上下文（如果有） */
 
-	/* data managed by RelationGetPartitionDesc: */
-	PartitionDesc rd_partdesc;	/* partition descriptor, or NULL */
-	MemoryContext rd_pdcxt;		/* private context for rd_partdesc, if any */
+	/* 由 RelationGetPartitionDesc 管理的数据： */
+	PartitionDesc rd_partdesc;	/* 分区描述符，或 NULL */
+	MemoryContext rd_pdcxt;		/* rd_partdesc 的私有上下文（如果有） */
 
-	/* Same as above, for partdescs that omit detached partitions */
-	PartitionDesc rd_partdesc_nodetached;	/* partdesc w/o detached parts */
-	MemoryContext rd_pddcxt;	/* for rd_partdesc_nodetached, if any */
+	/* 同上，针对省略了已分离分区的 partdesc */
+	PartitionDesc rd_partdesc_nodetached;	/* 不含已分离分区的 partdesc */
+	MemoryContext rd_pddcxt;	/* 用于 rd_partdesc_nodetached（如果有） */
 
 	/*
-	 * pg_inherits.xmin of the partition that was excluded in
-	 * rd_partdesc_nodetached.  This informs a future user of that partdesc:
-	 * if this value is not in progress for the active snapshot, then the
-	 * partdesc can be used, otherwise they have to build a new one.  (This
-	 * matches what find_inheritance_children_extended would do).
+	 * 在 rd_partdesc_nodetached 中被排除的分区的 pg_inherits.xmin。
+	 * 它告知该 partdesc 未来的使用者：如果该值对于活动快照不处于进行中，
+	 * 则该 partdesc 可用，否则他们必须重新构建一个新的。（这与
+	 * find_inheritance_children_extended 的行为一致）。
 	 */
 	TransactionId rd_partdesc_nodetached_xmin;
 
-	/* data managed by RelationGetPartitionQual: */
-	List	   *rd_partcheck;	/* partition CHECK quals */
-	bool		rd_partcheckvalid;	/* true if list has been computed */
-	MemoryContext rd_partcheckcxt;	/* private cxt for rd_partcheck, if any */
+	/* 由 RelationGetPartitionQual 管理的数据： */
+	List	   *rd_partcheck;	/* 分区 CHECK 约束条件 */
+	bool		rd_partcheckvalid;	/* 若列表已计算则为 true */
+	MemoryContext rd_partcheckcxt;	/* rd_partcheck 的私有上下文（如果有） */
 
-	/* data managed by RelationGetIndexList: */
-	List	   *rd_indexlist;	/* list of OIDs of indexes on relation */
-	Oid			rd_pkindex;		/* OID of (deferrable?) primary key, if any */
-	bool		rd_ispkdeferrable;	/* is rd_pkindex a deferrable PK? */
-	Oid			rd_replidindex; /* OID of replica identity index, if any */
+	/* 由 RelationGetIndexList 管理的数据： */
+	List	   *rd_indexlist;	/* 关系上索引的 OID 列表 */
+	Oid			rd_pkindex;		/* （可延迟的？）主键的 OID（如果有） */
+	bool		rd_ispkdeferrable;	/* rd_pkindex 是否为可延迟的主键？ */
+	Oid			rd_replidindex; /* 复制标识索引的 OID（如果有） */
 
-	/* data managed by RelationGetStatExtList: */
-	List	   *rd_statlist;	/* list of OIDs of extended stats */
+	/* 由 RelationGetStatExtList 管理的数据： */
+	List	   *rd_statlist;	/* 扩展统计信息的 OID 列表 */
 
-	/* data managed by RelationGetIndexAttrBitmap: */
-	bool		rd_attrsvalid;	/* are bitmaps of attrs valid? */
-	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
-	Bitmapset  *rd_pkattr;		/* cols included in primary key */
-	Bitmapset  *rd_idattr;		/* included in replica identity index */
-	Bitmapset  *rd_hotblockingattr; /* cols blocking HOT update */
-	Bitmapset  *rd_summarizedattr;	/* cols indexed by summarizing indexes */
+	/* 由 RelationGetIndexAttrBitmap 管理的数据： */
+	bool		rd_attrsvalid;	/* 属性的位图是否有效？ */
+	Bitmapset  *rd_keyattr;		/* 可被外键引用的列 */
+	Bitmapset  *rd_pkattr;		/* 主键中包含的列 */
+	Bitmapset  *rd_idattr;		/* 包含在复制标识索引中的列 */
+	Bitmapset  *rd_hotblockingattr; /* 阻止 HOT 更新的列 */
+	Bitmapset  *rd_summarizedattr;	/* 被汇总索引索引的列 */
 
-	PublicationDesc *rd_pubdesc;	/* publication descriptor, or NULL */
+	PublicationDesc *rd_pubdesc;	/* 发布描述符，或 NULL */
 
 	/*
-	 * rd_options is set whenever rd_rel is loaded into the relcache entry.
-	 * Note that you can NOT look into rd_rel for this data.  NULL means "use
-	 * defaults".
+	 * 无论何时 rd_rel 被加载到 relcache 条目中，都会设置 rd_options。
+	 * 注意，你不能通过 rd_rel 来查找此数据。NULL 表示"使用默认值"。
 	 */
-	bytea	   *rd_options;		/* parsed pg_class.reloptions */
+	bytea	   *rd_options;		/* 已解析的 pg_class.reloptions */
 
 	/*
-	 * Oid of the handler for this relation. For an index this is a function
-	 * returning IndexAmRoutine, for table like relations a function returning
-	 * TableAmRoutine.  This is stored separately from rd_indam, rd_tableam as
-	 * its lookup requires syscache access, but during relcache bootstrap we
-	 * need to be able to initialize rd_tableam without syscache lookups.
+	 * 此关系对应的处理函数的 OID。对于索引，这是一个返回 IndexAmRoutine
+	 * 的函数；对于类表关系，这是一个返回 TableAmRoutine 的函数。它被单独
+	 * 存储于 rd_indam、rd_tableam 之外，因为其查找需要 syscache 访问；
+	 * 但在 relcache 引导期间，我们需要能够在没有 syscache 查找的情况下
+	 * 初始化 rd_tableam。
 	 */
-	Oid			rd_amhandler;	/* OID of index AM's handler function */
+	Oid			rd_amhandler;	/* 索引访问方法的处理函数 OID */
 
 	/*
-	 * Table access method.
+	 * 表访问方法。
 	 */
 	const struct TableAmRoutine *rd_tableam;
 
-	/* These are non-NULL only for an index relation: */
-	Form_pg_index rd_index;		/* pg_index tuple describing this index */
-	/* use "struct" here to avoid needing to include htup.h: */
-	struct HeapTupleData *rd_indextuple;	/* all of pg_index tuple */
+	/* 这些字段仅对索引关系为非 NULL： */
+	Form_pg_index rd_index;		/* 描述此索引的 pg_index 元组 */
+	/* 此处使用 "struct" 以避免需要包含 htup.h： */
+	struct HeapTupleData *rd_indextuple;	/* 整个 pg_index 元组 */
 
 	/*
-	 * index access support info (used only for an index relation)
+	 * 索引访问支持信息（仅用于索引关系）
 	 *
-	 * Note: only default support procs for each opclass are cached, namely
-	 * those with lefttype and righttype equal to the opclass's opcintype. The
-	 * arrays are indexed by support function number, which is a sufficient
-	 * identifier given that restriction.
+	 * 注意：仅缓存每个操作类的默认支持过程，即那些 lefttype 和 righttype
+	 * 等于该操作类的 opcintype 的过程。这些数组以支持函数编号为索引，
+	 * 在上述限制下，该编号已足以作为标识符。
 	 */
-	MemoryContext rd_indexcxt;	/* private memory cxt for this stuff */
-	/* use "struct" here to avoid needing to include amapi.h: */
-	struct IndexAmRoutine *rd_indam;	/* index AM's API struct */
-	Oid		   *rd_opfamily;	/* OIDs of op families for each index col */
-	Oid		   *rd_opcintype;	/* OIDs of opclass declared input data types */
-	RegProcedure *rd_support;	/* OIDs of support procedures */
-	struct FmgrInfo *rd_supportinfo;	/* lookup info for support procedures */
-	int16	   *rd_indoption;	/* per-column AM-specific flags */
-	List	   *rd_indexprs;	/* index expression trees, if any */
-	List	   *rd_indpred;		/* index predicate tree, if any */
-	Oid		   *rd_exclops;		/* OIDs of exclusion operators, if any */
-	Oid		   *rd_exclprocs;	/* OIDs of exclusion ops' procs, if any */
-	uint16	   *rd_exclstrats;	/* exclusion ops' strategy numbers, if any */
-	Oid		   *rd_indcollation;	/* OIDs of index collations */
-	bytea	  **rd_opcoptions;	/* parsed opclass-specific options */
+	MemoryContext rd_indexcxt;	/* 此数据的私有内存上下文 */
+	/* 此处使用 "struct" 以避免需要包含 amapi.h： */
+	struct IndexAmRoutine *rd_indam;	/* 索引访问方法的 API 结构体 */
+	Oid		   *rd_opfamily;	/* 每个索引列的操作族 OID */
+	Oid		   *rd_opcintype;	/* 操作类声明的输入数据类型 OID */
+	RegProcedure *rd_support;	/* 支持过程的 OID */
+	struct FmgrInfo *rd_supportinfo;	/* 支持过程的查找信息 */
+	int16	   *rd_indoption;	/* 每列的特定于访问方法的标志 */
+	List	   *rd_indexprs;	/* 索引表达式树（如果有） */
+	List	   *rd_indpred;		/* 索引谓词树（如果有） */
+	Oid		   *rd_exclops;		/* 排除操作符的 OID（如果有） */
+	Oid		   *rd_exclprocs;	/* 排除操作符对应过程的 OID（如果有） */
+	uint16	   *rd_exclstrats;	/* 排除操作符的策略号（如果有） */
+	Oid		   *rd_indcollation;	/* 索引排序规则 OID */
+	bytea	  **rd_opcoptions;	/* 已解析的特定于操作类的选项 */
 
 	/*
-	 * rd_amcache is available for index and table AMs to cache private data
-	 * about the relation.  This must be just a cache since it may get reset
-	 * at any time (in particular, it will get reset by a relcache inval
-	 * message for the relation).  If used, it must point to a single memory
-	 * chunk palloc'd in CacheMemoryContext, or in rd_indexcxt for an index
-	 * relation.  A relcache reset will include freeing that chunk and setting
-	 * rd_amcache = NULL.
+	 * rd_amcache 可供索引和表访问方法缓存关于此关系的私有数据。它必须
+	 * 仅仅是一个缓存，因为它可能在任何时候被重置（特别是，它会因关系
+	 * 的 relcache 失效消息而被重置）。如果使用它，它必须指向一个在
+	 * CacheMemoryContext 中 palloc 出来的单一内存块，或者在索引关系的情况下
+	 * 指向 rd_indexcxt 中的内存块。一次 relcache 重置会包含释放该内存块
+	 * 并将 rd_amcache 置为 NULL。
 	 */
-	void	   *rd_amcache;		/* available for use by index/table AM */
+	void	   *rd_amcache;		/* 可供索引/表访问方法使用 */
 
 	/*
-	 * foreign-table support
+	 * 外部表支持
 	 *
-	 * rd_fdwroutine must point to a single memory chunk palloc'd in
-	 * CacheMemoryContext.  It will be freed and reset to NULL on a relcache
-	 * reset.
+	 * rd_fdwroutine 必须指向一个在 CacheMemoryContext 中 palloc 出来的单一
+	 * 内存块。在一次 relcache 重置时，它会被释放并重置为 NULL。
 	 */
 
-	/* use "struct" here to avoid needing to include fdwapi.h: */
-	struct FdwRoutine *rd_fdwroutine;	/* cached function pointers, or NULL */
+	/* 此处使用 "struct" 以避免需要包含 fdwapi.h： */
+	struct FdwRoutine *rd_fdwroutine;	/* 缓存的函数指针，或 NULL */
 
 	/*
-	 * Hack for CLUSTER, rewriting ALTER TABLE, etc: when writing a new
-	 * version of a table, we need to make any toast pointers inserted into it
-	 * have the existing toast table's OID, not the OID of the transient toast
-	 * table.  If rd_toastoid isn't InvalidOid, it is the OID to place in
-	 * toast pointers inserted into this rel.  (Note it's set on the new
-	 * version of the main heap, not the toast table itself.)  This also
-	 * causes toast_save_datum() to try to preserve toast value OIDs.
+	 * 用于 CLUSTER、重写 ALTER TABLE 等操作的临时方案：当写入一个表的新
+	 * 版本时，我们需要让插入其中的任何 toast 指针具有现存 toast 表的 OID，
+	 * 而不是临时 toast 表的 OID。如果 rd_toastoid 不是 InvalidOid，它就是
+	 * 要放入插入到此关系中的 toast 指针的 OID。（注意，它设置在主堆的新
+	 * 版本上，而不是 toast 表本身上。）这也会使 toast_save_datum() 尝试
+	 * 保留 toast 值的 OID。
 	 */
-	Oid			rd_toastoid;	/* Real TOAST table's OID, or InvalidOid */
+	Oid			rd_toastoid;	/* 真实 TOAST 表的 OID，或 InvalidOid */
 
-	bool		pgstat_enabled; /* should relation stats be counted */
-	/* use "struct" here to avoid needing to include pgstat.h: */
-	struct PgStat_TableStatus *pgstat_info; /* statistics collection area */
+	bool		pgstat_enabled; /* 是否应统计关系统计信息 */
+	/* 此处使用 "struct" 以避免需要包含 pgstat.h： */
+	struct PgStat_TableStatus *pgstat_info; /* 统计信息收集区域 */
 } RelationData;
 
 
 /*
  * ForeignKeyCacheInfo
- *		Information the relcache can cache about foreign key constraints
+ *		relcache 可以缓存的关于外键约束的信息
  *
- * This is basically just an image of relevant columns from pg_constraint.
- * We make it a subclass of Node so that copyObject() can be used on a list
- * of these, but we also ensure it is a "flat" object without substructure,
- * so that list_free_deep() is sufficient to free such a list.
- * The per-FK-column arrays can be fixed-size because we allow at most
- * INDEX_MAX_KEYS columns in a foreign key constraint.
+ * 这基本上就是 pg_constraint 中相关列的一个映像。我们把它做成 Node 的
+ * 子类，以便可以在其列表上使用 copyObject()，但我们也确保它是一个
+ * 没有子结构的"扁平"对象，这样 list_free_deep() 就足以释放这样的列表。
+ * 每个外键列的数组可以是定长的，因为我们允许外键约束中最多有
+ * INDEX_MAX_KEYS 列。
  *
- * Currently, we mostly cache fields of interest to the planner, but the set
- * of fields has already grown the constraint OID for other uses.
+ * 目前，我们主要缓存对规划器感兴趣的字段，但这些字段的集合已经为其他
+ * 用途增加了约束 OID。
  */
 typedef struct ForeignKeyCacheInfo
 {
 	pg_node_attr(no_equal, no_read, no_query_jumble)
 
 	NodeTag		type;
-	/* oid of the constraint itself */
+	/* 约束自身的 OID */
 	Oid			conoid;
-	/* relation constrained by the foreign key */
+	/* 受外键约束的关系 */
 	Oid			conrelid;
-	/* relation referenced by the foreign key */
+	/* 被外键引用的关系 */
 	Oid			confrelid;
-	/* number of columns in the foreign key */
+	/* 外键中的列数 */
 	int			nkeys;
 
-	/* Is enforced ? */
+	/* 是否强制实施？ */
 	bool		conenforced;
 
 	/*
-	 * these arrays each have nkeys valid entries:
+	 * 这些数组各自具有 nkeys 个有效条目：
 	 */
-	/* cols in referencing table */
+	/* 引用表中的列 */
 	AttrNumber	conkey[INDEX_MAX_KEYS] pg_node_attr(array_size(nkeys));
-	/* cols in referenced table */
+	/* 被引用表中的列 */
 	AttrNumber	confkey[INDEX_MAX_KEYS] pg_node_attr(array_size(nkeys));
-	/* PK = FK operator OIDs */
+	/* 主键 = 外键 操作符 OID */
 	Oid			conpfeqop[INDEX_MAX_KEYS] pg_node_attr(array_size(nkeys));
 } ForeignKeyCacheInfo;
 
 
 /*
  * StdRdOptions
- *		Standard contents of rd_options for heaps.
+ *		堆的 rd_options 的标准内容。
  *
- * RelationGetFillFactor() and RelationGetTargetPageFreeSpace() can only
- * be applied to relations that use this format or a superset for
- * private options data.
+ * RelationGetFillFactor() 和 RelationGetTargetPageFreeSpace() 只能应用于
+ * 使用此格式或其超集作为私有选项数据的关系。
  */
- /* autovacuum-related reloptions. */
+ /* 与 autovacuum 相关的重选项。 */
 typedef struct AutoVacOpts
 {
 	bool		enabled;
@@ -329,7 +311,7 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
-/* StdRdOptions->vacuum_index_cleanup values */
+/* StdRdOptions->vacuum_index_cleanup 的取值 */
 typedef enum StdRdOptIndexCleanup
 {
 	STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO = 0,
@@ -339,19 +321,19 @@ typedef enum StdRdOptIndexCleanup
 
 typedef struct StdRdOptions
 {
-	int32		vl_len_;		/* varlena header (do not touch directly!) */
-	int			fillfactor;		/* page fill factor in percent (0..100) */
-	int			toast_tuple_target; /* target for tuple toasting */
-	AutoVacOpts autovacuum;		/* autovacuum-related options */
-	bool		user_catalog_table; /* use as an additional catalog relation */
-	int			parallel_workers;	/* max number of parallel workers */
-	StdRdOptIndexCleanup vacuum_index_cleanup;	/* controls index vacuuming */
-	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
-	bool		vacuum_truncate_set;	/* whether vacuum_truncate is set */
+	int32		vl_len_;		/* varlena 头（不要直接修改！） */
+	int			fillfactor;		/* 页面填充因子，以百分比表示 (0..100) */
+	int			toast_tuple_target; /* 元组 toast 的目标值 */
+	AutoVacOpts autovacuum;		/* 与 autovacuum 相关的选项 */
+	bool		user_catalog_table; /* 用作额外的系统目录关系 */
+	int			parallel_workers;	/* 并行工作进程的最大数量 */
+	StdRdOptIndexCleanup vacuum_index_cleanup;	/* 控制索引清理 */
+	bool		vacuum_truncate;	/* 允许 vacuum 截断关系 */
+	bool		vacuum_truncate_set;	/* vacuum_truncate 是否已设置 */
 
 	/*
-	 * Fraction of pages in a relation that vacuum can eagerly scan and fail
-	 * to freeze. 0 if disabled, -1 if unspecified.
+	 * vacuum 可以主动扫描但未能冻结的关系页面所占的比例。
+	 * 如果禁用则为 0，如果未指定则为 -1。
 	 */
 	double		vacuum_max_eager_freeze_failure_rate;
 } StdRdOptions;
@@ -361,7 +343,7 @@ typedef struct StdRdOptions
 
 /*
  * RelationGetToastTupleTarget
- *		Returns the relation's toast_tuple_target.  Note multiple eval of argument!
+ *		返回关系的 toast_tuple_target。注意参数会被多次求值！
  */
 #define RelationGetToastTupleTarget(relation, defaulttarg) \
 	((relation)->rd_options ? \
@@ -369,7 +351,7 @@ typedef struct StdRdOptions
 
 /*
  * RelationGetFillFactor
- *		Returns the relation's fillfactor.  Note multiple eval of argument!
+ *		返回关系的填充因子（fillfactor）。注意参数会被多次求值！
  */
 #define RelationGetFillFactor(relation, defaultff) \
 	((relation)->rd_options ? \
@@ -377,22 +359,22 @@ typedef struct StdRdOptions
 
 /*
  * RelationGetTargetPageUsage
- *		Returns the relation's desired space usage per page in bytes.
+ *		返回关系每页期望的空间使用量（以字节为单位）。
  */
 #define RelationGetTargetPageUsage(relation, defaultff) \
 	(BLCKSZ * RelationGetFillFactor(relation, defaultff) / 100)
 
 /*
  * RelationGetTargetPageFreeSpace
- *		Returns the relation's desired freespace per page in bytes.
+ *		返回关系每页期望的空闲空间（以字节为单位）。
  */
 #define RelationGetTargetPageFreeSpace(relation, defaultff) \
 	(BLCKSZ * (100 - RelationGetFillFactor(relation, defaultff)) / 100)
 
 /*
  * RelationIsUsedAsCatalogTable
- *		Returns whether the relation should be treated as a catalog table
- *		from the pov of logical decoding.  Note multiple eval of argument!
+ *		返回从逻辑解码的角度看，该关系是否应被视为系统目录表。
+ *		注意参数会被多次求值！
  */
 #define RelationIsUsedAsCatalogTable(relation)	\
 	((relation)->rd_options && \
@@ -402,14 +384,14 @@ typedef struct StdRdOptions
 
 /*
  * RelationGetParallelWorkers
- *		Returns the relation's parallel_workers reloption setting.
- *		Note multiple eval of argument!
+ *		返回关系的 parallel_workers 重选项设置。
+ *		注意参数会被多次求值！
  */
 #define RelationGetParallelWorkers(relation, defaultpw) \
 	((relation)->rd_options ? \
 	 ((StdRdOptions *) (relation)->rd_options)->parallel_workers : (defaultpw))
 
-/* ViewOptions->check_option values */
+/* ViewOptions->check_option 的取值 */
 typedef enum ViewOptCheckOption
 {
 	VIEW_OPTION_CHECK_OPTION_NOT_SET,
@@ -419,11 +401,11 @@ typedef enum ViewOptCheckOption
 
 /*
  * ViewOptions
- *		Contents of rd_options for views
+ *		视图的 rd_options 的内容
  */
 typedef struct ViewOptions
 {
-	int32		vl_len_;		/* varlena header (do not touch directly!) */
+	int32		vl_len_;		/* varlena 头（不要直接修改！） */
 	bool		security_barrier;
 	bool		security_invoker;
 	ViewOptCheckOption check_option;
@@ -431,8 +413,7 @@ typedef struct ViewOptions
 
 /*
  * RelationIsSecurityView
- *		Returns whether the relation is security view, or not.  Note multiple
- *		eval of argument!
+ *		返回该关系是否为安全视图。注意参数会被多次求值！
  */
 #define RelationIsSecurityView(relation)									\
 	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
@@ -441,8 +422,8 @@ typedef struct ViewOptions
 
 /*
  * RelationHasSecurityInvoker
- *		Returns true if the relation has the security_invoker property set.
- *		Note multiple eval of argument!
+ *		如果该关系设置了 security_invoker 属性，则返回 true。
+ *		注意参数会被多次求值！
  */
 #define RelationHasSecurityInvoker(relation)								\
 	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
@@ -451,8 +432,8 @@ typedef struct ViewOptions
 
 /*
  * RelationHasCheckOption
- *		Returns true if the relation is a view defined with either the local
- *		or the cascaded check option.  Note multiple eval of argument!
+ *		如果该关系是定义了 local 或 cascaded check option 的视图，
+ *		则返回 true。注意参数会被多次求值！
  */
 #define RelationHasCheckOption(relation)									\
 	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
@@ -462,8 +443,8 @@ typedef struct ViewOptions
 
 /*
  * RelationHasLocalCheckOption
- *		Returns true if the relation is a view defined with the local check
- *		option.  Note multiple eval of argument!
+ *		如果该关系是定义了 local check option 的视图，则返回 true。
+ *		注意参数会被多次求值！
  */
 #define RelationHasLocalCheckOption(relation)								\
 	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
@@ -473,8 +454,8 @@ typedef struct ViewOptions
 
 /*
  * RelationHasCascadedCheckOption
- *		Returns true if the relation is a view defined with the cascaded check
- *		option.  Note multiple eval of argument!
+ *		如果该关系是定义了 cascaded check option 的视图，则返回 true。
+ *		注意参数会被多次求值！
  */
 #define RelationHasCascadedCheckOption(relation)							\
 	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
@@ -484,7 +465,7 @@ typedef struct ViewOptions
 
 /*
  * RelationIsValid
- *		True iff relation descriptor is valid.
+ *		当且仅当关系描述符有效时为 true。
  */
 #define RelationIsValid(relation) PointerIsValid(relation)
 
@@ -492,75 +473,74 @@ typedef struct ViewOptions
 
 /*
  * RelationHasReferenceCountZero
- *		True iff relation reference count is zero.
+ *		当且仅当关系的引用计数为零时为 true。
  *
- * Note:
- *		Assumes relation descriptor is valid.
+ * 注意：
+ *		假定关系描述符有效。
  */
 #define RelationHasReferenceCountZero(relation) \
 		((bool)((relation)->rd_refcnt == 0))
 
 /*
  * RelationGetForm
- *		Returns pg_class tuple for a relation.
+ *		返回关系的 pg_class 元组。
  *
- * Note:
- *		Assumes relation descriptor is valid.
+ * 注意：
+ *		假定关系描述符有效。
  */
 #define RelationGetForm(relation) ((relation)->rd_rel)
 
 /*
  * RelationGetRelid
- *		Returns the OID of the relation
+ *		返回关系的 OID
  */
 #define RelationGetRelid(relation) ((relation)->rd_id)
 
 /*
  * RelationGetNumberOfAttributes
- *		Returns the total number of attributes in a relation.
+ *		返回关系中属性的总数。
  */
 #define RelationGetNumberOfAttributes(relation) ((relation)->rd_rel->relnatts)
 
 /*
  * IndexRelationGetNumberOfAttributes
- *		Returns the number of attributes in an index.
+ *		返回索引中属性的数量。
  */
 #define IndexRelationGetNumberOfAttributes(relation) \
 		((relation)->rd_index->indnatts)
 
 /*
  * IndexRelationGetNumberOfKeyAttributes
- *		Returns the number of key attributes in an index.
+ *		返回索引中键属性的数量。
  */
 #define IndexRelationGetNumberOfKeyAttributes(relation) \
 		((relation)->rd_index->indnkeyatts)
 
 /*
  * RelationGetDescr
- *		Returns tuple descriptor for a relation.
+ *		返回关系的元组描述符。
  */
 #define RelationGetDescr(relation) ((relation)->rd_att)
 
 /*
  * RelationGetRelationName
- *		Returns the rel's name.
+ *		返回关系的名称。
  *
- * Note that the name is only unique within the containing namespace.
+ * 注意，名称仅在其所属的模式（namespace）内唯一。
  */
 #define RelationGetRelationName(relation) \
 	(NameStr((relation)->rd_rel->relname))
 
 /*
  * RelationGetNamespace
- *		Returns the rel's namespace OID.
+ *		返回关系的命名空间 OID。
  */
 #define RelationGetNamespace(relation) \
 	((relation)->rd_rel->relnamespace)
 
 /*
  * RelationIsMapped
- *		True if the relation uses the relfilenumber map.  Note multiple eval
- *		of argument!
+ *		如果关系使用 relfilenumber 映射，则为 true。注意参数会被多次求值！
  */
 #define RelationIsMapped(relation) \
 	(RELKIND_HAS_STORAGE((relation)->rd_rel->relkind) && \
@@ -569,10 +549,9 @@ typedef struct ViewOptions
 #ifndef FRONTEND
 /*
  * RelationGetSmgr
- *		Returns smgr file handle for a relation, opening it if needed.
+ *		返回关系的 smgr 文件句柄，如有需要则打开它。
  *
- * Very little code is authorized to touch rel->rd_smgr directly.  Instead
- * use this function to fetch its value.
+ * 极少有代码被授权直接访问 rel->rd_smgr。应改用此函数来获取其值。
  */
 static inline SMgrRelation
 RelationGetSmgr(Relation rel)
@@ -587,7 +566,7 @@ RelationGetSmgr(Relation rel)
 
 /*
  * RelationCloseSmgr
- *		Close the relation at the smgr level, if not already done.
+ *		在 smgr 层面关闭关系（如果尚未关闭的话）。
  */
 static inline void
 RelationCloseSmgr(Relation relation)
@@ -603,18 +582,18 @@ RelationCloseSmgr(Relation relation)
 
 /*
  * RelationGetTargetBlock
- *		Fetch relation's current insertion target block.
+ *		获取关系当前的插入目标块。
  *
- * Returns InvalidBlockNumber if there is no current target block.  Note
- * that the target block status is discarded on any smgr-level invalidation,
- * so there's no need to re-open the smgr handle if it's not currently open.
+ * 如果没有当前目标块，则返回 InvalidBlockNumber。注意，目标块状态会在
+ * 任何 smgr 层面的失效时被丢弃，因此如果 smgr 句柄当前未打开，则无需
+ * 重新打开它。
  */
 #define RelationGetTargetBlock(relation) \
 	( (relation)->rd_smgr != NULL ? (relation)->rd_smgr->smgr_targblock : InvalidBlockNumber )
 
 /*
  * RelationSetTargetBlock
- *		Set relation's current insertion target block.
+ *		设置关系当前的插入目标块。
  */
 #define RelationSetTargetBlock(relation, targblock) \
 	do { \
@@ -623,18 +602,18 @@ RelationCloseSmgr(Relation relation)
 
 /*
  * RelationIsPermanent
- *		True if relation is permanent.
+ *		如果关系是永久的，则为 true。
  */
 #define RelationIsPermanent(relation) \
 	((relation)->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
 
 /*
  * RelationNeedsWAL
- *		True if relation needs WAL.
+ *		如果关系需要 WAL，则为 true。
  *
- * Returns false if wal_level = minimal and this relation is created or
- * truncated in the current transaction.  See "Skipping WAL for New
- * RelFileLocator" in src/backend/access/transam/README.
+ * 如果 wal_level = minimal，并且该关系是在当前事务中创建或截断的，
+ * 则返回 false。参见 src/backend/access/transam/README 中的
+ * "Skipping WAL for New RelFileLocator"。
  */
 #define RelationNeedsWAL(relation)										\
 	(RelationIsPermanent(relation) && (XLogIsNeeded() ||				\
@@ -643,18 +622,17 @@ RelationCloseSmgr(Relation relation)
 
 /*
  * RelationUsesLocalBuffers
- *		True if relation's pages are stored in local buffers.
+ *		如果关系的页面存储在本地缓冲区中，则为 true。
  */
 #define RelationUsesLocalBuffers(relation) \
 	((relation)->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
 
 /*
  * RELATION_IS_LOCAL
- *		If a rel is either temp or newly created in the current transaction,
- *		it can be assumed to be accessible only to the current backend.
- *		This is typically used to decide that we can skip acquiring locks.
+ *		如果一个关系是临时的，或者是在当前事务中新创建的，则可以假定
+ *		它仅对当前后端可访问。这通常用于决定我们可以跳过获取锁。
  *
- * Beware of multiple eval of argument
+ * 注意参数会被多次求值
  */
 #define RELATION_IS_LOCAL(relation) \
 	((relation)->rd_islocaltemp || \
@@ -662,18 +640,17 @@ RelationCloseSmgr(Relation relation)
 
 /*
  * RELATION_IS_OTHER_TEMP
- *		Test for a temporary relation that belongs to some other session.
+ *		测试一个属于其他会话的临时关系。
  *
- * Reading another session's temp-table data through never works right:
- * the owning session keeps the data in its private local buffer pool,
- * which we cannot access.  Existing buffer-manager entry points
- * (ReadBuffer_common(), StartReadBuffersImpl(), read_stream_begin_impl(),
- * and PrefetchBuffer()) already enforce this; any new buffer-access entry
- * points must do the same.  Command-level code (TRUNCATE, ALTER TABLE,
- * VACUUM, CLUSTER, REINDEX, ...) additionally uses this macro for
- * command-specific error messages.
+ * 通过任何方式读取另一个会话的临时表数据都不会正确工作：
+ * 拥有该数据所属会话将数据保存在其私有的本地缓冲区池中，
+ * 而我们无法访问它。现有的缓冲区管理器入口点
+ *（ReadBuffer_common()、StartReadBuffersImpl()、read_stream_begin_impl()
+ * 和 PrefetchBuffer()）已经强制执行此规则；任何新的缓冲区访问入口点
+ * 也必须如此。命令级代码（TRUNCATE、ALTER TABLE、VACUUM、CLUSTER、
+ * REINDEX 等）还利用此宏来生成特定于命令的错误消息。
  *
- * Beware of multiple eval of argument
+ * 注意参数会被多次求值
  */
 #define RELATION_IS_OTHER_TEMP(relation) \
 	((relation)->rd_rel->relpersistence == RELPERSISTENCE_TEMP && \
@@ -682,24 +659,22 @@ RelationCloseSmgr(Relation relation)
 
 /*
  * RelationIsScannable
- *		Currently can only be false for a materialized view which has not been
- *		populated by its query.  This is likely to get more complicated later,
- *		so use a macro which looks like a function.
+ *		目前仅对未被其查询填充（populated）的物化视图为 false。
+ *		这一点以后可能会变得更复杂，因此使用一个看起来像函数的宏。
  */
 #define RelationIsScannable(relation) ((relation)->rd_rel->relispopulated)
 
 /*
  * RelationIsPopulated
- *		Currently, we don't physically distinguish the "populated" and
- *		"scannable" properties of matviews, but that may change later.
- *		Hence, use the appropriate one of these macros in code tests.
+ *		目前，我们在物理上并不区分物化视图的 "populated"（已填充）和
+ *		"scannable"（可扫描）属性，但这一点以后可能会改变。
+ *		因此，在代码测试中应使用这些宏中恰当的一个。
  */
 #define RelationIsPopulated(relation) ((relation)->rd_rel->relispopulated)
 
 /*
  * RelationIsAccessibleInLogicalDecoding
- *		True if we need to log enough information to have access via
- *		decoding snapshot.
+ *		如果我们需要记录足够的信息以便通过解码快照进行访问，则为 true。
  */
 #define RelationIsAccessibleInLogicalDecoding(relation) \
 	(XLogLogicalInfoActive() && \
@@ -708,15 +683,13 @@ RelationCloseSmgr(Relation relation)
 
 /*
  * RelationIsLogicallyLogged
- *		True if we need to log enough information to extract the data from the
- *		WAL stream.
+ *		如果我们需要记录足够的信息以便从 WAL 流中提取数据，则为 true。
  *
- * We don't log information for unlogged tables (since they don't WAL log
- * anyway), for foreign tables (since they don't WAL log, either),
- * and for system tables (their content is hard to make sense of, and
- * it would complicate decoding slightly for little gain). Note that we *do*
- * log information for user defined catalog tables since they presumably are
- * interesting to the user...
+ * 我们不会为未日志记录（unlogged）表记录信息（因为它们本来就不写 WAL 日志），
+ * 也不会为外部表记录信息（因为它们同样不写 WAL 日志），也不会为系统表
+ * 记录信息（它们的内容难以理解，而且为此让解码变得稍微复杂却收益甚微）。
+ * 注意，我们*会*为用户定义的系统目录表记录信息，因为它们对用户而言
+ * 大概是有意义的……
  */
 #define RelationIsLogicallyLogged(relation) \
 	(XLogLogicalInfoActive() && \
@@ -724,7 +697,7 @@ RelationCloseSmgr(Relation relation)
 	 (relation)->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&	\
 	 !IsCatalogRelation(relation))
 
-/* routines in utils/cache/relcache.c */
+/* utils/cache/relcache.c 中的例程 */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
 

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * storage.c
- *	  code to create and destroy physical storage for relations
+ *	  用于创建和销毁关系物理存储的代码
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -11,8 +11,8 @@
  *	  src/backend/catalog/storage.c
  *
  * NOTES
- *	  Some of this code used to be in storage/smgr/smgr.c, and the
- *	  function names still reflect that.
+ *	  这些代码的一部分曾经位于 storage/smgr/smgr.c 中，并且
+ *	  其函数名仍然反映了这一点。
  *
  *-------------------------------------------------------------------------
  */
@@ -36,51 +36,46 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
-/* GUC variables */
-int			wal_skip_threshold = 2048;	/* in kilobytes */
+/* GUC 变量 */
+int			wal_skip_threshold = 2048;	/* 单位：千字节 */
 
 /*
- * We keep a list of all relations (represented as RelFileLocator values)
- * that have been created or deleted in the current transaction.  When
- * a relation is created, we create the physical file immediately, but
- * remember it so that we can delete the file again if the current
- * transaction is aborted.  Conversely, a deletion request is NOT
- * executed immediately, but is just entered in the list.  When and if
- * the transaction commits, we can delete the physical file.
+ * 我们维护一个在当前事务中被创建或删除的所有关系（以 RelFileLocator
+ * 值表示）的列表。当创建一个关系时，我们会立即创建其物理文件，但
+ * 会记住它，以便在当前事务被中止时能够再次删除该文件。相反，删除请求
+ * 不会立即执行，而只是被记录到列表中。当且仅当事务提交时，我们才会
+ * 删除物理文件。
  *
- * To handle subtransactions, every entry is marked with its transaction
- * nesting level.  At subtransaction commit, we reassign the subtransaction's
- * entries to the parent nesting level.  At subtransaction abort, we can
- * immediately execute the abort-time actions for all entries of the current
- * nesting level.
+ * 为了处理子事务，每个条目都以其事务嵌套级别进行了标记。在子事务提交
+ * 时，我们将该子事务的条目重新指派给父级的嵌套级别。在子事务中止时，
+ * 我们可以立即对当前嵌套级别的所有条目执行中止时的动作。
  *
- * NOTE: the list is kept in TopMemoryContext to be sure it won't disappear
- * unbetimes.  It'd probably be OK to keep it in TopTransactionContext,
- * but I'm being paranoid.
+ * 注意：该列表保存在 TopMemoryContext 中，以确保它不会提前消失。将其
+ * 保存在 TopTransactionContext 中可能也没问题，但我比较谨慎。
  */
 
 typedef struct PendingRelDelete
 {
-	RelFileLocator rlocator;	/* relation that may need to be deleted */
-	ProcNumber	procNumber;		/* INVALID_PROC_NUMBER if not a temp rel */
-	bool		atCommit;		/* T=delete at commit; F=delete at abort */
-	int			nestLevel;		/* xact nesting level of request */
-	struct PendingRelDelete *next;	/* linked-list link */
+	RelFileLocator rlocator;	/* 可能需要被删除的关系 */
+	ProcNumber	procNumber;		/* 如果不是临时关系则为 INVALID_PROC_NUMBER */
+	bool		atCommit;		/* T=提交时删除；F=中止时删除 */
+	int			nestLevel;		/* 请求的 xact 嵌套级别 */
+	struct PendingRelDelete *next;	/* 链表链接 */
 } PendingRelDelete;
 
 typedef struct PendingRelSync
 {
 	RelFileLocator rlocator;
-	bool		is_truncated;	/* Has the file experienced truncation? */
+	bool		is_truncated;	/* 该文件是否经历过截断？ */
 } PendingRelSync;
 
-static PendingRelDelete *pendingDeletes = NULL; /* head of linked list */
+static PendingRelDelete *pendingDeletes = NULL; /* 链表的头指针 */
 static HTAB *pendingSyncHash = NULL;
 
 
 /*
  * AddPendingSync
- *		Queue an at-commit fsync.
+ *		将一个提交时 fsync 排入队列。
  */
 static void
 AddPendingSync(const RelFileLocator *rlocator)
@@ -88,7 +83,7 @@ AddPendingSync(const RelFileLocator *rlocator)
 	PendingRelSync *pending;
 	bool		found;
 
-	/* create the hash if not yet */
+	/* 如果尚未创建哈希表则创建 */
 	if (!pendingSyncHash)
 	{
 		HASHCTL		ctl;
@@ -107,16 +102,14 @@ AddPendingSync(const RelFileLocator *rlocator)
 
 /*
  * RelationCreateStorage
- *		Create physical storage for a relation.
+ *		为关系创建物理存储。
  *
- * Create the underlying disk file storage for the relation. This only
- * creates the main fork; additional forks are created lazily by the
- * modules that need them.
+ * 为关系创建底层的磁盘文件存储。这只会创建主分支（main fork）；
+ * 其他分支由各需要的模块按需惰性创建。
  *
- * This function is transactional. The creation is WAL-logged, and if the
- * transaction aborts later on, the storage will be destroyed.  A caller
- * that does not want the storage to be destroyed in case of an abort may
- * pass register_delete = false.
+ * 本函数是事务性的。该创建过程会被写入 WAL 日志，如果事务随后中止，
+ * 该存储将被销毁。如果调用方不希望存储在中止时被销毁，可以传入
+ * register_delete = false。
  */
 SMgrRelation
 RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
@@ -126,7 +119,7 @@ RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
 	ProcNumber	procNumber;
 	bool		needs_wal;
 
-	Assert(!IsInParallelMode());	/* couldn't update pendingSyncHash */
+	Assert(!IsInParallelMode());	/* 无法更新 pendingSyncHash */
 
 	switch (relpersistence)
 	{
@@ -144,7 +137,7 @@ RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
 			break;
 		default:
 			elog(ERROR, "invalid relpersistence: %c", relpersistence);
-			return NULL;		/* placate compiler */
+			return NULL;		/* 仅为安抚编译器 */
 	}
 
 	srel = smgropen(rlocator, procNumber);
@@ -154,8 +147,7 @@ RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
 		log_smgrcreate(&srel->smgr_rlocator.locator, MAIN_FORKNUM);
 
 	/*
-	 * Add the relation to the list of stuff to delete at abort, if we are
-	 * asked to do so.
+	 * 如果我们被要求这样做，则将该关系加入中止时需要删除的事物的列表。
 	 */
 	if (register_delete)
 	{
@@ -165,7 +157,7 @@ RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
 			MemoryContextAlloc(TopMemoryContext, sizeof(PendingRelDelete));
 		pending->rlocator = rlocator;
 		pending->procNumber = procNumber;
-		pending->atCommit = false;	/* delete if abort */
+		pending->atCommit = false;	/* 中止时删除 */
 		pending->nestLevel = GetCurrentTransactionNestLevel();
 		pending->next = pendingDeletes;
 		pendingDeletes = pending;
@@ -181,7 +173,7 @@ RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
 }
 
 /*
- * Perform XLogInsert of an XLOG_SMGR_CREATE record to WAL.
+ * 向 WAL 执行 XLOG_SMGR_CREATE 记录的 XLogInsert 操作。
  */
 void
 log_smgrcreate(const RelFileLocator *rlocator, ForkNumber forkNum)
@@ -189,7 +181,7 @@ log_smgrcreate(const RelFileLocator *rlocator, ForkNumber forkNum)
 	xl_smgr_create xlrec;
 
 	/*
-	 * Make an XLOG entry reporting the file creation.
+	 * 写入一条报告文件创建的 XLOG 条目。
 	 */
 	xlrec.rlocator = *rlocator;
 	xlrec.forkNum = forkNum;
@@ -201,31 +193,29 @@ log_smgrcreate(const RelFileLocator *rlocator, ForkNumber forkNum)
 
 /*
  * RelationDropStorage
- *		Schedule unlinking of physical storage at transaction commit.
+ *		安排事务提交时解除物理存储的链接（unlink）。
  */
 void
 RelationDropStorage(Relation rel)
 {
 	PendingRelDelete *pending;
 
-	/* Add the relation to the list of stuff to delete at commit */
+	/* 将该关系加入提交时需要删除的事物的列表 */
 	pending = (PendingRelDelete *)
 		MemoryContextAlloc(TopMemoryContext, sizeof(PendingRelDelete));
 	pending->rlocator = rel->rd_locator;
 	pending->procNumber = rel->rd_backend;
-	pending->atCommit = true;	/* delete if commit */
+	pending->atCommit = true;	/* 提交时删除 */
 	pending->nestLevel = GetCurrentTransactionNestLevel();
 	pending->next = pendingDeletes;
 	pendingDeletes = pending;
 
 	/*
-	 * NOTE: if the relation was created in this transaction, it will now be
-	 * present in the pending-delete list twice, once with atCommit true and
-	 * once with atCommit false.  Hence, it will be physically deleted at end
-	 * of xact in either case (and the other entry will be ignored by
-	 * smgrDoPendingDeletes, so no error will occur).  We could instead remove
-	 * the existing list entry and delete the physical file immediately, but
-	 * for now I'll keep the logic simple.
+	 * 注意：如果该关系是在本事务中创建的，那么现在它会以两种形式出现在
+	 * 待删除列表中，一次是 atCommit 为 true，一次是 atCommit 为 false。
+	 * 因此，无论哪种情况，它都会在该事务结束时被物理删除（而另一个条目
+	 * 会被 smgrDoPendingDeletes 忽略，因此不会发生错误）。我们也可以改为
+	 * 移除已有的列表条目并立即删除物理文件，但目前我保持逻辑简单。
 	 */
 
 	RelationCloseSmgr(rel);
@@ -233,20 +223,17 @@ RelationDropStorage(Relation rel)
 
 /*
  * RelationPreserveStorage
- *		Mark a relation as not to be deleted after all.
+ *		将一个关系标记为最终不需要删除。
  *
- * We need this function because relation mapping changes are committed
- * separately from commit of the whole transaction, so it's still possible
- * for the transaction to abort after the mapping update is done.
- * When a new physical relation is installed in the map, it would be
- * scheduled for delete-on-abort, so we'd delete it, and be in trouble.
- * The relation mapper fixes this by telling us to not delete such relations
- * after all as part of its commit.
+ * 我们需要这个函数，是因为关系映射的更改是与整个事务的提交分开提交的，
+ * 因此在映射更新完成之后，事务仍然可能中止。当一个新物理关系被装入
+ * 映射时，它会被安排为中止时删除，那样我们就会删除它，从而陷入麻烦。
+ * 关系映射器通过在提交时告知我们不要删除这类关系来修复此问题。
  *
- * We also use this to reuse an old build of an index during ALTER TABLE, this
- * time removing the delete-at-commit entry.
+ * 在 ALTER TABLE 期间，我们也用这个函数来复用一个索引的旧构建版本，
+ * 这次是移除提交时删除的条目。
  *
- * No-op if the relation is not among those scheduled for deletion.
+ * 如果该关系不在那些被安排删除的关系之中，则本函数为空操作。
  */
 void
 RelationPreserveStorage(RelFileLocator rlocator, bool atCommit)
@@ -262,17 +249,17 @@ RelationPreserveStorage(RelFileLocator rlocator, bool atCommit)
 		if (RelFileLocatorEquals(rlocator, pending->rlocator)
 			&& pending->atCommit == atCommit)
 		{
-			/* unlink and delete list entry */
-			if (prev)
-				prev->next = next;
-			else
-				pendingDeletes = next;
-			pfree(pending);
-			/* prev does not change */
-		}
+		/* 解除链接并删除列表条目 */
+		if (prev)
+			prev->next = next;
 		else
-		{
-			/* unrelated entry, don't touch it */
+			pendingDeletes = next;
+		pfree(pending);
+		/* prev 不变 */
+	}
+	else
+	{
+		/* 不相关的条目，不要碰它 */
 			prev = pending;
 		}
 	}
@@ -280,10 +267,9 @@ RelationPreserveStorage(RelFileLocator rlocator, bool atCommit)
 
 /*
  * RelationTruncate
- *		Physically truncate a relation to the specified number of blocks.
+ *		将关系物理截断到指定的块数。
  *
- * This includes getting rid of any buffers for the blocks that are to be
- * dropped.
+ * 这包括丢弃那些将被丢弃的块所对应的所有缓冲区。
  */
 void
 RelationTruncate(Relation rel, BlockNumber nblocks)
@@ -298,21 +284,21 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 	SMgrRelation reln;
 
 	/*
-	 * Make sure smgr_targblock etc aren't pointing somewhere past new end.
-	 * (Note: don't rely on this reln pointer below this loop.)
+	 * 确保 smgr_targblock 等没有指向新末尾之后的位置。
+	 * （注意：在这个循环之后不要依赖这个 reln 指针。）
 	 */
 	reln = RelationGetSmgr(rel);
 	reln->smgr_targblock = InvalidBlockNumber;
 	for (int i = 0; i <= MAX_FORKNUM; ++i)
 		reln->smgr_cached_nblocks[i] = InvalidBlockNumber;
 
-	/* Prepare for truncation of MAIN fork of the relation */
+	/* 准备截断关系的主分支（MAIN fork） */
 	forks[nforks] = MAIN_FORKNUM;
 	old_blocks[nforks] = smgrnblocks(reln, MAIN_FORKNUM);
 	blocks[nforks] = nblocks;
 	nforks++;
 
-	/* Prepare for truncation of the FSM if it exists */
+	/* 准备截断空闲空间映射（FSM）（如果存在的话） */
 	fsm = smgrexists(RelationGetSmgr(rel), FSM_FORKNUM);
 	if (fsm)
 	{
@@ -326,7 +312,7 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 		}
 	}
 
-	/* Prepare for truncation of the visibility map too if it exists */
+	/* 如果存在的话，也准备截断可见性映射（visibility map） */
 	vm = smgrexists(RelationGetSmgr(rel), VISIBILITYMAP_FORKNUM);
 	if (vm)
 	{
@@ -342,53 +328,42 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 	RelationPreTruncate(rel);
 
 	/*
-	 * The code which follows can interact with concurrent checkpoints in two
-	 * separate ways.
+	 * 接下来的代码会以两种独立的方式与并发的检查点发生交互。
 	 *
-	 * First, the truncation operation might drop buffers that the checkpoint
-	 * otherwise would have flushed. If it does, then it's essential that the
-	 * files actually get truncated on disk before the checkpoint record is
-	 * written. Otherwise, if reply begins from that checkpoint, the
-	 * to-be-truncated blocks might still exist on disk but have older
-	 * contents than expected, which can cause replay to fail. It's OK for the
-	 * blocks to not exist on disk at all, but not for them to have the wrong
-	 * contents. For this reason, we need to set DELAY_CHKPT_COMPLETE while
-	 * this code executes.
+	 * 首先，截断操作可能会丢弃那些本该由检查点刷出的缓冲区。如果确实如此，
+	 * 那么文件必须在检查点记录写入之前真正在磁盘上被截断。否则，如果从重
+	 * 放从该检查点开始，那些待截断的块可能仍然存在于磁盘上，但其内容比
+	 * 预期的更旧，这可能导致重放失败。这些块在磁盘上完全不存在是可以的，
+	 * 但它们具有错误的内容则不行。因此，我们需要在执行这段代码时设置
+	 * DELAY_CHKPT_COMPLETE。
 	 *
-	 * Second, the call to smgrtruncate() below will in turn call
-	 * RegisterSyncRequest(). We need the sync request created by that call to
-	 * be processed before the checkpoint completes. CheckPointGuts() will
-	 * call ProcessSyncRequests(), but if we register our sync request after
-	 * that happens, then the WAL record for the truncation could end up
-	 * preceding the checkpoint record, while the actual sync doesn't happen
-	 * until the next checkpoint. To prevent that, we need to set
-	 * DELAY_CHKPT_START here. That way, if the XLOG_SMGR_TRUNCATE precedes
-	 * the redo pointer of a concurrent checkpoint, we're guaranteed that the
-	 * corresponding sync request will be processed before the checkpoint
-	 * completes.
+	 * 其次，下面调用的 smgrtruncate() 又会转而调用 RegisterSyncRequest()。
+	 * 我们需要该调用所创建的同步请求在检查点完成之前被处理。CheckPointGuts()
+	 * 会调用 ProcessSyncRequests()，但如果我们是在那之后才注册我们的同步
+	 * 请求，那么截断的 WAL 记录最终可能会排在检查点记录之前，而真正的同步
+	 * 直到下一个检查点才发生。为了防止这种情况，我们需要在这里设置
+	 * DELAY_CHKPT_START。这样，如果 XLOG_SMGR_TRUNCATE 排在并发检查点的
+	 * 重做指针之前，我们就能保证相应的同步请求会在检查点完成之前被处理。
 	 */
 	Assert((MyProc->delayChkptFlags & (DELAY_CHKPT_START | DELAY_CHKPT_COMPLETE)) == 0);
 	MyProc->delayChkptFlags |= DELAY_CHKPT_START | DELAY_CHKPT_COMPLETE;
 
 	/*
-	 * We WAL-log the truncation first and then truncate in a critical
-	 * section. Truncation drops buffers, even if dirty, and then truncates
-	 * disk files. All of that work needs to complete before the lock is
-	 * released, or else old versions of pages on disk that are missing recent
-	 * changes would become accessible again.  We'll try the whole operation
-	 * again in crash recovery if we panic, but even then we can't give up
-	 * because we don't want standbys' relation sizes to diverge and break
-	 * replay or visibility invariants downstream.  The critical section also
-	 * suppresses interrupts.
+	 * 我们先把截断操作写入 WAL 日志，然后在一个临界区中执行截断。截断会丢弃
+	 * 缓冲区（即使是脏的），然后截断磁盘文件。所有这些工作都需要在锁释放
+	 * 之前完成，否则磁盘上那些缺少最近修改的旧版本页面将再次变得可访问。
+	 * 如果我们发生 panic，会在崩溃恢复中重试整个操作，但即便如此我们也不能
+	 * 放弃，因为我们不希望备库的关系统计大小出现分歧，从而破坏下游的重放或
+	 * 可见性不变式。临界区还会抑制中断。
 	 *
-	 * (See also visibilitymap.c if changing this code.)
+	 * （如果修改这段代码，另请参见 visibilitymap.c。）
 	 */
 	START_CRIT_SECTION();
 
 	if (RelationNeedsWAL(rel))
 	{
 		/*
-		 * Make an XLOG entry reporting the file truncation.
+		 * 写入一条报告文件截断的 XLOG 条目。
 		 */
 		XLogRecPtr	lsn;
 		xl_smgr_truncate xlrec;
@@ -404,36 +379,31 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 						 XLOG_SMGR_TRUNCATE | XLR_SPECIAL_REL_UPDATE);
 
 		/*
-		 * Flush, because otherwise the truncation of the main relation might
-		 * hit the disk before the WAL record, and the truncation of the FSM
-		 * or visibility map. If we crashed during that window, we'd be left
-		 * with a truncated heap, but the FSM or visibility map would still
-		 * contain entries for the non-existent heap pages, and standbys would
-		 * also never replay the truncation.
+		 * 强制刷出，因为否则主关系的截断可能会比 WAL 记录以及 FSM 或可见性
+		 * 映射的截断更早落到磁盘上。如果我们在这个窗口期间崩溃，就会留下一个
+		 * 已被截断的堆，但 FSM 或可见性映射中仍然包含那些已不存在的堆页面的
+		 * 条目，并且备库也永远不会重放这次截断。
 		 */
 		XLogFlush(lsn);
 	}
 
 	/*
-	 * This will first remove any buffers from the buffer pool that should no
-	 * longer exist after truncation is complete, and then truncate the
-	 * corresponding files on disk.
+	 * 这会首先从缓冲池中移除那些在截断完成后不应再存在的缓冲区，
+	 * 然后截断磁盘上相应的文件。
 	 */
 	smgrtruncate(RelationGetSmgr(rel), forks, nforks, old_blocks, blocks);
 
 	END_CRIT_SECTION();
 
-	/* We've done all the critical work, so checkpoints are OK now. */
+	/* 我们已经完成了所有关键工作，因此现在检查点可以正常进行了。 */
 	MyProc->delayChkptFlags &= ~(DELAY_CHKPT_START | DELAY_CHKPT_COMPLETE);
 
 	/*
-	 * Update upper-level FSM pages to account for the truncation. This is
-	 * important because the just-truncated pages were likely marked as
-	 * all-free, and would be preferentially selected.
+	 * 更新上层的 FSM 页面以反映这次截断。这一点很重要，因为刚刚被截断的
+	 * 页面很可能被标记为全部空闲，从而会被优先选中。
 	 *
-	 * NB: There's no point in delaying checkpoints until this is done.
-	 * Because the FSM is not WAL-logged, we have to be prepared for the
-	 * possibility of corruption after a crash anyway.
+	 * 注意：推迟检查点直到这一步完成是没有意义的。因为 FSM 不会被写入
+	 * WAL 日志，我们无论如何都必须准备好应对崩溃后可能发生损坏的情况。
 	 */
 	if (need_fsm_vacuum)
 		FreeSpaceMapVacuumRange(rel, nblocks, InvalidBlockNumber);
@@ -441,10 +411,10 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 
 /*
  * RelationPreTruncate
- *		Perform AM-independent work before a physical truncation.
+ *		在物理截断之前执行与访问方法无关的工作。
  *
- * If an access method's relation_nontransactional_truncate does not call
- * RelationTruncate(), it must call this before decreasing the table size.
+ * 如果某个访问方法的 relation_nontransactional_truncate 不调用
+ * RelationTruncate()，那么它必须在缩小表大小之前调用本函数。
  */
 void
 RelationPreTruncate(Relation rel)
@@ -462,17 +432,16 @@ RelationPreTruncate(Relation rel)
 }
 
 /*
- * Copy a fork's data, block by block.
+ * 逐块地复制一个分支的数据。
  *
- * Note that this requires that there is no dirty data in shared buffers. If
- * it's possible that there are, callers need to flush those using
- * e.g. FlushRelationBuffers(rel).
+ * 注意，这要求共享缓冲区中没有脏数据。如果可能存在脏数据，调用方需要
+ * 使用例如 FlushRelationBuffers(rel) 将它们刷出。
  *
- * Also note that this is frequently called via locutions such as
+ * 另请注意，本函数经常通过诸如
  *		RelationCopyStorage(RelationGetSmgr(rel), ...);
- * That's safe only because we perform only smgr and WAL operations here.
- * If we invoked anything else, a relcache flush could cause our SMgrRelation
- * argument to become a dangling pointer.
+ * 这样的形式被调用；这之所以安全，仅仅是因为我们在这里只执行 smgr 和
+ * WAL 操作。如果我们调用了任何其他东西，一次 relcache 刷新就可能使我们的
+ * SMgrRelation 参数变成一个悬空指针。
  */
 void
 RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
@@ -485,18 +454,17 @@ RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
 	BulkWriteState *bulkstate;
 
 	/*
-	 * The init fork for an unlogged relation in many respects has to be
-	 * treated the same as normal relation, changes need to be WAL logged and
-	 * it needs to be synced to disk.
+	 * 未日志记录（unlogged）关系的初始化分支在很多方面都不得不被当作普通
+	 * 关系一样对待：其修改需要写入 WAL 日志，并且需要同步到磁盘。
 	 */
 	copying_initfork = relpersistence == RELPERSISTENCE_UNLOGGED &&
 		forkNum == INIT_FORKNUM;
 
 	/*
-	 * We need to log the copied data in WAL iff WAL archiving/streaming is
-	 * enabled AND it's a permanent relation.  This gives the same answer as
-	 * "RelationNeedsWAL(rel) || copying_initfork", because we know the
-	 * current operation created new relation storage.
+	 * 当且仅当启用了 WAL 归档/流复制、并且它是一个永久关系时，我们才需要
+	 * 将复制的数据写入 WAL 日志。这与
+	 * "RelationNeedsWAL(rel) || copying_initfork" 的结果相同，因为我们知道
+	 * 当前操作创建了新的关系存储。
 	 */
 	use_wal = XLogIsNeeded() &&
 		(relpersistence == RELPERSISTENCE_PERMANENT || copying_initfork);
@@ -512,7 +480,7 @@ RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
 		bool		checksum_failure;
 		bool		verified;
 
-		/* If we got a cancel signal during the copy of the data, quit */
+		/* 如果在复制数据期间收到了取消信号，则退出 */
 		CHECK_FOR_INTERRUPTS();
 
 		buf = smgr_bulk_get_buf(bulkstate);
@@ -534,11 +502,10 @@ RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
 		if (!verified)
 		{
 			/*
-			 * For paranoia's sake, capture the file path before invoking the
-			 * ereport machinery.  This guards against the possibility of a
-			 * relcache flush caused by, e.g., an errcontext callback.
-			 * (errcontext callbacks shouldn't be risking any such thing, but
-			 * people have been known to forget that rule.)
+			 * 出于谨慎起见，在调用 ereport 机制之前先捕获文件路径。这可以防止
+			 * 因例如一个 errcontext 回调而导致 relcache 刷新的可能性。
+			 * （errcontext 回调本不应冒这种风险，但众所周知人们有时会忘记这条
+			 * 规则。）
 			 */
 			RelPathStr	relpath = relpathbackend(src->smgr_rlocator.locator,
 												 src->smgr_rlocator.backend,
@@ -551,9 +518,8 @@ RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
 		}
 
 		/*
-		 * Queue the page for WAL-logging and writing out.  Unfortunately we
-		 * don't know what kind of a page this is, so we have to log the full
-		 * page including any unused space.
+		 * 将该页排入队列，以便写入 WAL 日志并写出。遗憾的是我们不知道这是
+		 * 哪种类型的页面，因此必须记录整页，包括任何未使用的空间。
 		 */
 		smgr_bulk_write(bulkstate, blkno, buf, false);
 	}
@@ -562,12 +528,12 @@ RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
 
 /*
  * RelFileLocatorSkippingWAL
- *		Check if a BM_PERMANENT relfilelocator is using WAL.
+ *		检查一个 BM_PERMANENT 的 relfilelocator 是否正在跳过 WAL。
  *
- * Changes to certain relations must not write WAL; see "Skipping WAL for
- * New RelFileLocator" in src/backend/access/transam/README.  Though it is
- * known from Relation efficiently, this function is intended for the code
- * paths not having access to Relation.
+ * 对某些关系的修改不能写入 WAL；详见
+ * src/backend/access/transam/README 中的 "Skipping WAL for New
+ * RelFileLocator"。虽然从 Relation 可以高效地得知这一点，但本函数
+ * 是为那些无法访问 Relation 的代码路径准备的。
  */
 bool
 RelFileLocatorSkippingWAL(RelFileLocator rlocator)
@@ -581,7 +547,7 @@ RelFileLocatorSkippingWAL(RelFileLocator rlocator)
 
 /*
  * EstimatePendingSyncsSpace
- *		Estimate space needed to pass syncs to parallel workers.
+ *		估计将同步操作传递给并行工作进程所需的空间。
  */
 Size
 EstimatePendingSyncsSpace(void)
@@ -594,7 +560,7 @@ EstimatePendingSyncsSpace(void)
 
 /*
  * SerializePendingSyncs
- *		Serialize syncs for parallel workers.
+ *		为并行工作进程序列化同步操作。
  */
 void
 SerializePendingSyncs(Size maxSize, char *startAddress)
@@ -610,7 +576,7 @@ SerializePendingSyncs(Size maxSize, char *startAddress)
 	if (!pendingSyncHash)
 		goto terminate;
 
-	/* Create temporary hash to collect active relfilelocators */
+	/* 创建临时哈希表以收集活跃的 relfilelocator */
 	ctl.keysize = sizeof(RelFileLocator);
 	ctl.entrysize = sizeof(RelFileLocator);
 	ctl.hcxt = CurrentMemoryContext;
@@ -618,12 +584,12 @@ SerializePendingSyncs(Size maxSize, char *startAddress)
 						  hash_get_num_entries(pendingSyncHash), &ctl,
 						  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
-	/* collect all rlocator from pending syncs */
+	/* 从待同步项中收集所有 rlocator */
 	hash_seq_init(&scan, pendingSyncHash);
 	while ((sync = (PendingRelSync *) hash_seq_search(&scan)))
 		(void) hash_search(tmphash, &sync->rlocator, HASH_ENTER, NULL);
 
-	/* remove deleted rnodes */
+	/* 移除已删除的 rnode */
 	for (delete = pendingDeletes; delete != NULL; delete = delete->next)
 		if (delete->atCommit)
 			(void) hash_search(tmphash, &delete->rlocator,
@@ -641,11 +607,11 @@ terminate:
 
 /*
  * RestorePendingSyncs
- *		Restore syncs within a parallel worker.
+ *		在并行工作进程内恢复同步操作。
  *
- * RelationNeedsWAL() and RelFileLocatorSkippingWAL() must offer the correct
- * answer to parallel workers.  Only smgrDoPendingSyncs() reads the
- * is_truncated field, at end of transaction.  Hence, don't restore it.
+ * RelationNeedsWAL() 和 RelFileLocatorSkippingWAL() 必须向并行工作进程
+ * 提供正确的答案。只有 smgrDoPendingSyncs() 会在事务结束时读取
+ * is_truncated 字段。因此，不要恢复它。
  */
 void
 RestorePendingSyncs(char *startAddress)
@@ -659,15 +625,13 @@ RestorePendingSyncs(char *startAddress)
 }
 
 /*
- *	smgrDoPendingDeletes() -- Take care of relation deletes at end of xact.
+ *	smgrDoPendingDeletes() -- 在事务结束时处理关系的删除。
  *
- * This also runs when aborting a subxact; we want to clean up a failed
- * subxact immediately.
+ * 在回滚子事务时也会运行本函数；我们希望立即清理一个失败了的子事务。
  *
- * Note: It's possible that we're being asked to remove a relation that has
- * no physical storage in any fork. In particular, it's possible that we're
- * cleaning up an old temporary relation for which RemovePgTempFiles has
- * already recovered the physical storage.
+ * 注意：有可能我们被要求移除一个在任何分支中都没有物理存储的关系。
+ * 特别是，有可能我们正在清理一个旧的临时关系，而 RemovePgTempFiles
+ * 已经回收了其物理存储。
  */
 void
 smgrDoPendingDeletes(bool isCommit)
@@ -686,24 +650,24 @@ smgrDoPendingDeletes(bool isCommit)
 		next = pending->next;
 		if (pending->nestLevel < nestLevel)
 		{
-			/* outer-level entries should not be processed yet */
+			/* 外层级别的条目不应被立即处理 */
 			prev = pending;
 		}
 		else
 		{
-			/* unlink list entry first, so we don't retry on failure */
+			/* 先解除列表条目的链接，这样在失败时我们不会重试 */
 			if (prev)
 				prev->next = next;
 			else
 				pendingDeletes = next;
-			/* do deletion if called for */
+			/* 如果需要则执行删除 */
 			if (pending->atCommit == isCommit)
 			{
 				SMgrRelation srel;
 
 				srel = smgropen(pending->rlocator, pending->procNumber);
 
-				/* allocate the initial array, or extend it, if needed */
+				/* 分配初始数组，如果需要则扩展它 */
 				if (maxrels == 0)
 				{
 					maxrels = 8;
@@ -717,9 +681,9 @@ smgrDoPendingDeletes(bool isCommit)
 
 				srels[nrels++] = srel;
 			}
-			/* must explicitly free the list entry */
+			/* 必须显式地释放列表条目 */
 			pfree(pending);
-			/* prev does not change */
+			/* prev 不变 */
 		}
 	}
 
@@ -735,7 +699,7 @@ smgrDoPendingDeletes(bool isCommit)
 }
 
 /*
- *	smgrDoPendingSyncs() -- Take care of relation syncs at end of xact.
+ *	smgrDoPendingSyncs() -- 在事务结束时处理关系的同步。
  */
 void
 smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
@@ -750,9 +714,9 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 	Assert(GetCurrentTransactionNestLevel() == 1);
 
 	if (!pendingSyncHash)
-		return;					/* no relation needs sync */
+		return;					/* 没有需要同步的关系 */
 
-	/* Abort -- just throw away all pending syncs */
+	/* 中止 -- 直接丢弃所有待同步项 */
 	if (!isCommit)
 	{
 		pendingSyncHash = NULL;
@@ -761,14 +725,14 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 
 	AssertPendingSyncs_RelationCache();
 
-	/* Parallel worker -- just throw away all pending syncs */
+	/* 并行工作进程 -- 直接丢弃所有待同步项 */
 	if (isParallelWorker)
 	{
 		pendingSyncHash = NULL;
 		return;
 	}
 
-	/* Skip syncing nodes that smgrDoPendingDeletes() will delete. */
+	/* 跳过那些 smgrDoPendingDeletes() 将要删除的节点。 */
 	for (pending = pendingDeletes; pending != NULL; pending = pending->next)
 		if (pending->atCommit)
 			(void) hash_search(pendingSyncHash, &pending->rlocator,
@@ -785,12 +749,11 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 		srel = smgropen(pendingsync->rlocator, INVALID_PROC_NUMBER);
 
 		/*
-		 * We emit newpage WAL records for smaller relations.
+		 * 对于较小的关系，我们会发出 newpage 的 WAL 记录。
 		 *
-		 * Small WAL records have a chance to be flushed along with other
-		 * backends' WAL records.  We emit WAL records instead of syncing for
-		 * files that are smaller than a certain threshold, expecting faster
-		 * commit.  The threshold is defined by the GUC wal_skip_threshold.
+		 * 较小的 WAL 记录有机会与其他后端的 WAL 记录一起被刷出。对于那些
+		 * 小于某个阈值（由 GUC wal_skip_threshold 定义）的文件，我们会发出
+		 * WAL 记录而不是执行同步，以期获得更快的提交。
 		 */
 		if (!pendingsync->is_truncated)
 		{
@@ -800,8 +763,8 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 				{
 					BlockNumber n = smgrnblocks(srel, fork);
 
-					/* we shouldn't come here for unlogged relations */
-					Assert(fork != INIT_FORKNUM);
+				/* 对于未日志记录的关系，我们不应走到这里 */
+				Assert(fork != INIT_FORKNUM);
 					nblocks[fork] = n;
 					total_blocks += n;
 				}
@@ -811,21 +774,19 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 		}
 
 		/*
-		 * Sync file or emit WAL records for its contents.
+		 * 同步文件，或者为其内容发出 WAL 记录。
 		 *
-		 * Although we emit WAL record if the file is small enough, do file
-		 * sync regardless of the size if the file has experienced a
-		 * truncation. It is because the file would be followed by trailing
-		 * garbage blocks after a crash recovery if, while a past longer file
-		 * had been flushed out, we omitted syncing-out of the file and
-		 * emitted WAL instead.  You might think that we could choose WAL if
-		 * the current main fork is longer than ever, but there's a case where
-		 * main fork is longer than ever but FSM fork gets shorter.
+		 * 尽管当文件足够小时我们会发出 WAL 记录，但如果该文件经历过截断，
+		 * 则无论其大小如何都要执行文件同步。这是因为，如果在过去一个更长的
+		 * 文件已经被刷出的情况下，我们省略了文件的同步写出而改为发出 WAL，
+		 * 那么在崩溃恢复之后该文件后面可能会跟有残留的垃圾块。你可能会认为，
+		 * 如果当前的主分支比以往任何时候都长，我们就可以选择 WAL；但也存在
+		 * 主分支比以往更长、而 FSM 分支却变短的情况。
 		 */
 		if (pendingsync->is_truncated ||
 			total_blocks >= wal_skip_threshold * (uint64) 1024 / BLCKSZ)
 		{
-			/* allocate the initial array, or extend it, if needed */
+			/* 分配初始数组，如果需要则扩展它 */
 			if (maxrels == 0)
 			{
 				maxrels = 8;
@@ -841,7 +802,7 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 		}
 		else
 		{
-			/* Emit WAL records for all blocks.  The file is small enough. */
+			/* 为所有块发出 WAL 记录。文件足够小。 */
 			for (fork = 0; fork <= MAX_FORKNUM; fork++)
 			{
 				int			n = nblocks[fork];
@@ -851,10 +812,9 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 					continue;
 
 				/*
-				 * Emit WAL for the whole file.  Unfortunately we don't know
-				 * what kind of a page this is, so we have to log the full
-				 * page including any unused space.  ReadBufferExtended()
-				 * counts some pgstat events; unfortunately, we discard them.
+				 * 为整个文件发出 WAL。遗憾的是我们不知道这是哪种类型的页面，
+				 * 因此必须记录整页，包括任何未使用的空间。ReadBufferExtended()
+				 * 会计入一些 pgstat 事件；遗憾的是，我们丢弃了它们。
 				 */
 				rel = CreateFakeRelcacheEntry(srel->smgr_rlocator.locator);
 				log_newpage_range(rel, fork, 0, n, false);
@@ -873,21 +833,17 @@ smgrDoPendingSyncs(bool isCommit, bool isParallelWorker)
 }
 
 /*
- * smgrGetPendingDeletes() -- Get a list of non-temp relations to be deleted.
+ * smgrGetPendingDeletes() -- 获取一个待删除的非临时关系的列表。
  *
- * The return value is the number of relations scheduled for termination.
- * *ptr is set to point to a freshly-palloc'd array of RelFileLocators.
- * If there are no relations to be deleted, *ptr is set to NULL.
+ * 返回值是被安排终止的关系的个数。*ptr 会被设置为指向一个
+ * 新分配的 RelFileLocator 数组。如果没有待删除的关系，*ptr 会被设置为 NULL。
  *
- * Only non-temporary relations are included in the returned list.  This is OK
- * because the list is used only in contexts where temporary relations don't
- * matter: we're either writing to the two-phase state file (and transactions
- * that have touched temp tables can't be prepared) or we're writing to xlog
- * (and all temporary files will be zapped if we restart anyway, so no need
- * for redo to do it also).
+ * 返回的列表只包含非临时关系。这样做是可以的，因为该列表只在临时关系
+ * 无关紧要的上下文中使用：我们要么正在写入两阶段状态文件（而触碰过
+ * 临时表的事务无法被准备），要么正在写入 xlog（并且无论如何，如果
+ * 我们重启，所有临时文件都会被清除，因此不需要重做也去做这件事）。
  *
- * Note that the list does not include anything scheduled for termination
- * by upper-level transactions.
+ * 注意，该列表不包含任何由上层事务安排终止的关系。
  */
 int
 smgrGetPendingDeletes(bool forCommit, RelFileLocator **ptr)
@@ -924,11 +880,10 @@ smgrGetPendingDeletes(bool forCommit, RelFileLocator **ptr)
 }
 
 /*
- *	PostPrepare_smgr -- Clean up after a successful PREPARE
+ *	PostPrepare_smgr -- 在一次成功的 PREPARE 之后进行清理
  *
- * What we have to do here is throw away the in-memory state about pending
- * relation deletes.  It's all been recorded in the 2PC state file and
- * it's no longer smgr's job to worry about it.
+ * 我们在这里要做的是丢弃关于待删除关系的、位于内存中的状态。这些状态
+ * 全部已经被记录到了 2PC 状态文件中，因此 smgr 不再需要为此操心。
  */
 void
 PostPrepare_smgr(void)
@@ -940,16 +895,16 @@ PostPrepare_smgr(void)
 	{
 		next = pending->next;
 		pendingDeletes = next;
-		/* must explicitly free the list entry */
+		/* 必须显式地释放列表条目 */
 		pfree(pending);
 	}
 }
 
 
 /*
- * AtSubCommit_smgr() --- Take care of subtransaction commit.
+ * AtSubCommit_smgr() --- 处理子事务的提交。
  *
- * Reassign all items in the pending-deletes list to the parent transaction.
+ * 将待删除列表中的所有条目重新指派给父事务。
  */
 void
 AtSubCommit_smgr(void)
@@ -965,11 +920,10 @@ AtSubCommit_smgr(void)
 }
 
 /*
- * AtSubAbort_smgr() --- Take care of subtransaction abort.
+ * AtSubAbort_smgr() --- 处理子事务的中止。
  *
- * Delete created relations and forget about deleted relations.
- * We can execute these operations immediately because we know this
- * subtransaction will not commit.
+ * 删除已创建的关系，并忘掉已删除的关系。我们可以立即执行这些操作，
+ * 因为我们知道这个子事务不会提交。
  */
 void
 AtSubAbort_smgr(void)
@@ -983,7 +937,7 @@ smgr_redo(XLogReaderState *record)
 	XLogRecPtr	lsn = record->EndRecPtr;
 	uint8		info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
 
-	/* Backup blocks are not used in smgr records */
+	/* smgr 记录中不使用备份块 */
 	Assert(!XLogRecHasAnyBlockRefs(record));
 
 	if (info == XLOG_SMGR_CREATE)
@@ -1008,31 +962,26 @@ smgr_redo(XLogReaderState *record)
 		reln = smgropen(xlrec->rlocator, INVALID_PROC_NUMBER);
 
 		/*
-		 * Forcibly create relation if it doesn't exist (which suggests that
-		 * it was dropped somewhere later in the WAL sequence).  As in
-		 * XLogReadBufferForRedo, we prefer to recreate the rel and replay the
-		 * log as best we can until the drop is seen.
+		 * 如果该关系不存在，则强制创建它（这暗示它在 WAL 序列中更靠后的
+		 * 位置被删除了）。与 XLogReadBufferForRedo 中一样，我们倾向于
+		 * 重新创建该关系，并尽可能好地重放日志，直到看到删除操作。
 		 */
 		smgrcreate(reln, MAIN_FORKNUM, true);
 
 		/*
-		 * Before we perform the truncation, update minimum recovery point to
-		 * cover this WAL record. Once the relation is truncated, there's no
-		 * going back. The buffer manager enforces the WAL-first rule for
-		 * normal updates to relation files, so that the minimum recovery
-		 * point is always updated before the corresponding change in the data
-		 * file is flushed to disk. We have to do the same manually here.
+		 * 在执行截断之前，先更新最小恢复点以覆盖这条 WAL 记录。一旦关系被
+		 * 截断，就再也没有回头路了。缓冲区管理器对关系文件的常规更新强制
+		 * 执行“WAL 优先”规则，从而确保最小恢复点总是在数据文件中相应的
+		 * 修改被刷到磁盘之前被更新。我们在这里必须手动做同样的事情。
 		 *
-		 * Doing this before the truncation means that if the truncation fails
-		 * for some reason, you cannot start up the system even after restart,
-		 * until you fix the underlying situation so that the truncation will
-		 * succeed. Alternatively, we could update the minimum recovery point
-		 * after truncation, but that would leave a small window where the
-		 * WAL-first rule could be violated.
+		 * 在截断之前做这件事意味着，如果截断由于某种原因失败，即使在重启
+		 * 之后你也无法启动系统，直到你修复底层状况使截断能够成功为止。
+		 * 作为替代方案，我们也可以在截断之后更新最小恢复点，但那样就会
+		 * 留下一个“WAL 优先”规则可能被违反的小窗口。
 		 */
 		XLogFlush(lsn);
 
-		/* Prepare for truncation of MAIN fork */
+		/* 准备截断主分支（MAIN fork） */
 		if ((xlrec->flags & SMGR_TRUNCATE_HEAP) != 0)
 		{
 			forks[nforks] = MAIN_FORKNUM;
@@ -1040,11 +989,11 @@ smgr_redo(XLogReaderState *record)
 			blocks[nforks] = xlrec->blkno;
 			nforks++;
 
-			/* Also tell xlogutils.c about it */
+			/* 同时告知 xlogutils.c */
 			XLogTruncateRelation(xlrec->rlocator, MAIN_FORKNUM, xlrec->blkno);
 		}
 
-		/* Prepare for truncation of FSM and VM too */
+		/* 也准备截断 FSM 和 VM */
 		rel = CreateFakeRelcacheEntry(xlrec->rlocator);
 
 		if ((xlrec->flags & SMGR_TRUNCATE_FSM) != 0 &&
@@ -1071,7 +1020,7 @@ smgr_redo(XLogReaderState *record)
 			}
 		}
 
-		/* Do the real work to truncate relation forks */
+		/* 执行真正的工作以截断关系的各个分支 */
 		if (nforks > 0)
 		{
 			START_CRIT_SECTION();
@@ -1080,9 +1029,8 @@ smgr_redo(XLogReaderState *record)
 		}
 
 		/*
-		 * Update upper-level FSM pages to account for the truncation. This is
-		 * important because the just-truncated pages were likely marked as
-		 * all-free, and would be preferentially selected.
+		 * 更新上层的 FSM 页面以反映这次截断。这一点很重要，因为刚刚被截断的
+		 * 页面很可能被标记为全部空闲，从而会被优先选中。
 		 */
 		if (need_fsm_vacuum)
 			FreeSpaceMapVacuumRange(rel, xlrec->blkno,

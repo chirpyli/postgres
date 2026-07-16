@@ -1,8 +1,8 @@
 #----------------------------------------------------------------------
 #
 # Catalog.pm
-#    Perl module that extracts info from catalog files into Perl
-#    data structures
+#    Perl 模块，用于将目录文件中的信息提取到 Perl 数据结构中
+#    数据结构
 #
 # Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
@@ -19,14 +19,13 @@ use warnings FATAL => 'all';
 use File::Compare;
 
 
-# Parses a catalog header file into a data structure describing the schema
-# of the catalog.
+# 将目录头文件解析为描述该目录结构（schema）的数据结构。
 sub ParseHeader
 {
 	my $input_file = shift;
 
-	# There are a few types which are given one name in the C source, but a
-	# different name at the SQL level.  These are enumerated here.
+	# 有少数类型在 C 源码中使用一个名字，但在 SQL 层面使用另一个名字。
+	# 这里将它们一一列举出来。
 	my %RENAME_ATTTYPE = (
 		'int16' => 'int2',
 		'int32' => 'int4',
@@ -50,11 +49,11 @@ sub ParseHeader
 
 	open(my $ifh, '<', $input_file) || die "$input_file: $!";
 
-	# Scan the input file.
+	# 扫描输入文件。
 	while (<$ifh>)
 	{
 
-		# Set appropriate flag when we're in certain code sections.
+		# 当我们处于某些代码段时，设置相应的标志。
 		if (/^#/)
 		{
 			$is_varlen = 1 if /^#ifdef\s+CATALOG_VARLEN/;
@@ -68,12 +67,12 @@ sub ParseHeader
 
 		if (!$is_client_code)
 		{
-			# Strip C-style comments.
+			# 去除 C 风格的注释。
 			s;/\*(.|\n)*\*/;;g;
 			if (m;/\*;)
 			{
 
-				# handle multi-line comments properly.
+				# 正确处理多行注释。
 				my $next_line = <$ifh>;
 				die "$input_file: ends within C-style comment\n"
 				  if !defined $next_line;
@@ -81,16 +80,16 @@ sub ParseHeader
 				redo;
 			}
 
-			# Strip useless whitespace and trailing semicolons.
+			# 去除无用的空白字符和行尾分号。
 			chomp;
 			s/^\s+//;
 			s/;\s*$//;
 			s/\s+/ /g;
 		}
 
-		# Push the data into the appropriate data structure.
-		# Caution: when adding new recognized OID-defining macros,
-		# also update src/include/catalog/renumber_oids.pl.
+		# 将数据压入相应的数据结构。
+		# 注意：在新增可识别的 OID 定义宏时，
+		# 也要同步更新 src/include/catalog/renumber_oids.pl。
 		if (/^DECLARE_TOAST\(\s*
 			 (?<parent_table>\w+),\s*
 			 (?<toast_oid>\d+),\s*
@@ -226,9 +225,8 @@ sub ParseHeader
 					$atttype = $RENAME_ATTTYPE{$atttype};
 				}
 
-				# If the C name ends with '[]' or '[digits]', we have
-				# an array type, so we discard that from the name and
-				# prepend '_' to the type.
+				# 如果 C 名字以 '[]' 或 '[数字]' 结尾，说明这是一个数组类型，
+				# 因此我们从名字中去掉该后缀，并在类型前加上 '_'。
 				if ($attname =~ /(\w+)\[\d*\]/)
 				{
 					$attname = $1;
@@ -250,9 +248,8 @@ sub ParseHeader
 						$column{forcenotnull} = 1;
 					}
 
-					# We use quotes for values like \0 and \054, to
-					# make sure all compilers and syntax highlighters
-					# can recognize them properly.
+					# 对于 \0 和 \054 这样的值，我们使用引号包裹，
+					# 以确保所有编译器和语法高亮工具都能正确识别它们。
 					elsif ($attopt =~ /BKI_DEFAULT\(['"]?([^'"]+)['"]?\)/)
 					{
 						$column{default} = $1;
@@ -266,7 +263,7 @@ sub ParseHeader
 					{
 						$column{lookup} = $2;
 						$column{lookup_opt} = $1 ? 1 : 0;
-						# BKI_LOOKUP implicitly makes an FK reference
+						# BKI_LOOKUP 会隐式地创建一个外键（FK）引用
 						push @{ $catalog{foreign_keys} },
 						  {
 							is_array => (
@@ -298,13 +295,12 @@ sub ParseHeader
 	return \%catalog;
 }
 
-# Parses a file containing Perl data structure literals, returning live data.
+# 解析一个包含 Perl 数据结构字面量的文件，返回可用的数据。
 #
-# The parameter $preserve_comments needs to be set for callers that want
-# to work with non-data lines in the data files, such as comments and blank
-# lines. If a caller just wants to consume the data, leave it unset.
-# (When requested, non-data lines will be returned as array entries that
-# are strings not hashes, so extra code is needed to deal with that.)
+# 调用者若希望处理数据文件中的非数据行（例如注释和空行），
+# 需要设置 $preserve_comments 参数。如果调用者只想消费数据，则保持未设置即可。
+# （当该参数被请求时，非数据行会作为字符串（而非哈希）的数组条目返回，
+# 因此需要额外的代码来处理这种情况。）
 sub ParseData
 {
 	my ($input_file, $schema, $preserve_comments) = @_;
@@ -315,42 +311,38 @@ sub ParseData
 	my $catname = $1;
 	my $data = [];
 
-	# Scan the input file.
+	# 扫描输入文件。
 	while (<$ifd>)
 	{
 		my $hash_ref;
 
 		if (/{/)
 		{
-			# Capture the hash ref
-			# NB: Assumes that the next hash ref can't start on the
-			# same line where the present one ended.
-			# Not foolproof, but we shouldn't need a full parser,
-			# since we expect relatively well-behaved input.
+			# 捕获哈希引用
+			# 注意：假设下一个哈希引用不会在当前哈希结束的同一行上开始。
+			# 这并非万无一失，但我们应当不需要一个完整的解析器，
+			# 因为我们预期输入相对规整。
 
-			# Quick hack to detect when we have a full hash ref to
-			# parse. We can't just use a regex because of values in
-			# pg_aggregate and pg_proc like '{0,0}'.  This will need
-			# work if we ever need to allow unbalanced braces within
-			# a field value.
+			# 这是一个快速处理技巧，用于检测我们是否已经拿到一个完整的哈希引用可供解析。
+			# 我们不能简单地使用正则，因为 pg_aggregate 和 pg_proc 中存在像 '{0,0}' 这样的值。
+			# 如果我们以后需要允许字段值中出现不平衡的大括号，这里还需要改进。
 			my $lcnt = tr/{//;
 			my $rcnt = tr/}//;
 
 			if ($lcnt == $rcnt)
 			{
-				# We're treating the input line as a piece of Perl, so we
-				# need to use string eval here. Tell perlcritic we know what
-				# we're doing.
+				# 我们把输入行当作一段 Perl 代码来处理，因此这里需要使用字符串 eval。
+				# 告诉 perlcritic 我们清楚自己在做什么。
 				eval "\$hash_ref = $_";    ## no critic (ProhibitStringyEval)
 				if (!ref $hash_ref)
 				{
 					die "$input_file: error parsing line $.:\n$_\n";
 				}
 
-				# Annotate each hash with the source line number.
+				# 用源代码行号为每个哈希做标注。
 				$hash_ref->{line_number} = $.;
 
-				# Expand tuples to their full representation.
+				# 将元组展开为完整表示形式。
 				AddDefaultValues($hash_ref, $schema, $catname);
 			}
 			else
@@ -363,14 +355,12 @@ sub ParseData
 			}
 		}
 
-		# If we found a hash reference, keep it, unless it is marked as
-		# autogenerated; in that case it'd duplicate an entry we'll
-		# autogenerate below.  (This makes it safe for reformat_dat_file.pl
-		# with --full-tuples to print autogenerated entries, which seems like
-		# useful behavior for debugging.)
+		# 如果我们找到了哈希引用，就保留它，除非它被标记为自动生成；
+		# 否则它会与我们在下面自动生成的条目重复。（这使得 reformat_dat_file.pl
+		# 在配合 --full-tuples 时打印自动生成的条目变得安全，而这看起来
+		# 对调试是有用的行为。）
 		#
-		# Otherwise, we have a non-data string, which we keep only if
-		# the caller requested it.
+		# 否则，我们得到的是一个非数据字符串，仅在调用者要求时才保留。
 		if (defined $hash_ref)
 		{
 			push @$data, $hash_ref if !$hash_ref->{autogenerated};
@@ -383,26 +373,26 @@ sub ParseData
 
 	close $ifd;
 
-	# If this is pg_type, auto-generate array types too.
+	# 如果这是 pg_type，还要自动生成数组类型。
 	GenerateArrayTypes($schema, $data) if $catname eq 'pg_type';
 
 	return $data;
 }
 
-# Fill in default values of a record using the given schema.
-# It's the caller's responsibility to specify other values beforehand.
+# 使用给定的结构（schema）填充记录的默认值。
+# 调用者有责任在此之前指定其他值。
 sub AddDefaultValues
 {
 	my ($row, $schema, $catname) = @_;
 	my @missing_fields;
 
-	# Compute special-case column values.
-	# Note: If you add new cases here, you must also teach
-	# strip_default_values() in include/catalog/reformat_dat_file.pl
-	# to delete them.
+	# 计算特殊情形的列值。
+	# 注意：如果你在这里新增了情形，也必须教会
+	# include/catalog/reformat_dat_file.pl 中的 strip_default_values()
+	# 将它们删除。
 	if ($catname eq 'pg_proc')
 	{
-		# pg_proc.pronargs can be derived from proargtypes.
+		# pg_proc.pronargs 可以由 proargtypes 推导得出。
 		if (defined $row->{proargtypes})
 		{
 			my @proargtypes = split /\s+/, $row->{proargtypes};
@@ -410,29 +400,29 @@ sub AddDefaultValues
 		}
 	}
 
-	# Now fill in defaults, and note any columns that remain undefined.
+	# 现在填充默认值，并记录仍未定义的列。
 	foreach my $column (@$schema)
 	{
 		my $attname = $column->{name};
 
-		# No work if field already has a value.
+		# 如果该字段已有值，则无需处理。
 		next if defined $row->{$attname};
 
-		# Ignore 'oid' columns, they're handled elsewhere.
+		# 忽略 'oid' 列，它们在其他地方处理。
 		next if $attname eq 'oid';
 
-		# If column has a default value, fill that in.
+		# 如果该列有默认值，则填入该默认值。
 		if (defined $column->{default})
 		{
 			$row->{$attname} = $column->{default};
 			next;
 		}
 
-		# Failed to find a value for this field.
+		# 未能为该字段找到值。
 		push @missing_fields, $attname;
 	}
 
-	# Failure to provide all columns is a hard error.
+	# 未能提供全部列是致命错误。
 	if (@missing_fields)
 	{
 		die sprintf "missing values for field(s) %s in %s.dat line %s\n",
@@ -440,8 +430,8 @@ sub AddDefaultValues
 	}
 }
 
-# If a pg_type entry has an array_type_oid metadata field,
-# auto-generate an entry for its array type.
+# 如果一个 pg_type 条目带有 array_type_oid 元数据字段，
+# 则为其数组类型自动生成一个条目。
 sub GenerateArrayTypes
 {
 	my $pgtype_schema = shift;
@@ -455,29 +445,28 @@ sub GenerateArrayTypes
 
 		my %array_type;
 
-		# Set up metadata fields for array type.
+		# 为数组类型设置元数据字段。
 		$array_type{oid} = $elem_type->{array_type_oid};
 		$array_type{autogenerated} = 1;
 		$array_type{line_number} = $elem_type->{line_number};
 
-		# Set up column values derived from the element type.
+		# 设置从元素类型派生的列值。
 		$array_type{typname} = '_' . $elem_type->{typname};
 		$array_type{typelem} = $elem_type->{typname};
 
-		# Arrays require INT alignment, unless the element type requires
-		# DOUBLE alignment.
+		# 数组需要 INT 对齐，除非元素类型要求 DOUBLE 对齐。
 		$array_type{typalign} = $elem_type->{typalign} eq 'd' ? 'd' : 'i';
 
-		# Fill in the rest of the array entry's fields.
+		# 填充数组条目其余的字段。
 		foreach my $column (@$pgtype_schema)
 		{
 			my $attname = $column->{name};
 
-			# Skip if we already set it above.
+			# 如果上面已经设置过，则跳过。
 			next if defined $array_type{$attname};
 
-			# Apply the BKI_ARRAY_DEFAULT setting if there is one,
-			# otherwise copy the field from the element type.
+			# 如果存在 BKI_ARRAY_DEFAULT 设置则应用它，
+			# 否则从元素类型复制该字段。
 			if (defined $column->{array_default})
 			{
 				$array_type{$attname} = $column->{array_default};
@@ -488,7 +477,7 @@ sub GenerateArrayTypes
 			}
 		}
 
-		# Lastly, cross-link the array to the element type.
+		# 最后，将数组与元素类型相互链接。
 		$elem_type->{typarray} = $array_type{typname};
 
 		push @array_types, \%array_type;
@@ -499,15 +488,14 @@ sub GenerateArrayTypes
 	return;
 }
 
-# Rename temporary files to final names.
-# Call this function with the final file name and the .tmp extension.
+# 将临时文件重命名为最终名称。
+# 调用此函数时传入最终文件名和 .tmp 扩展名。
 #
-# If the final file already exists and has identical contents, don't
-# overwrite it; this behavior avoids unnecessary recompiles due to
-# updating the mod date on unchanged header files.
+# 如果最终文件已存在且内容完全相同，则不要覆盖它；
+# 这种行为可以避免由于未改动头文件的修改日期被更新而引发不必要的重新编译。
 #
-# Note: recommended extension is ".tmp$$", so that parallel make steps
-# can't use the same temp files.
+# 注意：建议使用的扩展名是 ".tmp$$"，这样并行的 make 步骤
+# 就不会使用相同的临时文件。
 sub RenameTempFile
 {
 	my $final_name = shift;
@@ -526,14 +514,14 @@ sub RenameTempFile
 	return;
 }
 
-# Find a symbol defined in a particular header file and extract the value.
-# include_path should be the path to src/include/.
+# 在特定的头文件中查找已定义的符号并提取其值。
+# include_path 应为 src/include/ 的路径。
 sub FindDefinedSymbol
 {
 	my ($catalog_header, $include_path, $symbol) = @_;
 	my $value;
 
-	# Make sure include path ends in a slash.
+	# 确保包含路径以斜杠结尾。
 	if (substr($include_path, -1) ne '/')
 	{
 		$include_path .= '/';
@@ -553,7 +541,7 @@ sub FindDefinedSymbol
 	die "$file: no definition found for $symbol\n";
 }
 
-# Similar to FindDefinedSymbol, but looks in the bootstrap metadata.
+# 与 FindDefinedSymbol 类似，但从 bootstrap 元数据中查找。
 sub FindDefinedSymbolFromData
 {
 	my ($data, $symbol) = @_;
@@ -567,10 +555,9 @@ sub FindDefinedSymbolFromData
 	die "no definition found for $symbol\n";
 }
 
-# Extract an array of all the OIDs assigned in the specified catalog headers
-# and their associated data files (if any).
-# Caution: genbki.pl contains equivalent logic; change it too if you need to
-# touch this.
+# 提取指定目录头文件及其关联数据文件（如果有）中
+# 分配的所有 OID 组成的数组。
+# 注意：genbki.pl 中包含等价逻辑；如果你需要改动这里，也要同步改动它。
 sub FindAllOidsFromHeaders
 {
 	my @input_files = @_;
@@ -585,9 +572,9 @@ sub FindAllOidsFromHeaders
 
 		my $catalog = Catalog::ParseHeader($header);
 
-		# We ignore the pg_class OID and rowtype OID of bootstrap catalogs,
-		# as those are expected to appear in the initial data for pg_class
-		# and pg_type.  For regular catalogs, include these OIDs.
+		# 对于 bootstrap 目录，我们忽略其 pg_class OID 和行类型（rowtype）OID，
+		# 因为这两个值预期会出现在 pg_class 和 pg_type 的初始数据中。
+		# 对于普通目录，则包含这些 OID。
 		if (!$catalog->{bootstrap})
 		{
 			push @oids, $catalog->{relation_oid}
@@ -595,7 +582,7 @@ sub FindAllOidsFromHeaders
 			push @oids, $catalog->{rowtype_oid} if ($catalog->{rowtype_oid});
 		}
 
-		# Not all catalogs have a data file.
+		# 并非所有目录都有数据文件。
 		if (-e $datfile)
 		{
 			my $catdata =

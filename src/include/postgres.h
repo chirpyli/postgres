@@ -1,10 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * postgres.h
- *	  Primary include file for PostgreSQL server .c files
+ *	  PostgreSQL 服务端 .c 文件的主要包含文件
  *
- * This should be the first file included by PostgreSQL backend modules.
- * Client-side code should include postgres_fe.h instead.
+ * 这应该是 PostgreSQL 后端模块包含的第一个文件。
+ * 客户端代码应改为包含 postgres_fe.h。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -17,26 +17,25 @@
 /* IWYU pragma: always_keep */
 /*
  *----------------------------------------------------------------
- *	 TABLE OF CONTENTS
+ *	 目录
  *
- *		When adding stuff to this file, please try to put stuff
- *		into the relevant section, or add new sections as appropriate.
+ *		向此文件添加内容时，请尽量将内容放入相关的节，或者视情况
+ *		新增节。
  *
- *	  section	description
+ *	  节		描述
  *	  -------	------------------------------------------------
- *		1)		Datum type + support functions
- *		2)		miscellaneous
+ *		1)		Datum 类型 + 支持函数
+ *		2)		杂项
  *
- *	 NOTES
+ *	 说明
  *
- *	In general, this file should contain declarations that are widely needed
- *	in the backend environment, but are of no interest outside the backend.
+ *	一般来说，此文件应包含后端环境中广泛需要、但在后端之外
+ *	无关紧要的声明。
  *
- *	Simple type definitions live in c.h, where they are shared with
- *	postgres_fe.h.  We do that since those type definitions are needed by
- *	frontend modules that want to deal with binary data transmission to or
- *	from the backend.  Type definitions in this file should be for
- *	representations that never escape the backend, such as Datum.
+ *	简单的类型定义位于 c.h 中，并在那里与 postgres_fe.h 共享。
+ *	我们这样做是因为那些需要处理与后端的二进制数据传输的
+ *	前端模块需要这些类型定义。此文件中的类型定义应当用于那些
+ *	永远不会离开后端的表示形式，例如 Datum。
  *
  *----------------------------------------------------------------
  */
@@ -52,27 +51,26 @@
 /* IWYU pragma: end_exports */
 
 /* ----------------------------------------------------------------
- *				Section 1:	Datum type + support functions
+ *				第 1 节：Datum 类型 + 支持函数
  * ----------------------------------------------------------------
  */
 
 /*
- * A Datum contains either a value of a pass-by-value type or a pointer to a
- * value of a pass-by-reference type.  Therefore, we require:
+ * 一个 Datum 要么包含一个传值类型的值，要么包含一个指向传引用类型
+ * 的值的指针。因此，我们要求：
  *
- * sizeof(Datum) == sizeof(void *) == 4 or 8
+ * sizeof(Datum) == sizeof(void *) == 4 或 8
  *
- * The functions below and the analogous functions for other types should be used to
- * convert between a Datum and the appropriate C type.
+ * 下面的这些函数，以及其他类型的类似函数，应当用于在 Datum 和
+ * 相应的 C 类型之间进行转换。
  */
 
 typedef uintptr_t Datum;
 
 /*
- * A NullableDatum is used in places where both a Datum and its nullness needs
- * to be stored. This can be more efficient than storing datums and nullness
- * in separate arrays, due to better spatial locality, even if more space may
- * be wasted due to padding.
+ * NullableDatum 用于需要同时存储一个 Datum 及其是否为空的地方。由于
+ * 更好的空间局部性，这比将 datum 和空值信息分别存储在不同的数组中
+ * 更高效，即便可能因填充而浪费更多空间。
  */
 typedef struct NullableDatum
 {
@@ -80,16 +78,16 @@ typedef struct NullableDatum
 	Datum		value;
 #define FIELDNO_NULLABLE_DATUM_ISNULL 1
 	bool		isnull;
-	/* due to alignment padding this could be used for flags for free */
+	/* 由于对齐填充，这里可以免费用于存放标志位 */
 } NullableDatum;
 
 #define SIZEOF_DATUM SIZEOF_VOID_P
 
 /*
  * DatumGetBool
- *		Returns boolean value of a datum.
+ *		返回 datum 的布尔值。
  *
- * Note: any nonzero value will be considered true.
+ * 注意：任何非零值都将被视为 true。
  */
 static inline bool
 DatumGetBool(Datum X)
@@ -99,9 +97,9 @@ DatumGetBool(Datum X)
 
 /*
  * BoolGetDatum
- *		Returns datum representation for a boolean.
+ *		返回布尔值的 datum 表示。
  *
- * Note: any nonzero value will be considered true.
+ * 注意：任何非零值都将被视为 true。
  */
 static inline Datum
 BoolGetDatum(bool X)
@@ -111,7 +109,7 @@ BoolGetDatum(bool X)
 
 /*
  * DatumGetChar
- *		Returns character value of a datum.
+ *		返回 datum 的字符值。
  */
 static inline char
 DatumGetChar(Datum X)
@@ -121,7 +119,7 @@ DatumGetChar(Datum X)
 
 /*
  * CharGetDatum
- *		Returns datum representation for a character.
+ *		返回字符的 datum 表示。
  */
 static inline Datum
 CharGetDatum(char X)
@@ -131,7 +129,7 @@ CharGetDatum(char X)
 
 /*
  * Int8GetDatum
- *		Returns datum representation for an 8-bit integer.
+ *		返回 8 位整数的 datum 表示。
  */
 static inline Datum
 Int8GetDatum(int8 X)
@@ -141,7 +139,7 @@ Int8GetDatum(int8 X)
 
 /*
  * DatumGetUInt8
- *		Returns 8-bit unsigned integer value of a datum.
+ *		返回 datum 的 8 位无符号整数值。
  */
 static inline uint8
 DatumGetUInt8(Datum X)
@@ -151,7 +149,7 @@ DatumGetUInt8(Datum X)
 
 /*
  * UInt8GetDatum
- *		Returns datum representation for an 8-bit unsigned integer.
+ *		返回 8 位无符号整数的 datum 表示。
  */
 static inline Datum
 UInt8GetDatum(uint8 X)
@@ -161,7 +159,7 @@ UInt8GetDatum(uint8 X)
 
 /*
  * DatumGetInt16
- *		Returns 16-bit integer value of a datum.
+ *		返回 datum 的 16 位整数值。
  */
 static inline int16
 DatumGetInt16(Datum X)
@@ -171,7 +169,7 @@ DatumGetInt16(Datum X)
 
 /*
  * Int16GetDatum
- *		Returns datum representation for a 16-bit integer.
+ *		返回 16 位整数的 datum 表示。
  */
 static inline Datum
 Int16GetDatum(int16 X)
@@ -181,7 +179,7 @@ Int16GetDatum(int16 X)
 
 /*
  * DatumGetUInt16
- *		Returns 16-bit unsigned integer value of a datum.
+ *		返回 datum 的 16 位无符号整数值。
  */
 static inline uint16
 DatumGetUInt16(Datum X)
@@ -191,7 +189,7 @@ DatumGetUInt16(Datum X)
 
 /*
  * UInt16GetDatum
- *		Returns datum representation for a 16-bit unsigned integer.
+ *		返回 16 位无符号整数的 datum 表示。
  */
 static inline Datum
 UInt16GetDatum(uint16 X)
@@ -201,7 +199,7 @@ UInt16GetDatum(uint16 X)
 
 /*
  * DatumGetInt32
- *		Returns 32-bit integer value of a datum.
+ *		返回 datum 的 32 位整数值。
  */
 static inline int32
 DatumGetInt32(Datum X)
@@ -211,7 +209,7 @@ DatumGetInt32(Datum X)
 
 /*
  * Int32GetDatum
- *		Returns datum representation for a 32-bit integer.
+ *		返回 32 位整数的 datum 表示。
  */
 static inline Datum
 Int32GetDatum(int32 X)
@@ -221,7 +219,7 @@ Int32GetDatum(int32 X)
 
 /*
  * DatumGetUInt32
- *		Returns 32-bit unsigned integer value of a datum.
+ *		返回 datum 的 32 位无符号整数值。
  */
 static inline uint32
 DatumGetUInt32(Datum X)
@@ -231,7 +229,7 @@ DatumGetUInt32(Datum X)
 
 /*
  * UInt32GetDatum
- *		Returns datum representation for a 32-bit unsigned integer.
+ *		返回 32 位无符号整数的 datum 表示。
  */
 static inline Datum
 UInt32GetDatum(uint32 X)
@@ -241,7 +239,7 @@ UInt32GetDatum(uint32 X)
 
 /*
  * DatumGetObjectId
- *		Returns object identifier value of a datum.
+ *		返回 datum 的对象标识符值。
  */
 static inline Oid
 DatumGetObjectId(Datum X)
@@ -251,7 +249,7 @@ DatumGetObjectId(Datum X)
 
 /*
  * ObjectIdGetDatum
- *		Returns datum representation for an object identifier.
+ *		返回对象标识符的 datum 表示。
  */
 static inline Datum
 ObjectIdGetDatum(Oid X)
@@ -261,7 +259,7 @@ ObjectIdGetDatum(Oid X)
 
 /*
  * DatumGetTransactionId
- *		Returns transaction identifier value of a datum.
+ *		返回 datum 的事务标识符值。
  */
 static inline TransactionId
 DatumGetTransactionId(Datum X)
@@ -271,7 +269,7 @@ DatumGetTransactionId(Datum X)
 
 /*
  * TransactionIdGetDatum
- *		Returns datum representation for a transaction identifier.
+ *		返回事务标识符的 datum 表示。
  */
 static inline Datum
 TransactionIdGetDatum(TransactionId X)
@@ -281,7 +279,7 @@ TransactionIdGetDatum(TransactionId X)
 
 /*
  * MultiXactIdGetDatum
- *		Returns datum representation for a multixact identifier.
+ *		返回 multixact 标识符的 datum 表示。
  */
 static inline Datum
 MultiXactIdGetDatum(MultiXactId X)
@@ -291,7 +289,7 @@ MultiXactIdGetDatum(MultiXactId X)
 
 /*
  * DatumGetCommandId
- *		Returns command identifier value of a datum.
+ *		返回 datum 的命令标识符值。
  */
 static inline CommandId
 DatumGetCommandId(Datum X)
@@ -301,7 +299,7 @@ DatumGetCommandId(Datum X)
 
 /*
  * CommandIdGetDatum
- *		Returns datum representation for a command identifier.
+ *		返回命令标识符的 datum 表示。
  */
 static inline Datum
 CommandIdGetDatum(CommandId X)
@@ -311,7 +309,7 @@ CommandIdGetDatum(CommandId X)
 
 /*
  * DatumGetPointer
- *		Returns pointer value of a datum.
+ *		返回 datum 的指针值。
  */
 static inline Pointer
 DatumGetPointer(Datum X)
@@ -321,7 +319,7 @@ DatumGetPointer(Datum X)
 
 /*
  * PointerGetDatum
- *		Returns datum representation for a pointer.
+ *		返回指针的 datum 表示。
  */
 static inline Datum
 PointerGetDatum(const void *X)
@@ -331,10 +329,10 @@ PointerGetDatum(const void *X)
 
 /*
  * DatumGetCString
- *		Returns C string (null-terminated string) value of a datum.
+ *		返回 datum 的 C 字符串（以 null 结尾的字符串）值。
  *
- * Note: C string is not a full-fledged Postgres type at present,
- * but type input functions use this conversion for their inputs.
+ * 注意：C 字符串目前并不是 PostgreSQL 的一个完整类型，
+ * 但类型输入函数会利用此转换来处理它们的输入。
  */
 static inline char *
 DatumGetCString(Datum X)
@@ -344,12 +342,11 @@ DatumGetCString(Datum X)
 
 /*
  * CStringGetDatum
- *		Returns datum representation for a C string (null-terminated string).
+ *		返回 C 字符串（以 null 结尾的字符串）的 datum 表示。
  *
- * Note: C string is not a full-fledged Postgres type at present,
- * but type output functions use this conversion for their outputs.
- * Note: CString is pass-by-reference; caller must ensure the pointed-to
- * value has adequate lifetime.
+ * 注意：C 字符串目前并不是 PostgreSQL 的一个完整类型，
+ * 但类型输出函数会利用此转换来处理它们的输出。
+ * 注意：CString 是传引用的；调用者必须确保所指向的值具有足够的生命周期。
  */
 static inline Datum
 CStringGetDatum(const char *X)
@@ -359,7 +356,7 @@ CStringGetDatum(const char *X)
 
 /*
  * DatumGetName
- *		Returns name value of a datum.
+ *		返回 datum 的 name 值。
  */
 static inline Name
 DatumGetName(Datum X)
@@ -369,10 +366,9 @@ DatumGetName(Datum X)
 
 /*
  * NameGetDatum
- *		Returns datum representation for a name.
+ *		返回 name 的 datum 表示。
  *
- * Note: Name is pass-by-reference; caller must ensure the pointed-to
- * value has adequate lifetime.
+ * 注意：Name 是传引用的；调用者必须确保所指向的值具有足够的生命周期。
  */
 static inline Datum
 NameGetDatum(const NameData *X)
@@ -382,9 +378,9 @@ NameGetDatum(const NameData *X)
 
 /*
  * DatumGetInt64
- *		Returns 64-bit integer value of a datum.
+ *		返回 datum 的 64 位整数值。
  *
- * Note: this function hides whether int64 is pass by value or by reference.
+ * 注意：此函数隐藏了 int64 是传值还是传引用的细节。
  */
 static inline int64
 DatumGetInt64(Datum X)
@@ -398,10 +394,10 @@ DatumGetInt64(Datum X)
 
 /*
  * Int64GetDatum
- *		Returns datum representation for a 64-bit integer.
+ *		返回 64 位整数的 datum 表示。
  *
- * Note: if int64 is pass by reference, this function returns a reference
- * to palloc'd space.
+ * 注意：如果 int64 是传引用的，此函数返回的是一个指向 palloc
+ * 分配的内存的引用。
  */
 #ifdef USE_FLOAT8_BYVAL
 static inline Datum
@@ -416,9 +412,9 @@ extern Datum Int64GetDatum(int64 X);
 
 /*
  * DatumGetUInt64
- *		Returns 64-bit unsigned integer value of a datum.
+ *		返回 datum 的 64 位无符号整数值。
  *
- * Note: this function hides whether int64 is pass by value or by reference.
+ * 注意：此函数隐藏了 int64 是传值还是传引用的细节。
  */
 static inline uint64
 DatumGetUInt64(Datum X)
@@ -432,10 +428,10 @@ DatumGetUInt64(Datum X)
 
 /*
  * UInt64GetDatum
- *		Returns datum representation for a 64-bit unsigned integer.
+ *		返回 64 位无符号整数的 datum 表示。
  *
- * Note: if int64 is pass by reference, this function returns a reference
- * to palloc'd space.
+ * 注意：如果 int64 是传引用的，此函数返回的是一个指向 palloc
+ * 分配的内存的引用。
  */
 static inline Datum
 UInt64GetDatum(uint64 X)
@@ -448,16 +444,16 @@ UInt64GetDatum(uint64 X)
 }
 
 /*
- * Float <-> Datum conversions
+ * Float 与 Datum 之间的转换
  *
- * These have to be implemented as inline functions rather than macros, when
- * passing by value, because many machines pass int and float function
- * parameters/results differently; so we need to play weird games with unions.
+ * 在传值时，这些必须以内联函数而非宏来实现，因为许多机器传递 int 和
+ * float 的函数参数/返回值的方式不同；因此我们需要用联合体来玩一些
+ * 取巧的手段。
  */
 
 /*
  * DatumGetFloat4
- *		Returns 4-byte floating point value of a datum.
+ *		返回 datum 的 4 字节浮点值。
  */
 static inline float4
 DatumGetFloat4(Datum X)
@@ -474,7 +470,7 @@ DatumGetFloat4(Datum X)
 
 /*
  * Float4GetDatum
- *		Returns datum representation for a 4-byte floating point number.
+ *		返回 4 字节浮点数的 datum 表示。
  */
 static inline Datum
 Float4GetDatum(float4 X)
@@ -491,9 +487,9 @@ Float4GetDatum(float4 X)
 
 /*
  * DatumGetFloat8
- *		Returns 8-byte floating point value of a datum.
+ *		返回 datum 的 8 字节浮点值。
  *
- * Note: this function hides whether float8 is pass by value or by reference.
+ * 注意：此函数隐藏了 float8 是传值还是传引用的细节。
  */
 static inline float8
 DatumGetFloat8(Datum X)
@@ -514,10 +510,10 @@ DatumGetFloat8(Datum X)
 
 /*
  * Float8GetDatum
- *		Returns datum representation for an 8-byte floating point number.
+ *		返回 8 字节浮点数的 datum 表示。
  *
- * Note: if float8 is pass by reference, this function returns a reference
- * to palloc'd space.
+ * 注意：如果 float8 是传引用的，此函数返回的是一个指向 palloc
+ * 分配的内存的引用。
  */
 #ifdef USE_FLOAT8_BYVAL
 static inline Datum
@@ -541,13 +537,11 @@ extern Datum Float8GetDatum(float8 X);
  * Int64GetDatumFast
  * Float8GetDatumFast
  *
- * These macros are intended to allow writing code that does not depend on
- * whether int64 and float8 are pass-by-reference types, while not
- * sacrificing performance when they are.  The argument must be a variable
- * that will exist and have the same value for as long as the Datum is needed.
- * In the pass-by-ref case, the address of the variable is taken to use as
- * the Datum.  In the pass-by-val case, these are the same as the non-Fast
- * functions, except for asserting that the variable is of the correct type.
+ * 这些宏旨在允许编写不依赖于 int64 和 float8 是否为传引用类型的代码，
+ * 同时又不牺牲它们作为传引用类型时的性能。参数必须是一个变量，该变量
+ * 在 Datum 被需要期间一直存在且保持相同的值。在传引用的情况下，会取
+ * 该变量的地址作为 Datum 使用。在传值的情况下，这些宏与非 Fast 版本
+ * 的函数相同，只是会断言变量具有正确的类型。
  */
 
 #ifdef USE_FLOAT8_BYVAL
@@ -564,16 +558,15 @@ extern Datum Float8GetDatum(float8 X);
 
 
 /* ----------------------------------------------------------------
- *				Section 2:	miscellaneous
+ *				第 2 节：杂项
  * ----------------------------------------------------------------
  */
 
 /*
- * NON_EXEC_STATIC: It's sometimes useful to define a variable or function
- * that is normally static but extern when using EXEC_BACKEND (see
- * pg_config_manual.h).  There would then typically be some code in
- * postmaster.c that uses those extern symbols to transfer state between
- * processes or do whatever other things it needs to do in EXEC_BACKEND mode.
+ * NON_EXEC_STATIC：有时定义一个通常是 static、但在使用 EXEC_BACKEND 时
+ * 为 extern 的变量或函数会比较有用（参见 pg_config_manual.h）。通常
+ * 在 postmaster.c 中会有些代码利用这些 extern 符号在进程之间传递状态，
+ * 或在 EXEC_BACKEND 模式下做它需要做的其他事情。
  */
 #ifdef EXEC_BACKEND
 #define NON_EXEC_STATIC

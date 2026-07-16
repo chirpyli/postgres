@@ -1,772 +1,748 @@
-/* src/include/pg_config.h.in.  Generated from configure.ac by autoheader.  */
+/* src/include/pg_config.h.in。由 autoheader 从 configure.ac 生成。 */
 
-/* Define if building universal (internal helper macro) */
+/* 是否为通用构建而定义（内部辅助宏） */
 #undef AC_APPLE_UNIVERSAL_BUILD
 
-/* The normal alignment of `double', in bytes. */
+/* `double` 的常规对齐字节数。 */
 #undef ALIGNOF_DOUBLE
 
-/* The normal alignment of `int', in bytes. */
+/* `int` 的常规对齐字节数。 */
 #undef ALIGNOF_INT
 
-/* The normal alignment of `int64_t', in bytes. */
+/* `int64_t` 的常规对齐字节数。 */
 #undef ALIGNOF_INT64_T
 
-/* The normal alignment of `long', in bytes. */
+/* `long` 的常规对齐字节数。 */
 #undef ALIGNOF_LONG
 
-/* The normal alignment of `PG_INT128_TYPE', in bytes. */
+/* `PG_INT128_TYPE` 的常规对齐字节数。 */
 #undef ALIGNOF_PG_INT128_TYPE
 
-/* The normal alignment of `short', in bytes. */
+/* `short` 的常规对齐字节数。 */
 #undef ALIGNOF_SHORT
 
-/* Size of a disk block --- this also limits the size of a tuple. You can set
-   it bigger if you need bigger tuples (although TOAST should reduce the need
-   to have large tuples, since fields can be spread across multiple tuples).
-   BLCKSZ must be a power of 2. The maximum possible value of BLCKSZ is
-   currently 2^15 (32768). This is determined by the 15-bit widths of the
-   lp_off and lp_len fields in ItemIdData (see include/storage/itemid.h).
-   Changing BLCKSZ requires an initdb. */
+/* 磁盘块大小——这也限制了元组的最大大小。如果需要更大的元组可以
+   调大它（不过 TOAST 通过将字段分散到多个元组中，应当能减少对
+   大元组的需求）。BLCKSZ 必须是 2 的幂。目前 BLCKSZ 的最大可能值为
+   2^15（32768）。该限制由 ItemIdData 中 lp_off 和 lp_len 字段的
+   15 位宽度决定（参见 include/storage/itemid.h）。
+   修改 BLCKSZ 需要重新 initdb。 */
 #undef BLCKSZ
 
-/* Saved arguments from configure */
+/* configure 保存的参数 */
 #undef CONFIGURE_ARGS
 
-/* Define to the default TCP port number on which the server listens and to
-   which clients will try to connect. This can be overridden at run-time, but
-   it's convenient if your clients have the right default compiled in.
+/* 定义服务器监听的默认 TCP 端口号，以及客户端默认尝试连接的端口号。
+   可在运行时覆盖，但如果客户端编译时内置了正确的默认值会更方便。
    (--with-pgport=PORTNUM) */
 #undef DEF_PGPORT
 
-/* Define to the default TCP port number as a string constant. */
+/* 定义为默认 TCP 端口号的字符串常量。 */
 #undef DEF_PGPORT_STR
 
-/* Define to the file name extension of dynamically-loadable modules. */
+/* 动态可加载模块的文件扩展名。 */
 #undef DLSUFFIX
 
-/* Define to build with GSSAPI support. (--with-gssapi) */
+/* 定义为 1 以构建 GSSAPI 支持。(--with-gssapi) */
 #undef ENABLE_GSS
 
-/* Define to 1 if you want National Language Support. (--enable-nls) */
+/* 如果需要国家语言支持，则定义为 1。(--enable-nls) */
 #undef ENABLE_NLS
 
-/* Define to 1 if you have the `append_history' function. */
+/* 如果存在 `append_history` 函数，则定义为 1。 */
 #undef HAVE_APPEND_HISTORY
 
-/* Define to 1 if you have the <atomic.h> header file. */
+/* 如果存在 <atomic.h> 头文件，则定义为 1。 */
 #undef HAVE_ATOMIC_H
 
-/* Define to 1 if you have the `backtrace_symbols' function. */
+/* 如果存在 `backtrace_symbols` 函数，则定义为 1。 */
 #undef HAVE_BACKTRACE_SYMBOLS
 
-/* Define to 1 if your compiler handles computed gotos. */
+/* 如果编译器支持计算式 goto，则定义为 1。 */
 #undef HAVE_COMPUTED_GOTO
 
-/* Define to 1 if you have the `copyfile' function. */
+/* 如果存在 `copyfile` 函数，则定义为 1。 */
 #undef HAVE_COPYFILE
 
-/* Define to 1 if you have the <copyfile.h> header file. */
+/* 如果存在 <copyfile.h> 头文件，则定义为 1。 */
 #undef HAVE_COPYFILE_H
 
-/* Define to 1 if you have the `copy_file_range' function. */
+/* 如果存在 `copy_file_range` 函数，则定义为 1。 */
 #undef HAVE_COPY_FILE_RANGE
 
-/* Define to 1 if you have the <crtdefs.h> header file. */
+/* 如果存在 <crtdefs.h> 头文件，则定义为 1。 */
 #undef HAVE_CRTDEFS_H
 
-/* Define to 1 if you have the declaration of `fdatasync', and to 0 if you
-   don't. */
+/* 如果存在 `fdatasync` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_FDATASYNC
 
-/* Define to 1 if you have the declaration of `F_FULLFSYNC', and to 0 if you
-   don't. */
+/* 如果存在 `F_FULLFSYNC` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_F_FULLFSYNC
 
-/* Define to 1 if you have the declaration of
-   `LLVMCreateGDBRegistrationListener', and to 0 if you don't. */
+/* 如果存在 `LLVMCreateGDBRegistrationListener` 声明，
+   则定义为 1，否则为 0。 */
 #undef HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER
 
-/* Define to 1 if you have the declaration of
-   `LLVMCreatePerfJITEventListener', and to 0 if you don't. */
+/* 如果存在 `LLVMCreatePerfJITEventListener` 声明，
+   则定义为 1，否则为 0。 */
 #undef HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER
 
-/* Define to 1 if you have the declaration of `memset_s', and to 0 if you
-   don't. */
+/* 如果存在 `memset_s` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_MEMSET_S
 
-/* Define to 1 if you have the declaration of `posix_fadvise', and to 0 if you
-   don't. */
+/* 如果存在 `posix_fadvise` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_POSIX_FADVISE
 
-/* Define to 1 if you have the declaration of `preadv', and to 0 if you don't.
-   */
+/* 如果存在 `preadv` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_PREADV
 
-/* Define to 1 if you have the declaration of `pwritev', and to 0 if you
-   don't. */
+/* 如果存在 `pwritev` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_PWRITEV
 
-/* Define to 1 if you have the declaration of `strchrnul', and to 0 if you
-   don't. */
+/* 如果存在 `strchrnul` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_STRCHRNUL
 
-/* Define to 1 if you have the declaration of `strlcat', and to 0 if you
-   don't. */
+/* 如果存在 `strlcat` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_STRLCAT
 
-/* Define to 1 if you have the declaration of `strlcpy', and to 0 if you
-   don't. */
+/* 如果存在 `strlcpy` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_STRLCPY
 
-/* Define to 1 if you have the declaration of `strnlen', and to 0 if you
-   don't. */
+/* 如果存在 `strnlen` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_STRNLEN
 
-/* Define to 1 if you have the declaration of `strsep', and to 0 if you don't.
-   */
+/* 如果存在 `strsep` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_STRSEP
 
-/* Define to 1 if you have the declaration of `timingsafe_bcmp', and to 0 if
-   you don't. */
+/* 如果存在 `timingsafe_bcmp` 声明，则定义为 1，否则为 0。 */
 #undef HAVE_DECL_TIMINGSAFE_BCMP
 
-/* Define to 1 if you have the <editline/history.h> header file. */
+/* 如果存在 <editline/history.h> 头文件，则定义为 1。 */
 #undef HAVE_EDITLINE_HISTORY_H
 
-/* Define to 1 if you have the <editline/readline.h> header file. */
+/* 如果存在 <editline/readline.h> 头文件，则定义为 1。 */
 #undef HAVE_EDITLINE_READLINE_H
 
-/* Define to 1 if you have the `elf_aux_info' function. */
+/* 如果存在 `elf_aux_info` 函数，则定义为 1。 */
 #undef HAVE_ELF_AUX_INFO
 
-/* Define to 1 if you have the <execinfo.h> header file. */
+/* 如果存在 <execinfo.h> 头文件，则定义为 1。 */
 #undef HAVE_EXECINFO_H
 
-/* Define to 1 if you have the `explicit_bzero' function. */
+/* 如果存在 `explicit_bzero` 函数，则定义为 1。 */
 #undef HAVE_EXPLICIT_BZERO
 
-/* Define to 1 if fseeko (and presumably ftello) exists and is declared. */
+/* 如果 fseeko（可能也包括 ftello）存在且已声明，则定义为 1。 */
 #undef HAVE_FSEEKO
 
-/* Define to 1 if you have __atomic_compare_exchange_n(int *, int *, int). */
+/* 如果存在 __atomic_compare_exchange_n(int *, int *, int)，则定义为 1。 */
 #undef HAVE_GCC__ATOMIC_INT32_CAS
 
-/* Define to 1 if you have __atomic_compare_exchange_n(int64 *, int64 *,
-   int64). */
+/* 如果存在 __atomic_compare_exchange_n(int64 *, int64 *,
+   int64)，则定义为 1。 */
 #undef HAVE_GCC__ATOMIC_INT64_CAS
 
-/* Define to 1 if you have __sync_lock_test_and_set(char *) and friends. */
+/* 如果存在 __sync_lock_test_and_set(char *) 及相关函数，则定义为 1。 */
 #undef HAVE_GCC__SYNC_CHAR_TAS
 
-/* Define to 1 if you have __sync_val_compare_and_swap(int *, int, int). */
+/* 如果存在 __sync_val_compare_and_swap(int *, int, int)，则定义为 1。 */
 #undef HAVE_GCC__SYNC_INT32_CAS
 
-/* Define to 1 if you have __sync_lock_test_and_set(int *) and friends. */
+/* 如果存在 __sync_lock_test_and_set(int *) 及相关函数，则定义为 1。 */
 #undef HAVE_GCC__SYNC_INT32_TAS
 
-/* Define to 1 if you have __sync_val_compare_and_swap(int64_t *, int64_t,
-   int64_t). */
+/* 如果存在 __sync_val_compare_and_swap(int64_t *, int64_t,
+   int64_t)，则定义为 1。 */
 #undef HAVE_GCC__SYNC_INT64_CAS
 
-/* Define to 1 if you have the `getauxval' function. */
+/* 如果存在 `getauxval` 函数，则定义为 1。 */
 #undef HAVE_GETAUXVAL
 
-/* Define to 1 if you have the `getifaddrs' function. */
+/* 如果存在 `getifaddrs` 函数，则定义为 1。 */
 #undef HAVE_GETIFADDRS
 
-/* Define to 1 if you have the `getopt' function. */
+/* 如果存在 `getopt` 函数，则定义为 1。 */
 #undef HAVE_GETOPT
 
-/* Define to 1 if you have the <getopt.h> header file. */
+/* 如果存在 <getopt.h> 头文件，则定义为 1。 */
 #undef HAVE_GETOPT_H
 
-/* Define to 1 if you have the `getopt_long' function. */
+/* 如果存在 `getopt_long` 函数，则定义为 1。 */
 #undef HAVE_GETOPT_LONG
 
-/* Define to 1 if you have the `getpeereid' function. */
+/* 如果存在 `getpeereid` 函数，则定义为 1。 */
 #undef HAVE_GETPEEREID
 
-/* Define to 1 if you have the `getpeerucred' function. */
+/* 如果存在 `getpeerucred` 函数，则定义为 1。 */
 #undef HAVE_GETPEERUCRED
 
-/* Define to 1 if you have the <gssapi_ext.h> header file. */
+/* 如果存在 <gssapi_ext.h> 头文件，则定义为 1。 */
 #undef HAVE_GSSAPI_EXT_H
 
-/* Define to 1 if you have the <gssapi/gssapi_ext.h> header file. */
+/* 如果存在 <gssapi/gssapi_ext.h> 头文件，则定义为 1。 */
 #undef HAVE_GSSAPI_GSSAPI_EXT_H
 
-/* Define to 1 if you have the <gssapi/gssapi.h> header file. */
+/* 如果存在 <gssapi/gssapi.h> 头文件，则定义为 1。 */
 #undef HAVE_GSSAPI_GSSAPI_H
 
-/* Define to 1 if you have the <gssapi.h> header file. */
+/* 如果存在 <gssapi.h> 头文件，则定义为 1。 */
 #undef HAVE_GSSAPI_H
 
-/* Define to 1 if you have the <history.h> header file. */
+/* 如果存在 <history.h> 头文件，则定义为 1。 */
 #undef HAVE_HISTORY_H
 
-/* Define to 1 if you have the `history_truncate_file' function. */
+/* 如果存在 `history_truncate_file` 函数，则定义为 1。 */
 #undef HAVE_HISTORY_TRUNCATE_FILE
 
-/* Define to 1 if you have the <ifaddrs.h> header file. */
+/* 如果存在 <ifaddrs.h> 头文件，则定义为 1。 */
 #undef HAVE_IFADDRS_H
 
-/* Define to 1 if you have the `inet_aton' function. */
+/* 如果存在 `inet_aton` 函数，则定义为 1。 */
 #undef HAVE_INET_ATON
 
-/* Define to 1 if you have the `inet_pton' function. */
+/* 如果存在 `inet_pton` 函数，则定义为 1。 */
 #undef HAVE_INET_PTON
 
-/* Define to 1 if you have the <inttypes.h> header file. */
+/* 如果存在 <inttypes.h> 头文件，则定义为 1。 */
 #undef HAVE_INTTYPES_H
 
-/* Define to 1 if you have the global variable 'int opterr'. */
+/* 如果存在全局变量 'int opterr'，则定义为 1。 */
 #undef HAVE_INT_OPTERR
 
-/* Define to 1 if you have the global variable 'int optreset'. */
+/* 如果存在全局变量 'int optreset'，则定义为 1。 */
 #undef HAVE_INT_OPTRESET
 
-/* Define to 1 if you have the global variable 'int timezone'. */
+/* 如果存在全局变量 'int timezone'，则定义为 1。 */
 #undef HAVE_INT_TIMEZONE
 
-/* Define to 1 if you have the `io_uring_queue_init_mem' function. */
+/* 如果存在 `io_uring_queue_init_mem` 函数，则定义为 1。 */
 #undef HAVE_IO_URING_QUEUE_INIT_MEM
 
-/* Define to 1 if __builtin_constant_p(x) implies "i"(x) acceptance. */
+/* 如果 __builtin_constant_p(x) 隐含 "i"(x) 可接受，则定义为 1。 */
 #undef HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P
 
-/* Define to 1 if you have the `kqueue' function. */
+/* 如果存在 `kqueue` 函数，则定义为 1。 */
 #undef HAVE_KQUEUE
 
-/* Define to 1 if you have the `ldap_initialize' function. */
+/* 如果存在 `ldap_initialize` 函数，则定义为 1。 */
 #undef HAVE_LDAP_INITIALIZE
 
-/* Define to 1 if you have the `crypto' library (-lcrypto). */
+/* 如果存在 `crypto` 库 (-lcrypto)，则定义为 1。 */
 #undef HAVE_LIBCRYPTO
 
-/* Define to 1 if you have the `curl' library (-lcurl). */
+/* 如果存在 `curl` 库 (-lcurl)，则定义为 1。 */
 #undef HAVE_LIBCURL
 
-/* Define to 1 if you have the `ldap' library (-lldap). */
+/* 如果存在 `ldap` 库 (-lldap)，则定义为 1。 */
 #undef HAVE_LIBLDAP
 
-/* Define to 1 if you have the `lz4' library (-llz4). */
+/* 如果存在 `lz4` 库 (-llz4)，则定义为 1。 */
 #undef HAVE_LIBLZ4
 
-/* Define to 1 if you have the `m' library (-lm). */
+/* 如果存在 `m` 库 (-lm)，则定义为 1。 */
 #undef HAVE_LIBM
 
-/* Define to 1 if you have the `numa' library (-lnuma). */
+/* 如果存在 `numa` 库 (-lnuma)，则定义为 1。 */
 #undef HAVE_LIBNUMA
 
-/* Define to 1 if you have the `pam' library (-lpam). */
+/* 如果存在 `pam` 库 (-lpam)，则定义为 1。 */
 #undef HAVE_LIBPAM
 
-/* Define if you have a function readline library */
+/* 如果存在函数式 readline 库，则定义 */
 #undef HAVE_LIBREADLINE
 
-/* Define to 1 if you have the `selinux' library (-lselinux). */
+/* 如果存在 `selinux` 库 (-lselinux)，则定义为 1。 */
 #undef HAVE_LIBSELINUX
 
-/* Define to 1 if you have the `ssl' library (-lssl). */
+/* 如果存在 `ssl` 库 (-lssl)，则定义为 1。 */
 #undef HAVE_LIBSSL
 
-/* Define to 1 if you have the `wldap32' library (-lwldap32). */
+/* 如果存在 `wldap32` 库 (-lwldap32)，则定义为 1。 */
 #undef HAVE_LIBWLDAP32
 
-/* Define to 1 if you have the `xml2' library (-lxml2). */
+/* 如果存在 `xml2` 库 (-lxml2)，则定义为 1。 */
 #undef HAVE_LIBXML2
 
-/* Define to 1 if you have the `xslt' library (-lxslt). */
+/* 如果存在 `xslt` 库 (-lxslt)，则定义为 1。 */
 #undef HAVE_LIBXSLT
 
-/* Define to 1 if you have the `z' library (-lz). */
+/* 如果存在 `z` 库 (-lz)，则定义为 1。 */
 #undef HAVE_LIBZ
 
-/* Define to 1 if you have the `zstd' library (-lzstd). */
+/* 如果存在 `zstd` 库 (-lzstd)，则定义为 1。 */
 #undef HAVE_LIBZSTD
 
-/* Define to 1 if you have the `localeconv_l' function. */
+/* 如果存在 `localeconv_l` 函数，则定义为 1。 */
 #undef HAVE_LOCALECONV_L
 
-/* Define to 1 if you have the <mbarrier.h> header file. */
+/* 如果存在 <mbarrier.h> 头文件，则定义为 1。 */
 #undef HAVE_MBARRIER_H
 
-/* Define to 1 if you have the `mbstowcs_l' function. */
+/* 如果存在 `mbstowcs_l` 函数，则定义为 1。 */
 #undef HAVE_MBSTOWCS_L
 
-/* Define to 1 if you have the <memory.h> header file. */
+/* 如果存在 <memory.h> 头文件，则定义为 1。 */
 #undef HAVE_MEMORY_H
 
-/* Define to 1 if you have the `mkdtemp' function. */
+/* 如果存在 `mkdtemp` 函数，则定义为 1。 */
 #undef HAVE_MKDTEMP
 
-/* Define to 1 if you have the <ossp/uuid.h> header file. */
+/* 如果存在 <ossp/uuid.h> 头文件，则定义为 1。 */
 #undef HAVE_OSSP_UUID_H
 
-/* Define to 1 if you have the <pam/pam_appl.h> header file. */
+/* 如果存在 <pam/pam_appl.h> 头文件，则定义为 1。 */
 #undef HAVE_PAM_PAM_APPL_H
 
-/* Define to 1 if you have the `posix_fadvise' function. */
+/* 如果存在 `posix_fadvise` 函数，则定义为 1。 */
 #undef HAVE_POSIX_FADVISE
 
-/* Define to 1 if you have the `posix_fallocate' function. */
+/* 如果存在 `posix_fallocate` 函数，则定义为 1。 */
 #undef HAVE_POSIX_FALLOCATE
 
-/* Define to 1 if you have the `ppoll' function. */
+/* 如果存在 `ppoll` 函数，则定义为 1。 */
 #undef HAVE_PPOLL
 
-/* Define if you have POSIX threads libraries and header files. */
+/* 如果存在 POSIX 线程库和头文件，则定义。 */
 #undef HAVE_PTHREAD
 
-/* Define to 1 if you have the `pthread_barrier_wait' function. */
+/* 如果存在 `pthread_barrier_wait` 函数，则定义为 1。 */
 #undef HAVE_PTHREAD_BARRIER_WAIT
 
-/* Define to 1 if you have the `pthread_is_threaded_np' function. */
+/* 如果存在 `pthread_is_threaded_np` 函数，则定义为 1。 */
 #undef HAVE_PTHREAD_IS_THREADED_NP
 
-/* Have PTHREAD_PRIO_INHERIT. */
+/* 是否有 PTHREAD_PRIO_INHERIT。 */
 #undef HAVE_PTHREAD_PRIO_INHERIT
 
-/* Define to 1 if you have the <readline.h> header file. */
+/* 如果存在 <readline.h> 头文件，则定义为 1。 */
 #undef HAVE_READLINE_H
 
-/* Define to 1 if you have the <readline/history.h> header file. */
+/* 如果存在 <readline/history.h> 头文件，则定义为 1。 */
 #undef HAVE_READLINE_HISTORY_H
 
-/* Define to 1 if you have the <readline/readline.h> header file. */
+/* 如果存在 <readline/readline.h> 头文件，则定义为 1。 */
 #undef HAVE_READLINE_READLINE_H
 
-/* Define to 1 if you have the `rl_completion_matches' function. */
+/* 如果存在 `rl_completion_matches` 函数，则定义为 1。 */
 #undef HAVE_RL_COMPLETION_MATCHES
 
-/* Define to 1 if you have the global variable 'rl_completion_suppress_quote'.
-   */
+/* 如果存在全局变量 'rl_completion_suppress_quote'，则定义为 1。 */
 #undef HAVE_RL_COMPLETION_SUPPRESS_QUOTE
 
-/* Define to 1 if you have the `rl_filename_completion_function' function. */
+/* 如果存在 `rl_filename_completion_function` 函数，则定义为 1。 */
 #undef HAVE_RL_FILENAME_COMPLETION_FUNCTION
 
-/* Define to 1 if you have the global variable 'rl_filename_quote_characters'.
-   */
+/* 如果存在全局变量 'rl_filename_quote_characters'，则定义为 1。 */
 #undef HAVE_RL_FILENAME_QUOTE_CHARACTERS
 
-/* Define to 1 if you have the global variable 'rl_filename_quoting_function'.
-   */
+/* 如果存在全局变量 'rl_filename_quoting_function'，则定义为 1。 */
 #undef HAVE_RL_FILENAME_QUOTING_FUNCTION
 
-/* Define to 1 if you have the `rl_reset_screen_size' function. */
+/* 如果存在 `rl_reset_screen_size` 函数，则定义为 1。 */
 #undef HAVE_RL_RESET_SCREEN_SIZE
 
-/* Define to 1 if you have the `rl_variable_bind' function. */
+/* 如果存在 `rl_variable_bind` 函数，则定义为 1。 */
 #undef HAVE_RL_VARIABLE_BIND
 
-/* Define to 1 if you have the <security/pam_appl.h> header file. */
+/* 如果存在 <security/pam_appl.h> 头文件，则定义为 1。 */
 #undef HAVE_SECURITY_PAM_APPL_H
 
-/* Define to 1 if you have the `setproctitle' function. */
+/* 如果存在 `setproctitle` 函数，则定义为 1。 */
 #undef HAVE_SETPROCTITLE
 
-/* Define to 1 if you have the `setproctitle_fast' function. */
+/* 如果存在 `setproctitle_fast` 函数，则定义为 1。 */
 #undef HAVE_SETPROCTITLE_FAST
 
-/* Define to 1 if the system has the type `socklen_t'. */
+/* 如果系统有 `socklen_t` 类型，则定义为 1。 */
 #undef HAVE_SOCKLEN_T
 
-/* Define to 1 if you have the `SSL_CTX_set_cert_cb' function. */
+/* 如果存在 `SSL_CTX_set_cert_cb` 函数，则定义为 1。 */
 #undef HAVE_SSL_CTX_SET_CERT_CB
 
-/* Define to 1 if you have the `SSL_CTX_set_ciphersuites' function. */
+/* 如果存在 `SSL_CTX_set_ciphersuites` 函数，则定义为 1。 */
 #undef HAVE_SSL_CTX_SET_CIPHERSUITES
 
-/* Define to 1 if you have the `SSL_CTX_set_keylog_callback' function. */
+/* 如果存在 `SSL_CTX_set_keylog_callback` 函数，则定义为 1。 */
 #undef HAVE_SSL_CTX_SET_KEYLOG_CALLBACK
 
-/* Define to 1 if you have the `SSL_CTX_set_num_tickets' function. */
+/* 如果存在 `SSL_CTX_set_num_tickets` 函数，则定义为 1。 */
 #undef HAVE_SSL_CTX_SET_NUM_TICKETS
 
-/* Define to 1 if you have the <stdint.h> header file. */
+/* 如果存在 <stdint.h> 头文件，则定义为 1。 */
 #undef HAVE_STDINT_H
 
-/* Define to 1 if you have the <stdlib.h> header file. */
+/* 如果存在 <stdlib.h> 头文件，则定义为 1。 */
 #undef HAVE_STDLIB_H
 
-/* Define to 1 if you have the `strerror_r' function. */
+/* 如果存在 `strerror_r` 函数，则定义为 1。 */
 #undef HAVE_STRERROR_R
 
-/* Define to 1 if you have the <strings.h> header file. */
+/* 如果存在 <strings.h> 头文件，则定义为 1。 */
 #undef HAVE_STRINGS_H
 
-/* Define to 1 if you have the <string.h> header file. */
+/* 如果存在 <string.h> 头文件，则定义为 1。 */
 #undef HAVE_STRING_H
 
-/* Define to 1 if you have the `strlcat' function. */
+/* 如果存在 `strlcat` 函数，则定义为 1。 */
 #undef HAVE_STRLCAT
 
-/* Define to 1 if you have the `strlcpy' function. */
+/* 如果存在 `strlcpy` 函数，则定义为 1。 */
 #undef HAVE_STRLCPY
 
-/* Define to 1 if you have the `strnlen' function. */
+/* 如果存在 `strnlen` 函数，则定义为 1。 */
 #undef HAVE_STRNLEN
 
-/* Define to 1 if you have the `strsep' function. */
+/* 如果存在 `strsep` 函数，则定义为 1。 */
 #undef HAVE_STRSEP
 
-/* Define to 1 if you have the `strsignal' function. */
+/* 如果存在 `strsignal` 函数，则定义为 1。 */
 #undef HAVE_STRSIGNAL
 
-/* Define to 1 if the system has the type `struct option'. */
+/* 如果系统有 `struct option` 类型，则定义为 1。 */
 #undef HAVE_STRUCT_OPTION
 
-/* Define to 1 if `sa_len' is a member of `struct sockaddr'. */
+/* 如果 `sa_len` 是 `struct sockaddr` 的成员，则定义为 1。 */
 #undef HAVE_STRUCT_SOCKADDR_SA_LEN
 
-/* Define to 1 if `tm_zone' is a member of `struct tm'. */
+/* 如果 `tm_zone` 是 `struct tm` 的成员，则定义为 1。 */
 #undef HAVE_STRUCT_TM_TM_ZONE
 
-/* Define to 1 if you have the `syncfs' function. */
+/* 如果存在 `syncfs` 函数，则定义为 1。 */
 #undef HAVE_SYNCFS
 
-/* Define to 1 if you have the `sync_file_range' function. */
+/* 如果存在 `sync_file_range` 函数，则定义为 1。 */
 #undef HAVE_SYNC_FILE_RANGE
 
-/* Define to 1 if you have the syslog interface. */
+/* 如果存在 syslog 接口，则定义为 1。 */
 #undef HAVE_SYSLOG
 
-/* Define to 1 if you have the <sys/epoll.h> header file. */
+/* 如果存在 <sys/epoll.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_EPOLL_H
 
-/* Define to 1 if you have the <sys/event.h> header file. */
+/* 如果存在 <sys/event.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_EVENT_H
 
-/* Define to 1 if you have the <sys/personality.h> header file. */
+/* 如果存在 <sys/personality.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_PERSONALITY_H
 
-/* Define to 1 if you have the <sys/prctl.h> header file. */
+/* 如果存在 <sys/prctl.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_PRCTL_H
 
-/* Define to 1 if you have the <sys/procctl.h> header file. */
+/* 如果存在 <sys/procctl.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_PROCCTL_H
 
-/* Define to 1 if you have the <sys/signalfd.h> header file. */
+/* 如果存在 <sys/signalfd.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_SIGNALFD_H
 
-/* Define to 1 if you have the <sys/stat.h> header file. */
+/* 如果存在 <sys/stat.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_STAT_H
 
-/* Define to 1 if you have the <sys/types.h> header file. */
+/* 如果存在 <sys/types.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_TYPES_H
 
-/* Define to 1 if you have the <sys/ucred.h> header file. */
+/* 如果存在 <sys/ucred.h> 头文件，则定义为 1。 */
 #undef HAVE_SYS_UCRED_H
 
-/* Define to 1 if you have the <termios.h> header file. */
+/* 如果存在 <termios.h> 头文件，则定义为 1。 */
 #undef HAVE_TERMIOS_H
 
-/* Define to 1 if curl_global_init() is guaranteed to be thread-safe. */
+/* 如果 curl_global_init() 保证是线程安全的，则定义为 1。 */
 #undef HAVE_THREADSAFE_CURL_GLOBAL_INIT
 
-/* Define to 1 if you have the `timingsafe_bcmp' function. */
+/* 如果存在 `timingsafe_bcmp` 函数，则定义为 1。 */
 #undef HAVE_TIMINGSAFE_BCMP
 
-/* Define to 1 if your compiler understands `typeof' or something similar. */
+/* 如果编译器理解 `typeof` 或类似的功能，则定义为 1。 */
 #undef HAVE_TYPEOF
 
-/* Define to 1 if you have the <ucred.h> header file. */
+/* 如果存在 <ucred.h> 头文件，则定义为 1。 */
 #undef HAVE_UCRED_H
 
-/* Define to 1 if the system has the type `union semun'. */
+/* 如果系统有 `union semun` 类型，则定义为 1。 */
 #undef HAVE_UNION_SEMUN
 
-/* Define to 1 if you have the <unistd.h> header file. */
+/* 如果存在 <unistd.h> 头文件，则定义为 1。 */
 #undef HAVE_UNISTD_H
 
-/* Define to 1 if you have the `uselocale' function. */
+/* 如果存在 `uselocale` 函数，则定义为 1。 */
 #undef HAVE_USELOCALE
 
-/* Define to 1 if you have BSD UUID support. */
+/* 如果存在 BSD UUID 支持，则定义为 1。 */
 #undef HAVE_UUID_BSD
 
-/* Define to 1 if you have E2FS UUID support. */
+/* 如果存在 E2FS UUID 支持，则定义为 1。 */
 #undef HAVE_UUID_E2FS
 
-/* Define to 1 if you have the <uuid.h> header file. */
+/* 如果存在 <uuid.h> 头文件，则定义为 1。 */
 #undef HAVE_UUID_H
 
-/* Define to 1 if you have OSSP UUID support. */
+/* 如果存在 OSSP UUID 支持，则定义为 1。 */
 #undef HAVE_UUID_OSSP
 
-/* Define to 1 if you have the <uuid/uuid.h> header file. */
+/* 如果存在 <uuid/uuid.h> 头文件，则定义为 1。 */
 #undef HAVE_UUID_UUID_H
 
-/* Define to 1 if your compiler knows the visibility("hidden") attribute. */
+/* 如果编译器支持 visibility("hidden") 属性，则定义为 1。 */
 #undef HAVE_VISIBILITY_ATTRIBUTE
 
-/* Define to 1 if you have the `wcstombs_l' function. */
+/* 如果存在 `wcstombs_l` 函数，则定义为 1。 */
 #undef HAVE_WCSTOMBS_L
 
-/* Define to 1 if you have the `X509_get_signature_info' function. */
+/* 如果存在 `X509_get_signature_info` 函数，则定义为 1。 */
 #undef HAVE_X509_GET_SIGNATURE_INFO
 
-/* Define to 1 if the assembler supports X86_64's POPCNTQ instruction. */
+/* 如果汇编器支持 X86_64 的 POPCNTQ 指令，则定义为 1。 */
 #undef HAVE_X86_64_POPCNTQ
 
-/* Define to 1 if you have the <xlocale.h> header file. */
+/* 如果存在 <xlocale.h> 头文件，则定义为 1。 */
 #undef HAVE_XLOCALE_H
 
-/* Define to 1 if you have XSAVE intrinsics. */
+/* 如果存在 XSAVE 内建函数，则定义为 1。 */
 #undef HAVE_XSAVE_INTRINSICS
 
-/* Define to 1 if your compiler understands __builtin_bswap16. */
+/* 如果编译器理解 __builtin_bswap16，则定义为 1。 */
 #undef HAVE__BUILTIN_BSWAP16
 
-/* Define to 1 if your compiler understands __builtin_bswap32. */
+/* 如果编译器理解 __builtin_bswap32，则定义为 1。 */
 #undef HAVE__BUILTIN_BSWAP32
 
-/* Define to 1 if your compiler understands __builtin_bswap64. */
+/* 如果编译器理解 __builtin_bswap64，则定义为 1。 */
 #undef HAVE__BUILTIN_BSWAP64
 
-/* Define to 1 if your compiler understands __builtin_clz. */
+/* 如果编译器理解 __builtin_clz，则定义为 1。 */
 #undef HAVE__BUILTIN_CLZ
 
-/* Define to 1 if your compiler understands __builtin_constant_p. */
+/* 如果编译器理解 __builtin_constant_p，则定义为 1。 */
 #undef HAVE__BUILTIN_CONSTANT_P
 
-/* Define to 1 if your compiler understands __builtin_ctz. */
+/* 如果编译器理解 __builtin_ctz，则定义为 1。 */
 #undef HAVE__BUILTIN_CTZ
 
-/* Define to 1 if your compiler understands __builtin_frame_address. */
+/* 如果编译器理解 __builtin_frame_address，则定义为 1。 */
 #undef HAVE__BUILTIN_FRAME_ADDRESS
 
-/* Define to 1 if your compiler understands __builtin_$op_overflow. */
+/* 如果编译器理解 __builtin_$op_overflow，则定义为 1。 */
 #undef HAVE__BUILTIN_OP_OVERFLOW
 
-/* Define to 1 if your compiler understands __builtin_popcount. */
+/* 如果编译器理解 __builtin_popcount，则定义为 1。 */
 #undef HAVE__BUILTIN_POPCOUNT
 
-/* Define to 1 if your compiler understands __builtin_types_compatible_p. */
+/* 如果编译器理解 __builtin_types_compatible_p，则定义为 1。 */
 #undef HAVE__BUILTIN_TYPES_COMPATIBLE_P
 
-/* Define to 1 if your compiler understands __builtin_unreachable. */
+/* 如果编译器理解 __builtin_unreachable，则定义为 1。 */
 #undef HAVE__BUILTIN_UNREACHABLE
 
-/* Define to 1 if you have __cpuid. */
+/* 如果存在 __cpuid，则定义为 1。 */
 #undef HAVE__CPUID
 
-/* Define to 1 if you have __cpuidex. */
+/* 如果存在 __cpuidex，则定义为 1。 */
 #undef HAVE__CPUIDEX
 
-/* Define to 1 if you have __get_cpuid. */
+/* 如果存在 __get_cpuid，则定义为 1。 */
 #undef HAVE__GET_CPUID
 
-/* Define to 1 if you have __get_cpuid_count. */
+/* 如果存在 __get_cpuid_count，则定义为 1。 */
 #undef HAVE__GET_CPUID_COUNT
 
-/* Define to 1 if your compiler understands _Static_assert. */
+/* 如果编译器理解 _Static_assert，则定义为 1。 */
 #undef HAVE__STATIC_ASSERT
 
-/* Define as the maximum alignment requirement of any C data type. */
+/* 任意 C 数据类型的最大对齐要求。 */
 #undef MAXIMUM_ALIGNOF
 
-/* Define bytes to use libc memset(). */
+/* 使用 libc memset() 的字节阈值。 */
 #undef MEMSET_LOOP_LIMIT
 
-/* Define to the OpenSSL API version in use. This avoids deprecation warnings
-   from newer OpenSSL versions. */
+/* 定义正在使用的 OpenSSL API 版本。这可以避免来自
+   较新 OpenSSL 版本的弃用警告。 */
 #undef OPENSSL_API_COMPAT
 
-/* Define to the address where bug reports for this package should be sent. */
+/* 本软件包的 bug 报告应发送到的地址。 */
 #undef PACKAGE_BUGREPORT
 
-/* Define to the full name of this package. */
+/* 本软件包的全名。 */
 #undef PACKAGE_NAME
 
-/* Define to the full name and version of this package. */
+/* 本软件包的全名和版本。 */
 #undef PACKAGE_STRING
 
-/* Define to the one symbol short name of this package. */
+/* 本软件包的单符号简称。 */
 #undef PACKAGE_TARNAME
 
-/* Define to the home page for this package. */
+/* 本软件包的主页。 */
 #undef PACKAGE_URL
 
-/* Define to the version of this package. */
+/* 本软件包的版本。 */
 #undef PACKAGE_VERSION
 
-/* Define to best C++ printf format archetype, usually gnu_printf if
-   available. */
+/* 定义最适合的 C++ printf 格式原型，通常为 gnu_printf（如果可用）。 */
 #undef PG_CXX_PRINTF_ATTRIBUTE
 
-/* Define to best C printf format archetype, usually gnu_printf if available.
-   */
+/* 定义最适合的 C printf 格式原型，通常为 gnu_printf（如果可用）。 */
 #undef PG_C_PRINTF_ATTRIBUTE
 
-/* Define to the name of a signed 128-bit integer type. */
+/* 有符号 128 位整数类型的名称。 */
 #undef PG_INT128_TYPE
 
-/* Define to the name of the default PostgreSQL service principal in Kerberos
-   (GSSAPI). (--with-krb-srvnam=NAME) */
+/* Kerberos (GSSAPI) 中默认 PostgreSQL 服务主体名称。
+   (--with-krb-srvnam=NAME) */
 #undef PG_KRB_SRVNAM
 
-/* PostgreSQL major version as a string */
+/* PostgreSQL 主版本号字符串 */
 #undef PG_MAJORVERSION
 
-/* PostgreSQL major version number */
+/* PostgreSQL 主版本号数字 */
 #undef PG_MAJORVERSION_NUM
 
-/* PostgreSQL minor version number */
+/* PostgreSQL 次版本号数字 */
 #undef PG_MINORVERSION_NUM
 
-/* PostgreSQL version as a string */
+/* PostgreSQL 版本字符串 */
 #undef PG_VERSION
 
-/* PostgreSQL version as a number */
+/* PostgreSQL 版本号数字 */
 #undef PG_VERSION_NUM
 
-/* A string containing the version number, platform, and C compiler */
+/* 包含版本号、平台和 C 编译器信息的字符串 */
 #undef PG_VERSION_STR
 
-/* Define to 1 to allow profiling output to be saved separately for each
-   process. */
+/* 定义为 1 以允许为每个进程单独保存性能分析输出。 */
 #undef PROFILE_PID_DIR
 
-/* Define to necessary symbol if this constant uses a non-standard name on
-   your system. */
+/* 如果此常量在你的系统上使用非标准名称，则定义必要的符号。 */
 #undef PTHREAD_CREATE_JOINABLE
 
-/* RELSEG_SIZE is the maximum number of blocks allowed in one disk file. Thus,
-   the maximum size of a single file is RELSEG_SIZE * BLCKSZ; relations bigger
-   than that are divided into multiple files. RELSEG_SIZE * BLCKSZ must be
-   less than your OS' limit on file size. This is often 2 GB or 4GB in a
-   32-bit operating system, unless you have large file support enabled. By
-   default, we make the limit 1 GB to avoid any possible integer-overflow
-   problems within the OS. A limit smaller than necessary only means we divide
-   a large relation into more chunks than necessary, so it seems best to err
-   in the direction of a small limit. A power-of-2 value is recommended to
-   save a few cycles in md.c, but is not absolutely required. Changing
-   RELSEG_SIZE requires an initdb. */
+/* RELSEG_SIZE 是单个磁盘文件中允许的最大块数。因此，单个文件的最大大小
+   为 RELSEG_SIZE * BLCKSZ；超过该大小的关系会被分割为多个文件。
+   RELSEG_SIZE * BLCKSZ 必须小于操作系统对文件大小的限制。在 32 位操作系统
+   中通常为 2 GB 或 4 GB，除非启用了大文件支持。默认情况下，我们将限制
+   设为 1 GB，以避免操作系统中任何可能的整数溢出问题。比实际需要更小的
+   限制仅意味着我们会将大关系分割为比实际需要更多的分块，因此保守地
+   选择较小值似乎更稳妥。建议使用 2 的幂值以在 md.c 中节省几个 CPU 周期，
+   但并非强制要求。修改 RELSEG_SIZE 需要重新 initdb。 */
 #undef RELSEG_SIZE
 
-/* The size of `long', as computed by sizeof. */
+/* `long` 的大小（sizeof 计算结果）。 */
 #undef SIZEOF_LONG
 
-/* The size of `long long', as computed by sizeof. */
+/* `long long` 的大小（sizeof 计算结果）。 */
 #undef SIZEOF_LONG_LONG
 
-/* The size of `off_t', as computed by sizeof. */
+/* `off_t` 的大小（sizeof 计算结果）。 */
 #undef SIZEOF_OFF_T
 
-/* The size of `size_t', as computed by sizeof. */
+/* `size_t` 的大小（sizeof 计算结果）。 */
 #undef SIZEOF_SIZE_T
 
-/* The size of `void *', as computed by sizeof. */
+/* `void *` 的大小（sizeof 计算结果）。 */
 #undef SIZEOF_VOID_P
 
-/* Define to 1 if you have the ANSI C header files. */
+/* 如果存在 ANSI C 头文件，则定义为 1。 */
 #undef STDC_HEADERS
 
-/* Define to 1 if strerror_r() returns int. */
+/* 如果 strerror_r() 返回 int，则定义为 1。 */
 #undef STRERROR_R_INT
 
-/* Define to 1 to use ARMv8 CRC Extension. */
+/* 定义为 1 以使用 ARMv8 CRC 扩展指令。 */
 #undef USE_ARMV8_CRC32C
 
-/* Define to 1 to use ARMv8 CRC Extension with a runtime check. */
+/* 定义为 1 以在运行时检查后使用 ARMv8 CRC 扩展指令。 */
 #undef USE_ARMV8_CRC32C_WITH_RUNTIME_CHECK
 
-/* Define to 1 to build with assertion checks. (--enable-cassert) */
+/* 定义为 1 以构建断言检查。(--enable-cassert) */
 #undef USE_ASSERT_CHECKING
 
-/* Define to 1 to use AVX-512 CRC algorithms with a runtime check. */
+/* 定义为 1 以在运行时检查后使用 AVX-512 CRC 算法。 */
 #undef USE_AVX512_CRC32C_WITH_RUNTIME_CHECK
 
-/* Define to 1 to use AVX-512 popcount instructions with a runtime check. */
+/* 定义为 1 以在运行时检查后使用 AVX-512 popcount 指令。 */
 #undef USE_AVX512_POPCNT_WITH_RUNTIME_CHECK
 
-/* Define to 1 to build with Bonjour support. (--with-bonjour) */
+/* 定义为 1 以构建 Bonjour 支持。(--with-bonjour) */
 #undef USE_BONJOUR
 
-/* Define to 1 to build with BSD Authentication support. (--with-bsd-auth) */
+/* 定义为 1 以构建 BSD 认证支持。(--with-bsd-auth) */
 #undef USE_BSD_AUTH
 
-/* Define to build with ICU support. (--with-icu) */
+/* 定义为 1 以构建 ICU 支持。(--with-icu) */
 #undef USE_ICU
 
-/* Define to 1 to build with injection points. (--enable-injection-points) */
+/* 定义为 1 以构建注入点支持。(--enable-injection-points) */
 #undef USE_INJECTION_POINTS
 
-/* Define to 1 to build with LDAP support. (--with-ldap) */
+/* 定义为 1 以构建 LDAP 支持。(--with-ldap) */
 #undef USE_LDAP
 
-/* Define to 1 to build with libcurl support. (--with-libcurl) */
+/* 定义为 1 以构建 libcurl 支持。(--with-libcurl) */
 #undef USE_LIBCURL
 
-/* Define to build with NUMA support. (--with-libnuma) */
+/* 定义为 1 以构建 NUMA 支持。(--with-libnuma) */
 #undef USE_LIBNUMA
 
-/* Define to build with io_uring support. (--with-liburing) */
+/* 定义为 1 以构建 io_uring 支持。(--with-liburing) */
 #undef USE_LIBURING
 
-/* Define to 1 to build with XML support. (--with-libxml) */
+/* 定义为 1 以构建 XML 支持。(--with-libxml) */
 #undef USE_LIBXML
 
-/* Define to 1 to use XSLT support when building contrib/xml2.
+/* 定义为 1 以在构建 contrib/xml2 时使用 XSLT 支持。
    (--with-libxslt) */
 #undef USE_LIBXSLT
 
-/* Define to 1 to build with LLVM based JIT support. (--with-llvm) */
+/* 定义为 1 以构建基于 LLVM 的 JIT 支持。(--with-llvm) */
 #undef USE_LLVM
 
-/* Define to 1 to use LoongArch CRCC instructions. */
+/* 定义为 1 以使用 LoongArch CRCC 指令。 */
 #undef USE_LOONGARCH_CRC32C
 
-/* Define to 1 to build with LZ4 support. (--with-lz4) */
+/* 定义为 1 以构建 LZ4 支持。(--with-lz4) */
 #undef USE_LZ4
 
-/* Define to select named POSIX semaphores. */
+/* 定义为 1 以选择命名 POSIX 信号量。 */
 #undef USE_NAMED_POSIX_SEMAPHORES
 
-/* Define to 1 to build with OpenSSL support. (--with-ssl=openssl) */
+/* 定义为 1 以构建 OpenSSL 支持。(--with-ssl=openssl) */
 #undef USE_OPENSSL
 
-/* Define to 1 to build with PAM support. (--with-pam) */
+/* 定义为 1 以构建 PAM 支持。(--with-pam) */
 #undef USE_PAM
 
-/* Define to 1 to use software CRC-32C implementation (slicing-by-8). */
+/* 定义为 1 以使用软件 CRC-32C 实现（slicing-by-8）。 */
 #undef USE_SLICING_BY_8_CRC32C
 
-/* Define to 1 use Intel SSE 4.2 CRC instructions. */
+/* 定义为 1 以使用 Intel SSE 4.2 CRC 指令。 */
 #undef USE_SSE42_CRC32C
 
-/* Define to 1 to use Intel SSE 4.2 CRC instructions with a runtime check. */
+/* 定义为 1 以在运行时检查后使用 Intel SSE 4.2 CRC 指令。 */
 #undef USE_SSE42_CRC32C_WITH_RUNTIME_CHECK
 
-/* Define to 1 to use SVE popcount instructions with a runtime check. */
+/* 定义为 1 以在运行时检查后使用 SVE popcount 指令。 */
 #undef USE_SVE_POPCNT_WITH_RUNTIME_CHECK
 
-/* Define to build with systemd support. (--with-systemd) */
+/* 定义为 1 以构建 systemd 支持。(--with-systemd) */
 #undef USE_SYSTEMD
 
-/* Define to select SysV-style semaphores. */
+/* 定义为 1 以选择 SysV 风格信号量。 */
 #undef USE_SYSV_SEMAPHORES
 
-/* Define to select SysV-style shared memory. */
+/* 定义为 1 以选择 SysV 风格共享内存。 */
 #undef USE_SYSV_SHARED_MEMORY
 
-/* Define to select unnamed POSIX semaphores. */
+/* 定义为 1 以选择未命名 POSIX 信号量。 */
 #undef USE_UNNAMED_POSIX_SEMAPHORES
 
-/* Define to select Win32-style semaphores. */
+/* 定义为 1 以选择 Win32 风格信号量。 */
 #undef USE_WIN32_SEMAPHORES
 
-/* Define to select Win32-style shared memory. */
+/* 定义为 1 以选择 Win32 风格共享内存。 */
 #undef USE_WIN32_SHARED_MEMORY
 
-/* Define to 1 to build with ZSTD support. (--with-zstd) */
+/* 定义为 1 以构建 ZSTD 支持。(--with-zstd) */
 #undef USE_ZSTD
 
-/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
-   significant byte first (like Motorola and SPARC, unlike Intel). */
+/* 如果处理器最高有效字节在前（如 Motorola 和 SPARC，与 Intel 相反），
+   则将 WORDS_BIGENDIAN 定义为 1。 */
 #if defined AC_APPLE_UNIVERSAL_BUILD
 # if defined __BIG_ENDIAN__
 #  define WORDS_BIGENDIAN 1
@@ -777,47 +753,43 @@
 # endif
 #endif
 
-/* Size of a WAL file block. This need have no particular relation to BLCKSZ.
-   XLOG_BLCKSZ must be a power of 2, and if your system supports O_DIRECT I/O,
-   XLOG_BLCKSZ must be a multiple of the alignment requirement for direct-I/O
-   buffers, else direct I/O may fail. Changing XLOG_BLCKSZ requires an initdb.
-   */
+/* WAL 文件块大小。此值与 BLCKSZ 不必存在特定关系。
+   XLOG_BLCKSZ 必须是 2 的幂，并且如果系统支持 O_DIRECT I/O，
+   XLOG_BLCKSZ 必须是直接 I/O 缓冲区对齐要求的倍数，否则直接 I/O 可能
+   失败。修改 XLOG_BLCKSZ 需要重新 initdb。 */
 #undef XLOG_BLCKSZ
 
 
 
-/* Number of bits in a file offset, on hosts where this is settable. */
+/* 文件偏移的位数，在可设置此项的主机上使用。 */
 #undef _FILE_OFFSET_BITS
 
-/* Define to 1 to make fseeko visible on some hosts (e.g. glibc 2.2). */
+/* 在某些主机上（如 glibc 2.2）使 fseeko 可见，则定义为 1。 */
 #undef _LARGEFILE_SOURCE
 
-/* Define for large files, on AIX-style hosts. */
+/* 在 AIX 风格的主机上为大文件支持而定义。 */
 #undef _LARGE_FILES
 
-/* Define to `__inline__' or `__inline' if that's what the C compiler
-   calls it, or to nothing if 'inline' is not supported under any name.  */
+/* 定义为 `__inline__` 或 `__inline`（如果 C 编译器以此名称调用它），
+   如果 'inline' 在任何名称下都不支持，则定义为空。 */
 #ifndef __cplusplus
 #undef inline
 #endif
 
-/* Define to keyword to use for C99 restrict support, or to nothing if not
-   supported */
+/* 定义为用于 C99 restrict 支持的关键字，如果不支持则定义为空 */
 #undef pg_restrict
 
-/* Define to the equivalent of the C99 'restrict' keyword, or to
-   nothing if this is not supported.  Do not define if restrict is
-   supported directly.  */
+/* 定义为等价于 C99 'restrict' 关键字的词，如果不支持则定义为空。
+   如果直接支持 restrict，则不要定义。 */
 #undef restrict
-/* Work around a bug in Sun C++: it does not support _Restrict or
-   __restrict__, even though the corresponding Sun C compiler ends up with
-   "#define restrict _Restrict" or "#define restrict __restrict__" in the
-   previous line.  Perhaps some future version of Sun C++ will work with
-   restrict; if so, hopefully it defines __RESTRICT like Sun C does.  */
+/* 绕过 Sun C++ 的一个 bug：即使对应的 Sun C 编译器最终会在上一行中
+   得到 "#define restrict _Restrict" 或 "#define restrict __restrict__"，
+   Sun C++ 也不支持 _Restrict 或 __restrict__。也许 Sun C++ 的某个未来
+   版本会支持 restrict；如果是这样，希望它能像 Sun C 一样定义 __RESTRICT。 */
 #if defined __SUNPRO_CC && !defined __RESTRICT
 # define _Restrict
 # define __restrict__
 #endif
 
-/* Define to how the compiler spells `typeof'. */
+/* 定义编译器对 `typeof` 的拼写方式。 */
 #undef typeof

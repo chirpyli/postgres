@@ -1,11 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * postgres_fe.h
- *	  Primary include file for PostgreSQL client-side .c files
+ *	  PostgreSQL 客户端 .c 文件的主包含文件
  *
- * This should be the first file included by PostgreSQL client libraries and
- * application programs --- but not by backend modules, which should include
- * postgres.h.
+ * 这应当是 PostgreSQL 客户端库和应用程序的第一个包含文件——但不应用于
+ * 后端模块，后端模块应包含 postgres.h。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group

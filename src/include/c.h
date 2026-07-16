@@ -1,12 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * c.h
- *	  Fundamental C definitions.  This is included by every .c file in
- *	  PostgreSQL (via either postgres.h or postgres_fe.h, as appropriate).
+ *	  基础的 C 定义。PostgreSQL 中的每个 .c 文件都通过 postgres.h 或
+ *	  postgres_fe.h（视情况而定）间接包含此文件。
  *
- *	  Note that the definitions here are not intended to be exposed to clients
- *	  of the frontend interface libraries --- so we don't worry much about
- *	  polluting the namespace with lots of stuff...
+ *	  注意，此处的定义不打算暴露给前端接口库的客户端——因此我们不太担心
+ *	  用大量东西污染命名空间……
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -19,28 +18,25 @@
 /* IWYU pragma: always_keep */
 /*
  *----------------------------------------------------------------
- *	 TABLE OF CONTENTS
+ *	 目录
  *
- *		When adding stuff to this file, please try to put stuff
- *		into the relevant section, or add new sections as appropriate.
+ *		当向本文件添加内容时，请尽量将其放入相关的节中，或酌情添加新的节。
  *
- *	  section	description
+ *	  节号		描述
  *	  -------	------------------------------------------------
- *		0)		pg_config.h and standard system headers
- *		1)		compiler characteristics
+ *		0)		pg_config.h 和标准系统头文件
+ *		1)		编译器特性
  *		2)		bool, true, false
- *		3)		standard system types
- *		4)		IsValid macros for system types
- *		5)		lengthof, alignment
- *		6)		assertions
- *		7)		widely useful macros
- *		8)		random stuff
- *		9)		system-specific hacks
+ *		3)		标准系统类型
+ *		4)		系统类型的 IsValid 宏
+ *		5)		lengthof, 对齐
+ *		6)		断言
+ *		7)		广泛适用的宏
+ *		8)		杂项
+ *		9)		系统相关 hack
  *
- * NOTE: since this file is included by both frontend and backend modules,
- * it's usually wrong to put an "extern" declaration here, unless it's
- * ifdef'd so that it's seen in only one case or the other.
- * typedefs and macros are the kind of thing that might go here.
+ * 注意：由于本文件同时被前端和后端模块包含，通常不应在此放置 "extern"
+ * 声明，除非用 #ifdef 限定其只在一侧可见。typedef 和宏是适合放在这里的内容。
  *
  *----------------------------------------------------------------
  */
@@ -50,15 +46,14 @@
 /* IWYU pragma: begin_exports */
 
 /*
- * These headers must be included before any system headers, because on some
- * platforms they affect the behavior of the system headers (for example, by
- * defining _FILE_OFFSET_BITS).
+ * 这些头文件必须在任何系统头文件之前包含，因为在某些平台上它们会影响
+ * 系统头文件的行为（例如，通过定义 _FILE_OFFSET_BITS）。
  */
 #include "pg_config.h"
-#include "pg_config_manual.h"	/* must be after pg_config.h */
-#include "pg_config_os.h"		/* config from include/port/PORTNAME.h */
+#include "pg_config_manual.h"	/* 必须在 pg_config.h 之后 */
+#include "pg_config_os.h"		/* 来自 include/port/PORTNAME.h 的配置 */
 
-/* System header files that should be available everywhere in Postgres */
+/* Postgres 中所有地方都应当可用的系统头文件 */
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,7 +67,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #if defined(WIN32) || defined(__CYGWIN__)
-#include <fcntl.h>				/* ensure O_BINARY is available */
+#include <fcntl.h>				/* 确保 O_BINARY 可用 */
 #endif
 #include <locale.h>
 #ifdef HAVE_XLOCALE_H
@@ -82,26 +77,25 @@
 #include <libintl.h>
 #endif
 
- /* Pull in fundamental symbols that we also expose to applications */
+ /* 拉入我们也向应用程序暴露的基本符号 */
 #include "postgres_ext.h"
 
-/* Define before including zlib.h to add const decorations to zlib API. */
+/* 在包含 zlib.h 之前定义，为 zlib API 添加 const 修饰 */
 #ifdef HAVE_LIBZ
 #define ZLIB_CONST
 #endif
 
 
 /* ----------------------------------------------------------------
- *				Section 1: compiler characteristics
+ *				第 1 节: 编译器特性
  *
- * type prefixes (const, signed, volatile, inline) are handled in pg_config.h.
+ * 类型前缀（const、signed、volatile、inline）在 pg_config.h 中处理。
  * ----------------------------------------------------------------
  */
 
 /*
- * Disable "inline" if PG_FORCE_DISABLE_INLINE is defined.
- * This is used to work around compiler bugs and might also be useful for
- * investigatory purposes.
+ * 如果定义了 PG_FORCE_DISABLE_INLINE，则禁用 "inline"。
+ * 这用于绕过编译器 bug，也可能用于调査目的。
  */
 #ifdef PG_FORCE_DISABLE_INLINE
 #undef inline
@@ -109,7 +103,7 @@
 #endif
 
 /*
- * Attribute macros
+ * 属性宏
  *
  * GCC: https://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html
  * GCC: https://gcc.gnu.org/onlinedocs/gcc/Type-Attributes.html
@@ -118,15 +112,14 @@
  */
 
 /*
- * For compilers which don't support __has_attribute, we just define
- * __has_attribute(x) to 0 so that we can define macros for various
- * __attribute__s more easily below.
+ * 对于不支持 __has_attribute 的编译器，我们将 __has_attribute(x) 定义为 0，
+ * 以便更轻松地在下面为各种 __attribute__ 定义宏。
  */
 #ifndef __has_attribute
 #define __has_attribute(attribute) 0
 #endif
 
-/* only GCC supports the unused attribute */
+/* 只有 GCC 支持 unused 属性 */
 #ifdef __GNUC__
 #define pg_attribute_unused() __attribute__((unused))
 #else
@@ -134,10 +127,9 @@
 #endif
 
 /*
- * pg_nodiscard means the compiler should warn if the result of a function
- * call is ignored.  The name "nodiscard" is chosen in alignment with the C23
- * standard attribute with the same name.  For maximum forward compatibility,
- * place it before the declaration.
+ * pg_nodiscard 表示如果函数调用的结果被忽略，编译器应发出警告。
+ * 名称 "nodiscard" 与 C23 标准中的同名属性保持一致。为了最大程度地向前兼容，
+ * 请将其放在声明之前。
  */
 #ifdef __GNUC__
 #define pg_nodiscard __attribute__((warn_unused_result))
@@ -146,14 +138,13 @@
 #endif
 
 /*
- * pg_noreturn corresponds to the C11 noreturn/_Noreturn function specifier.
- * We can't use the standard name "noreturn" because some third-party code
- * uses __attribute__((noreturn)) in headers, which would get confused if
- * "noreturn" is defined to "_Noreturn", as is done by <stdnoreturn.h>.
+ * pg_noreturn 对应于 C11 的 noreturn/_Noreturn 函数修饰符。
+ * 我们不能使用标准名称 "noreturn"，因为某些第三方代码在头文件中使用了
+ * __attribute__((noreturn))，如果 "noreturn" 被定义为 "_Noreturn"（如
+ * <stdnoreturn.h> 所做的那样），就会产生混淆。
  *
- * In a declaration, function specifiers go before the function name.  The
- * common style is to put them before the return type.  (The MSVC fallback has
- * the same requirement.  The GCC fallback is more flexible.)
+ * 在声明中，函数修饰符位于函数名之前。常见风格是将其放在返回类型之前。
+ * （MSVC 的 fallback 有相同要求。GCC 的 fallback 更灵活。）
  */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define pg_noreturn _Noreturn
@@ -166,23 +157,22 @@
 #endif
 
 /*
- * This macro will disable address safety instrumentation for a function
- * when running with "-fsanitize=address". Think twice before using this!
+ * 此宏将禁用函数的地址安全检查（address sanitizer），当使用
+ * "-fsanitize=address" 编译时生效。使用前请三思！
  */
 #if defined(__clang__) || __GNUC__ >= 8
 #define pg_attribute_no_sanitize_address() __attribute__((no_sanitize("address")))
 #elif __has_attribute(no_sanitize_address)
-/* This would work for clang, but it's deprecated. */
+/* 这对 clang 也有效，但已弃用。 */
 #define pg_attribute_no_sanitize_address() __attribute__((no_sanitize_address))
 #else
 #define pg_attribute_no_sanitize_address()
 #endif
 
 /*
- * Place this macro before functions that should be allowed to make misaligned
- * accesses.  Think twice before using it on non-x86-specific code!
- * Testing can be done with "-fsanitize=alignment -fsanitize-trap=alignment"
- * on clang, or "-fsanitize=alignment -fno-sanitize-recover=alignment" on gcc.
+ * 将此宏放在允许进行非对齐访问的函数之前。在非 x86 专用代码上使用前请三思！
+ * 测试可用 clang 的 "-fsanitize=alignment -fsanitize-trap=alignment"
+ * 或 gcc 的 "-fsanitize=alignment -fno-sanitize-recover=alignment"。
  */
 #if __clang_major__ >= 7 || __GNUC__ >= 8
 #define pg_attribute_no_sanitize_alignment() __attribute__((no_sanitize("alignment")))
@@ -191,9 +181,8 @@
 #endif
 
 /*
- * pg_attribute_nonnull means the compiler should warn if the function is
- * called with the listed arguments set to NULL.  If no arguments are
- * listed, the compiler should warn if any pointer arguments are set to NULL.
+ * pg_attribute_nonnull 表示如果函数被调用时列出的参数为 NULL，
+ * 编译器应发出警告。如果没有列出参数，则任何指针参数为 NULL 时编译器都应警告。
  */
 #if __has_attribute (nonnull)
 #define pg_attribute_nonnull(...) __attribute__((nonnull(__VA_ARGS__)))
@@ -202,10 +191,9 @@
 #endif
 
 /*
- * pg_attribute_target allows specifying different target options that the
- * function should be compiled with (e.g., for using special CPU instructions).
- * Note that there still needs to be a configure-time check to verify that a
- * specific target is understood by the compiler.
+ * pg_attribute_target 允许指定函数编译时所使用的不同目标选项
+ * （例如，用于使用特殊的 CPU 指令）。
+ * 请注意，仍然需要在 configure 时验证编译器是否能理解特定的目标。
  */
 #if __has_attribute (target)
 #define pg_attribute_target(...) __attribute__((target(__VA_ARGS__)))
@@ -214,9 +202,8 @@
 #endif
 
 /*
- * Append PG_USED_FOR_ASSERTS_ONLY to definitions of variables that are only
- * used in assert-enabled builds, to avoid compiler warnings about unused
- * variables in assert-disabled builds.
+ * 将 PG_USED_FOR_ASSERTS_ONLY 添加到仅在启用断言的构建中使用的变量定义上，
+ * 以避免在禁用断言的构建中出现"未使用变量"的编译器警告。
  */
 #ifdef USE_ASSERT_CHECKING
 #define PG_USED_FOR_ASSERTS_ONLY
@@ -225,8 +212,8 @@
 #endif
 
 /*
- * Our C and C++ compilers may have different ideas about which printf
- * archetype best represents what src/port/snprintf.c can do.
+ * 我们的 C 和 C++ 编译器可能对哪种 printf 原型最能代表
+ * src/port/snprintf.c 的行为有不同的看法。
  */
 #ifndef __cplusplus
 #define PG_PRINTF_ATTRIBUTE PG_C_PRINTF_ATTRIBUTE
@@ -234,7 +221,7 @@
 #define PG_PRINTF_ATTRIBUTE PG_CXX_PRINTF_ATTRIBUTE
 #endif
 
-/* GCC supports format attributes */
+/* GCC 支持 format 属性 */
 #if defined(__GNUC__)
 #define pg_attribute_format_arg(a) __attribute__((format_arg(a)))
 #define pg_attribute_printf(f,a) __attribute__((format(PG_PRINTF_ATTRIBUTE, f, a)))
@@ -243,53 +230,50 @@
 #define pg_attribute_printf(f,a)
 #endif
 
-/* GCC and Sunpro support aligned and packed */
+/* GCC 和 Sunpro 支持 aligned 和 packed */
 #if defined(__GNUC__) || defined(__SUNPRO_C)
 #define pg_attribute_aligned(a) __attribute__((aligned(a)))
 #define pg_attribute_packed() __attribute__((packed))
 #elif defined(_MSC_VER)
 /*
- * MSVC supports aligned.
+ * MSVC 支持 aligned。
  *
- * Packing is also possible but only by wrapping the entire struct definition
- * which doesn't fit into our current macro declarations.
+ * Packing 也可用，但只能通过包裹整个结构体定义来实现，
+ * 这不适合我们当前的宏声明风格。
  */
 #define pg_attribute_aligned(a) __declspec(align(a))
 #else
 /*
- * NB: aligned and packed are not given default definitions because they
- * affect code functionality; they *must* be implemented by the compiler
- * if they are to be used.
+ * 注意：aligned 和 packed 没有提供默认定义，因为它们影响代码功能；
+ * 若要使用它们，编译器*必须*实现。
  */
 #endif
 
 /*
- * Use "pg_attribute_always_inline" in place of "inline" for functions that
- * we wish to force inlining of, even when the compiler's heuristics would
- * choose not to.  But, if possible, don't force inlining in unoptimized
- * debug builds.
+ * 对于那些我们希望强制内联的函数（即使编译器的启发式算法选择不内联），
+ * 使用 "pg_attribute_always_inline" 代替 "inline"。但是，如果可能的话，
+ * 不要在未优化的调试构建中强制内联。
  */
 #if (defined(__GNUC__) && __GNUC__ > 3 && defined(__OPTIMIZE__)) || defined(__SUNPRO_C)
-/* GCC > 3 and Sunpro support always_inline via __attribute__ */
+/* GCC > 3 和 Sunpro 通过 __attribute__ 支持 always_inline */
 #define pg_attribute_always_inline __attribute__((always_inline)) inline
 #elif defined(_MSC_VER)
-/* MSVC has a special keyword for this */
+/* MSVC 为此提供了特殊关键字 */
 #define pg_attribute_always_inline __forceinline
 #else
-/* Otherwise, the best we can do is to say "inline" */
+/* 否则，我们最多只能使用 "inline" */
 #define pg_attribute_always_inline inline
 #endif
 
 /*
- * Forcing a function not to be inlined can be useful if it's the slow path of
- * a performance-critical function, or should be visible in profiles to allow
- * for proper cost attribution.  Note that unlike the pg_attribute_XXX macros
- * above, this should be placed before the function's return type and name.
+ * 强制不内联函数在以下场景中很有用：它是性能关键函数的慢路径，
+ * 或者应该在 profile 中可见以进行恰当的成本归属。
+ * 注意：与上面的 pg_attribute_XXX 宏不同，此宏应放在函数的返回类型和名称之前。
  */
-/* GCC and Sunpro support noinline via __attribute__ */
+/* GCC 和 Sunpro 通过 __attribute__ 支持 noinline */
 #if (defined(__GNUC__) && __GNUC__ > 2) || defined(__SUNPRO_C)
 #define pg_noinline __attribute__((noinline))
-/* msvc via declspec */
+/* msvc 通过 declspec 支持 */
 #elif defined(_MSC_VER)
 #define pg_noinline __declspec(noinline)
 #else
@@ -297,13 +281,11 @@
 #endif
 
 /*
- * For now, just define pg_attribute_cold and pg_attribute_hot to be empty
- * macros on minGW 8.1.  There appears to be a compiler bug that results in
- * compilation failure.  At this time, we still have at least one buildfarm
- * animal running that compiler, so this should make that green again. It's
- * likely this compiler is not popular enough to warrant keeping this code
- * around forever, so let's just remove it once the last buildfarm animal
- * upgrades.
+ * 目前，在 minGW 8.1 上将 pg_attribute_cold 和 pg_attribute_hot 定义为
+ * 空宏。那里似乎有一个编译器的 bug 会导致编译失败。目前，我们至少还有
+ * 一台 buildfarm 机器在运行该编译器，所以这样做应该能让它恢复正常。
+ * 这个编译器可能不够普及，不值得永远保留这段代码，所以等最后一台
+ * buildfarm 机器升级后，我们就可以直接移除它。
  */
 #if defined(__MINGW64__) && __GNUC__ == 8 && __GNUC_MINOR__ == 1
 
@@ -312,8 +294,8 @@
 
 #else
 /*
- * Marking certain functions as "hot" or "cold" can be useful to assist the
- * compiler in arranging the assembly code in a more efficient way.
+ * 将某些函数标记为 "hot" 或 "cold" 有助于编译器以更高效的方式排列
+ * 汇编代码。
  */
 #if __has_attribute (cold)
 #define pg_attribute_cold __attribute__((cold))
@@ -330,9 +312,8 @@
 #endif							/* defined(__MINGW64__) && __GNUC__ == 8 &&
 								 * __GNUC_MINOR__ == 1 */
 /*
- * Mark a point as unreachable in a portable fashion.  This should preferably
- * be something that the compiler understands, to aid code generation.
- * In assert-enabled builds, we prefer abort() for debugging reasons.
+ * 以可移植的方式标记一个点不可达。最好让编译器能理解这一点，以辅助
+ * 代码生成。在启用断言的构建中，出于调试原因，我们优先使用 abort()。
  */
 #if defined(HAVE__BUILTIN_UNREACHABLE) && !defined(USE_ASSERT_CHECKING)
 #define pg_unreachable() __builtin_unreachable()
@@ -343,11 +324,11 @@
 #endif
 
 /*
- * Hints to the compiler about the likelihood of a branch. Both likely() and
- * unlikely() return the boolean value of the contained expression.
+ * 向编译器提示一条分支的可能性。likely() 和 unlikely() 都返回
+ * 所包含表达式的布尔值。
  *
- * These should only be used sparingly, in very hot code paths. It's very easy
- * to mis-estimate likelihoods.
+ * 这些只应在极少的情况下、在非常热的代码路径中使用。人们很容易
+ * 错误估计可能性。
  */
 #if __GNUC__ >= 3
 #define likely(x)	__builtin_expect((x) != 0, 1)
@@ -359,15 +340,14 @@
 
 /*
  * CppAsString
- *		Convert the argument to a string, using the C preprocessor.
+ *		使用 C 预处理器将参数转换为字符串。
  * CppAsString2
- *		Convert the argument to a string, after one round of macro expansion.
+ *		将参数经过一轮宏展开后转换为字符串。
  * CppConcat
- *		Concatenate two arguments together, using the C preprocessor.
+ *		使用 C 预处理器将两个参数连接在一起。
  *
- * Note: There used to be support here for pre-ANSI C compilers that didn't
- * support # and ##.  Nowadays, these macros are just for clarity and/or
- * backward compatibility with existing PostgreSQL code.
+ * 注意：这里曾经支持不支持 # 和 ## 的前 ANSI C 编译器。如今，这些宏
+ * 只是为了保证清晰性和/或与现有 PostgreSQL 代码的向后兼容性。
  */
 #define CppAsString(identifier) #identifier
 #define CppAsString2(x)			CppAsString(x)
@@ -375,22 +355,18 @@
 
 /*
  * VA_ARGS_NARGS
- *		Returns the number of macro arguments it is passed.
+ *		返回传递给它的宏参数的个数。
  *
- * An empty argument still counts as an argument, so effectively, this is
- * "one more than the number of commas in the argument list".
+ * 空参数也算一个参数，实际上，这意味着返回值是"参数列表中逗号的数量加一"。
  *
- * This works for up to 63 arguments.  Internally, VA_ARGS_NARGS_() is passed
- * 64+N arguments, and the C99 standard only requires macros to allow up to
- * 127 arguments, so we can't portably go higher.  The implementation is
- * pretty trivial: VA_ARGS_NARGS_() returns its 64th argument, and we set up
- * the call so that that is the appropriate one of the list of constants.
- * This idea is due to Laurent Deniau.
+ * 该宏最多支持 63 个参数。在内部，VA_ARGS_NARGS_() 被传入 64+N 个参数，
+ * 而 C99 标准只要求宏最多允许 127 个参数，因此我们无法可移植地支持更多。
+ * 实现非常直观：VA_ARGS_NARGS_() 返回其第 64 个参数，我们通过设置调用
+ * 使得该参数恰好是常量列表中对应的那一个。这个想法来自 Laurent Deniau。
  *
- * MSVC has an implementation of __VA_ARGS__ that doesn't conform to the
- * standard unless you use the /Zc:preprocessor compiler flag, but that
- * isn't available before Visual Studio 2019.  For now, use a different
- * definition that also works on older compilers.
+ * MSVC 对 __VA_ARGS__ 的实现不符合标准，除非使用 /Zc:preprocessor
+ * 编译器标志，但该标志在 Visual Studio 2019 之前不可用。目前，我们对
+ * 旧编译器使用一个不同的定义。
  */
 #ifdef _MSC_VER
 #define EXPAND(args) args
@@ -427,45 +403,41 @@
 	(N)
 
 /*
- * Generic function pointer.  This can be used in the rare cases where it's
- * necessary to cast a function pointer to a seemingly incompatible function
- * pointer type while avoiding gcc's -Wcast-function-type warnings.
+ * 通用函数指针。可用于那些极少数需要将函数指针强制转换为看似不兼容的
+ * 函数指针类型，同时避免 gcc 的 -Wcast-function-type 警告的场景。
  */
 typedef void (*pg_funcptr_t) (void);
 
 /*
- * We require C99, hence the compiler should understand flexible array
- * members.  However, for documentation purposes we still consider it to be
- * project style to write "field[FLEXIBLE_ARRAY_MEMBER]" not just "field[]".
- * When computing the size of such an object, use "offsetof(struct s, f)"
- * for portability.  Don't use "offsetof(struct s, f[0])", as this doesn't
- * work with MSVC and with C++ compilers.
+ * 我们要求 C99，因此编译器应能理解柔性数组成员。但是，为了文档目的，
+ * 我们仍然认为编写 "field[FLEXIBLE_ARRAY_MEMBER]" 而非 "field[]"
+ * 是项目风格。在计算此类对象的大小时，请使用 "offsetof(struct s, f)"
+ * 以保证可移植性。不要使用 "offsetof(struct s, f[0])"，因为这在
+ * MSVC 和 C++ 编译器上不工作。
  */
-#define FLEXIBLE_ARRAY_MEMBER	/* empty */
+#define FLEXIBLE_ARRAY_MEMBER	/* 空 */
 
 /*
- * Does the compiler support #pragma GCC system_header? We optionally use it
- * to avoid warnings that we can't fix (e.g. in the perl headers).
- * See https://gcc.gnu.org/onlinedocs/cpp/System-Headers.html
+ * 编译器是否支持 #pragma GCC system_header？我们可选用它来避免那些
+ * 我们无法修复的警告（例如在 perl 头文件中）。
+ * 参见 https://gcc.gnu.org/onlinedocs/cpp/System-Headers.html
  *
- * Headers for which we do not want to show compiler warnings can,
- * conditionally, use #pragma GCC system_header to avoid warnings. Obviously
- * this should only be used for external headers over which we do not have
- * control.
+ * 对于那些我们不希望显示编译器警告的头文件，可以有条件地使用
+ * #pragma GCC system_header 来避免警告。显然，这只应用于我们无法控制的
+ * 外部头文件。
  *
- * Support for the pragma is tested here, instead of during configure, as gcc
- * also warns about the pragma being used in a .c file. It's surprisingly hard
- * to get autoconf to use .h as the file-ending. Looks like gcc has
- * implemented the pragma since the 2000, so this test should suffice.
+ * 对该 pragma 的支持在这里测试，而不是在 configure 阶段，因为 gcc
+ * 也会对在 .c 文件中使用该 pragma 发出警告。让 autoconf 使用 .h 作为
+ * 文件后缀出奇地困难。看起来 gcc 自 2000 年起就已实现该 pragma，
+ * 所以这个测试应该足够。
  *
  *
- * Alternatively, we could add the include paths for problematic headers with
- * -isystem, but that is a larger hammer and is harder to search for.
+ * 另一种方案是将有问题的头文件的 include 路径使用 -isystem 添加，
+ * 但那是更粗暴的做法，而且更难搜索追溯。
  *
- * A more granular alternative would be to use #pragma GCC diagnostic
- * push/ignored/pop, but gcc warns about unknown warnings being ignored, so
- * every to-be-ignored-temporarily compiler warning would require its own
- * pg_config.h symbol and #ifdef.
+ * 更细粒度的替代方法是使用 #pragma GCC diagnostic push/ignored/pop，
+ * 但 gcc 会对未知的被忽略警告发出警告，因此每个需要临时忽略的编译器警告
+ * 都需要自己的 pg_config.h 符号和 #ifdef。
  */
 #ifdef __GNUC__
 #define HAVE_PRAGMA_GCC_SYSTEM_HEADER	1
@@ -473,36 +445,34 @@ typedef void (*pg_funcptr_t) (void);
 
 
 /* ----------------------------------------------------------------
- *				Section 2:	bool, true, false
+ *				第 2 节:	bool, true, false
  * ----------------------------------------------------------------
  */
 
 /*
  * bool
- *		Boolean value, either true or false.
+ *		布尔值，true 或 false。
  *
- * PostgreSQL currently cannot deal with bool of size other than 1; there are
- * static assertions around the code to prevent that.
+ * PostgreSQL 目前无法处理大小不为 1 的 bool；代码中有静态断言来防止此情况。
  */
 
 #include <stdbool.h>
 
 
 /* ----------------------------------------------------------------
- *				Section 3:	standard system types
+ *				第 3 节: 标准系统类型
  * ----------------------------------------------------------------
  */
 
 /*
  * Pointer
- *		Variable holding address of any memory resident object.
+ *		保存任意内存驻留对象地址的变量。
  *
- *		XXX Pointer arithmetic is done with this, so it can't be void *
- *		under "true" ANSI compilers.
+ *		XXX 指针算术是用它完成的，因此在"真正的" ANSI 编译器下不能是 void *。
  */
 typedef char *Pointer;
 
-/* Historical names for types in <stdint.h>. */
+/* <stdint.h> 中类型的历史命名。 */
 typedef int8_t int8;
 typedef int16_t int16;
 typedef int32_t int32;
@@ -514,29 +484,28 @@ typedef uint64_t uint64;
 
 /*
  * bitsN
- *		Unit of bitwise operation, AT LEAST N BITS IN SIZE.
+ *		按位运算的单位，至少 N 位大小。
  */
-typedef uint8 bits8;			/* >= 8 bits */
-typedef uint16 bits16;			/* >= 16 bits */
-typedef uint32 bits32;			/* >= 32 bits */
+typedef uint8 bits8;			/* >= 8 位 */
+typedef uint16 bits16;			/* >= 16 位 */
+typedef uint32 bits32;			/* >= 32 位 */
 
 /*
- * 64-bit integers
+ * 64 位整数
  */
 #define INT64CONST(x)  INT64_C(x)
 #define UINT64CONST(x) UINT64_C(x)
 
-/* snprintf format strings to use for 64-bit integers */
+/* 用于 64 位整数的 snprintf 格式字符串 */
 #define INT64_FORMAT "%" PRId64
 #define UINT64_FORMAT "%" PRIu64
 
 /*
- * 128-bit signed and unsigned integers
- *		There currently is only limited support for such types.
- *		E.g. 128bit literals and snprintf are not supported; but math is.
- *		Also, because we exclude such types when choosing MAXIMUM_ALIGNOF,
- *		it must be possible to coerce the compiler to allocate them on no
- *		more than MAXALIGN boundaries.
+ * 128 位有符号和无符号整数
+ *		目前对这些类型的支持有限。
+ *		例如，不支持 128 位字面量和 snprintf；但数学运算是支持的。
+ *		此外，因为我们在选择 MAXIMUM_ALIGNOF 时排除了这样的类型，所以必须
+ *		能使编译器以不超过 MAXALIGN 边界的方式分配它们。
  */
 #if defined(PG_INT128_TYPE)
 #if defined(pg_attribute_aligned) || ALIGNOF_PG_INT128_TYPE <= MAXIMUM_ALIGNOF
@@ -557,7 +526,7 @@ typedef unsigned PG_INT128_TYPE uint128
 #endif
 #endif
 
-/* Historical names for limits in <stdint.h>. */
+/* <stdint.h> 中限制值的历史命名。 */
 #define PG_INT8_MIN		INT8_MIN
 #define PG_INT8_MAX		INT8_MAX
 #define PG_UINT8_MAX	UINT8_MAX
@@ -572,38 +541,36 @@ typedef unsigned PG_INT128_TYPE uint128
 #define PG_UINT64_MAX	UINT64_MAX
 
 /*
- * We now always use int64 timestamps, but keep this symbol defined for the
- * benefit of external code that might test it.
+ * 我们现在始终使用 int64 时间戳，但保留此符号以便可能测试它的外部代码使用。
  */
 #define HAVE_INT64_TIMESTAMP
 
 /*
  * Size
- *		Size of any memory resident object, as returned by sizeof.
+ *		任意内存驻留对象的大小，由 sizeof 返回。
  */
 typedef size_t Size;
 
 /*
  * Index
- *		Index into any memory resident array.
+ *		任意内存驻留数组的索引。
  *
- * Note:
- *		Indices are non negative.
+ * 注意：
+ *		索引是非负的。
  */
 typedef unsigned int Index;
 
 /*
  * Offset
- *		Offset into any memory resident array.
+ *		任意内存驻留数组的偏移量。
  *
- * Note:
- *		This differs from an Index in that an Index is always
- *		non negative, whereas Offset may be negative.
+ * 注意：
+ *		这与 Index 不同，Index 始终非负，而 Offset 可以为负。
  */
 typedef signed int Offset;
 
 /*
- * Common Postgres datatype names (as used in the catalogs)
+ * 常见的 Postgres 数据类型名称（如系统表中使用的）
  */
 typedef float float4;
 typedef double float8;
@@ -619,11 +586,11 @@ typedef double float8;
  * CommandId
  */
 
-/* typedef Oid is in postgres_ext.h */
+/* typedef Oid 位于 postgres_ext.h 中 */
 
 /*
- * regproc is the type name used in the include/catalog headers, but
- * RegProcedure is the preferred name in C code.
+ * regproc 是 include/catalog 头文件中使用的类型名，但 RegProcedure
+ * 是 C 代码中的首选名称。
  */
 typedef Oid regproc;
 typedef regproc RegProcedure;
@@ -637,7 +604,7 @@ typedef uint32 SubTransactionId;
 #define InvalidSubTransactionId		((SubTransactionId) 0)
 #define TopSubTransactionId			((SubTransactionId) 1)
 
-/* MultiXactId must be equivalent to TransactionId, to fit in t_xmax */
+/* MultiXactId 必须与 TransactionId 等价，以便放入 t_xmax */
 typedef TransactionId MultiXactId;
 
 typedef uint32 MultiXactOffset;
@@ -649,52 +616,47 @@ typedef uint32 CommandId;
 
 
 /* ----------------
- *		Variable-length datatypes all share the 'struct varlena' header.
+ *		变长数据类型都共享 'struct varlena' 头部。
  *
- * NOTE: for TOASTable types, this is an oversimplification, since the value
- * may be compressed or moved out-of-line.  However datatype-specific routines
- * are mostly content to deal with de-TOASTed values only, and of course
- * client-side routines should never see a TOASTed value.  But even in a
- * de-TOASTed value, beware of touching vl_len_ directly, as its
- * representation is no longer convenient.  It's recommended that code always
- * use macros VARDATA_ANY, VARSIZE_ANY, VARSIZE_ANY_EXHDR, VARDATA, VARSIZE,
- * and SET_VARSIZE instead of relying on direct mentions of the struct fields.
- * See postgres.h for details of the TOASTed form.
+ * 注意：对于可 TOAST 的类型，这是一个过度简化，因为值可能被压缩或移到行外。
+ * 然而，特定数据类型的例程大多只满足于处理已 de-TOAST 的值，当然，
+ * 客户端例程永远不应该看到 TOAST 状态的值。但即使在 de-TOAST 的值中，
+ * 也要注意不要直接接触 vl_len_，因为其表示形式已经不再方便直接使用。
+ * 建议代码始终使用宏 VARDATA_ANY、VARSIZE_ANY、VARSIZE_ANY_EXHDR、
+ * VARDATA、VARSIZE 以及 SET_VARSIZE，而不是直接引用结构体字段。
+ * 参见 postgres.h 以了解 TOAST 形式的详细信息。
  * ----------------
  */
 struct varlena
 {
-	char		vl_len_[4];		/* Do not touch this field directly! */
-	char		vl_dat[FLEXIBLE_ARRAY_MEMBER];	/* Data content is here */
+	char		vl_len_[4];		/* 不要直接触及此字段！ */
+	char		vl_dat[FLEXIBLE_ARRAY_MEMBER];	/* 数据内容在此 */
 };
 
 #define VARHDRSZ		((int32) sizeof(int32))
 
 /*
- * These widely-used datatypes are just a varlena header and the data bytes.
- * There is no terminating null or anything like that --- the data length is
- * always VARSIZE_ANY_EXHDR(ptr).
+ * 这些广泛使用的数据类型只是一个 varlena 头部加上数据字节。
+ * 没有终止 null 或类似的东西——数据长度始终为 VARSIZE_ANY_EXHDR(ptr)。
  */
 typedef struct varlena bytea;
 typedef struct varlena text;
-typedef struct varlena BpChar;	/* blank-padded char, ie SQL char(n) */
-typedef struct varlena VarChar; /* var-length char, ie SQL varchar(n) */
+typedef struct varlena BpChar;	/* 空白填充的 char，即 SQL char(n) */
+typedef struct varlena VarChar; /* 变长 char，即 SQL varchar(n) */
 
 /*
- * Specialized array types.  These are physically laid out just the same
- * as regular arrays (so that the regular array subscripting code works
- * with them).  They exist as distinct types mostly for historical reasons:
- * they have nonstandard I/O behavior which we don't want to change for fear
- * of breaking applications that look at the system catalogs.  There is also
- * an implementation issue for oidvector: it's part of the primary key for
- * pg_proc, and we can't use the normal btree array support routines for that
- * without circularity.
+ * 专用的数组类型。这些类型在物理布局上与常规数组完全相同
+ * （以便常规的数组下标代码能与它们一起工作）。它们作为独立类型存在
+ * 主要是出于历史原因：它们具有非标准的 I/O 行为，我们不想改变，
+ * 以免破坏那些查看系统表的应用程序。此外，oidvector 还有一个实现问题：
+ * 它是 pg_proc 的主键的一部分，而我们不能用正常的 btree 数组支持例程，
+ * 否则会产生循环依赖。
  */
 typedef struct
 {
-	int32		vl_len_;		/* these fields must match ArrayType! */
-	int			ndim;			/* always 1 for int2vector */
-	int32		dataoffset;		/* always 0 for int2vector */
+	int32		vl_len_;		/* 这些字段必须匹配 ArrayType！ */
+	int			ndim;			/* 对于 int2vector 始终为 1 */
+	int32		dataoffset;		/* 对于 int2vector 始终为 0 */
 	Oid			elemtype;
 	int			dim1;
 	int			lbound1;
@@ -703,9 +665,9 @@ typedef struct
 
 typedef struct
 {
-	int32		vl_len_;		/* these fields must match ArrayType! */
-	int			ndim;			/* always 1 for oidvector */
-	int32		dataoffset;		/* always 0 for oidvector */
+	int32		vl_len_;		/* 这些字段必须匹配 ArrayType！ */
+	int			ndim;			/* 对于 oidvector 始终为 1 */
+	int32		dataoffset;		/* 对于 oidvector 始终为 0 */
 	Oid			elemtype;
 	int			dim1;
 	int			lbound1;
@@ -713,8 +675,8 @@ typedef struct
 } oidvector;
 
 /*
- * Representation of a Name: effectively just a C string, but null-padded to
- * exactly NAMEDATALEN bytes.  The use of a struct is historical.
+ * Name 的表示：实际上只是一个 C 字符串，但用 null 填充到恰好 NAMEDATALEN 字节。
+ * 使用结构体是历史原因。
  */
 typedef struct nameData
 {
@@ -726,24 +688,24 @@ typedef NameData *Name;
 
 
 /* ----------------------------------------------------------------
- *				Section 4:	IsValid macros for system types
+ *				第 4 节: 系统类型的 IsValid 宏
  * ----------------------------------------------------------------
  */
 /*
  * BoolIsValid
- *		True iff bool is valid.
+ *		当 bool 有效时为真。
  */
 #define BoolIsValid(boolean)	((boolean) == false || (boolean) == true)
 
 /*
  * PointerIsValid
- *		True iff pointer is valid.
+ *		当指针有效时为真。
  */
 #define PointerIsValid(pointer) ((const void*)(pointer) != NULL)
 
 /*
  * PointerIsAligned
- *		True iff pointer is properly aligned to point to the given type.
+ *		当指针已针对指向给定类型做了适当对齐时为真。
  */
 #define PointerIsAligned(pointer, type) \
 		(((uintptr_t)(pointer) % (sizeof (type))) == 0)
@@ -757,26 +719,25 @@ typedef NameData *Name;
 
 
 /* ----------------------------------------------------------------
- *				Section 5:	lengthof, alignment
+ *				第 5 节: lengthof, 对齐
  * ----------------------------------------------------------------
  */
 /*
  * lengthof
- *		Number of elements in an array.
+ *		数组中元素的个数。
  */
 #define lengthof(array) (sizeof (array) / sizeof ((array)[0]))
 
 /* ----------------
- * Alignment macros: align a length or address appropriately for a given type.
- * The fooALIGN() macros round up to a multiple of the required alignment,
- * while the fooALIGN_DOWN() macros round down.  The latter are more useful
- * for problems like "how many X-sized structures will fit in a page?".
+ * 对齐宏：为给定类型适当对齐长度或地址。
+ * fooALIGN() 宏向上舍入到所需对齐的倍数，而 fooALIGN_DOWN() 宏向下舍入。
+ * 后者对于诸如"一页中能容纳多少个 X 大小的结构体？"之类的问题更有用。
  *
- * NOTE: TYPEALIGN[_DOWN] will not work if ALIGNVAL is not a power of 2.
- * That case seems extremely unlikely to be needed in practice, however.
+ * 注意：如果 ALIGNVAL 不是 2 的幂，TYPEALIGN[_DOWN] 将无法工作。
+ * 不过，这种情况在实际中几乎不可能遇到。
  *
- * NOTE: MAXIMUM_ALIGNOF, and hence MAXALIGN(), intentionally exclude any
- * larger-than-8-byte types the compiler might have.
+ * 注意：MAXIMUM_ALIGNOF，以及由此派生的 MAXALIGN()，故意排除了编译器
+ * 可能有的任何大于 8 字节的类型。
  * ----------------
  */
 
@@ -788,7 +749,7 @@ typedef NameData *Name;
 #define LONGALIGN(LEN)			TYPEALIGN(ALIGNOF_LONG, (LEN))
 #define DOUBLEALIGN(LEN)		TYPEALIGN(ALIGNOF_DOUBLE, (LEN))
 #define MAXALIGN(LEN)			TYPEALIGN(MAXIMUM_ALIGNOF, (LEN))
-/* MAXALIGN covers only built-in types, not buffers */
+/* MAXALIGN 仅涵盖内置类型，不涵盖缓冲区 */
 #define BUFFERALIGN(LEN)		TYPEALIGN(ALIGNOF_BUFFER, (LEN))
 #define CACHELINEALIGN(LEN)		TYPEALIGN(PG_CACHE_LINE_SIZE, (LEN))
 
@@ -803,34 +764,32 @@ typedef NameData *Name;
 #define BUFFERALIGN_DOWN(LEN)	TYPEALIGN_DOWN(ALIGNOF_BUFFER, (LEN))
 
 /*
- * The above macros will not work with types wider than uintptr_t, like with
- * uint64 on 32-bit platforms.  That's not problem for the usual use where a
- * pointer or a length is aligned, but for the odd case that you need to
- * align something (potentially) wider, use TYPEALIGN64.
+ * 上述宏不能用于比 uintptr_t 更宽的类型，例如 32 位平台上的 uint64。
+ * 这对通常情况下对齐指针或长度没问题，但在需要对（可能）更宽的内容做对齐时，
+ * 请使用 TYPEALIGN64。
  */
 #define TYPEALIGN64(ALIGNVAL,LEN)  \
 	(((uint64) (LEN) + ((ALIGNVAL) - 1)) & ~((uint64) ((ALIGNVAL) - 1)))
 
-/* we don't currently need wider versions of the other ALIGN macros */
+/* 我们目前不需要其他 ALIGN 宏的更宽版本 */
 #define MAXALIGN64(LEN)			TYPEALIGN64(MAXIMUM_ALIGNOF, (LEN))
 
 
 /* ----------------------------------------------------------------
- *				Section 6:	assertions
+ *				第 6 节: 断言
  * ----------------------------------------------------------------
  */
 
 /*
- * USE_ASSERT_CHECKING, if defined, turns on all the assertions.
+ * USE_ASSERT_CHECKING，如果定义，则打开所有断言。
  * - plai  9/5/90
  *
- * It should _NOT_ be defined in releases or in benchmark copies
+ * 它 _不_ 应该在发布版本或基准测试副本中定义。
  */
 
 /*
- * Assert() can be used in both frontend and backend code. In frontend code it
- * just calls the standard assert, if it's available. If use of assertions is
- * not configured, it does nothing.
+ * Assert() 可同时用于前端和后端代码。在前端代码中，如果标准 assert 可用，
+ * 则直接调用它。如果没有配置使用断言，则什么都不做。
  */
 #ifndef USE_ASSERT_CHECKING
 
@@ -847,7 +806,7 @@ typedef NameData *Name;
 
 /*
  * Assert
- *		Generates a fatal exception if the given condition is false.
+ *		如果给定条件为 false，则产生一个致命异常。
  */
 #define Assert(condition) \
 	do { \
@@ -856,8 +815,7 @@ typedef NameData *Name;
 	} while (0)
 
 /*
- * AssertMacro is the same as Assert but it's suitable for use in
- * expression-like macros, for example:
+ * AssertMacro 与 Assert 相同，但适用于类似表达式的宏，例如：
  *
  *		#define foo(x) (AssertMacro(x != 0), bar(x))
  */
@@ -868,16 +826,15 @@ typedef NameData *Name;
 #endif							/* USE_ASSERT_CHECKING && !FRONTEND */
 
 /*
- * Check that `ptr' is `bndr' aligned.
+ * 检查 `ptr' 是否为 `bndr' 对齐。
  */
 #define AssertPointerAlignment(ptr, bndr) \
 	Assert(TYPEALIGN(bndr, (uintptr_t)(ptr)) == (uintptr_t)(ptr))
 
 /*
- * ExceptionalCondition is compiled into the backend whether or not
- * USE_ASSERT_CHECKING is defined, so as to support use of extensions
- * that are built with that #define with a backend that isn't.  Hence,
- * we should declare it as long as !FRONTEND.
+ * 无论是否定义了 USE_ASSERT_CHECKING，ExceptionalCondition 都会编译进
+ * 后端，以支持用该 #define 编译的扩展与未用该 #define 编译的后端一起使用。
+ * 因此，只要 !FRONTEND，我们就应声明它。
  */
 #ifndef FRONTEND
 pg_noreturn extern void ExceptionalCondition(const char *conditionName,
@@ -885,23 +842,21 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 #endif
 
 /*
- * Macros to support compile-time assertion checks.
+ * 支持编译时断言检查的宏。
  *
- * If the "condition" (a compile-time-constant expression) evaluates to false,
- * throw a compile error using the "errmessage" (a string literal).
+ * 如果 "condition"（一个编译时常量表达式）求值为 false，则使用
+ * "errmessage"（字符串字面量）抛出一个编译错误。
  *
- * C11 has _Static_assert(), and most C99 compilers already support that.  For
- * portability, we wrap it into StaticAssertDecl().  _Static_assert() is a
- * "declaration", and so it must be placed where for example a variable
- * declaration would be valid.  As long as we compile with
- * -Wno-declaration-after-statement, that also means it cannot be placed after
- * statements in a function.  Macros StaticAssertStmt() and StaticAssertExpr()
- * make it safe to use as a statement or in an expression, respectively.
+ * C11 有 _Static_assert()，且大多数 C99 编译器已经支持它。为了可移植性，
+ * 我们将其包装为 StaticAssertDecl()。_Static_assert() 是一个"声明"，
+ * 因此必须放在例如变量声明有效的位置。只要我们以
+ * -Wno-declaration-after-statement 编译，这也意味着不能在函数中的语句之后
+ * 放置它。StaticAssertStmt() 和 StaticAssertExpr() 宏分别使其安全地用作
+ * 语句或表达式。
  *
- * For compilers without _Static_assert(), we fall back on a kluge that
- * assumes the compiler will complain about a negative width for a struct
- * bit-field.  This will not include a helpful error message, but it beats not
- * getting an error at all.
+ * 对于没有 _Static_assert() 的编译器，我们回退到一个权宜方案：假定编译器
+ * 会对结构体位域的负宽度发出抱怨。这不会包含有用的错误消息，但总比完全
+ * 得不到错误要好。
  */
 #ifndef __cplusplus
 #ifdef HAVE__STATIC_ASSERT
@@ -939,15 +894,14 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 
 
 /*
- * Compile-time checks that a variable (or expression) has the specified type.
+ * 编译时检查一个变量（或表达式）具有指定的类型。
  *
- * AssertVariableIsOfType() can be used as a statement.
- * AssertVariableIsOfTypeMacro() is intended for use in macros, eg
+ * AssertVariableIsOfType() 可作为语句使用。
+ * AssertVariableIsOfTypeMacro() 用于宏中，例如：
  *		#define foo(x) (AssertVariableIsOfTypeMacro(x, int), bar(x))
  *
- * If we don't have __builtin_types_compatible_p, we can still assert that
- * the types have the same size.  This is far from ideal (especially on 32-bit
- * platforms) but it provides at least some coverage.
+ * 如果没有 __builtin_types_compatible_p，我们仍然可以断言类型具有相同的大小。
+ * 这远非理想（尤其在 32 位平台上），但至少提供了一些覆盖。
  */
 #ifdef HAVE__BUILTIN_TYPES_COMPATIBLE_P
 #define AssertVariableIsOfType(varname, typename) \
@@ -967,39 +921,37 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 
 
 /* ----------------------------------------------------------------
- *				Section 7:	widely useful macros
+ *				第 7 节: 广泛适用的宏
  * ----------------------------------------------------------------
  */
 /*
  * Max
- *		Return the maximum of two numbers.
+ *		返回两个数中的最大值。
  */
 #define Max(x, y)		((x) > (y) ? (x) : (y))
 
 /*
  * Min
- *		Return the minimum of two numbers.
+ *		返回两个数中的最小值。
  */
 #define Min(x, y)		((x) < (y) ? (x) : (y))
 
 
-/* Get a bit mask of the bits set in non-long aligned addresses */
+/* 获取非 long 对齐地址中设置的位的掩码 */
 #define LONG_ALIGN_MASK (sizeof(long) - 1)
 
 /*
  * MemSet
- *	Exactly the same as standard library function memset(), but considerably
- *	faster for zeroing small word-aligned structures (such as parsetree nodes).
- *	This has to be a macro because the main point is to avoid function-call
- *	overhead.   However, we have also found that the loop is faster than
- *	native libc memset() on some platforms, even those with assembler
- *	memset() functions.  More research needs to be done, perhaps with
- *	MEMSET_LOOP_LIMIT tests in configure.
+ *	与标准库函数 memset() 完全相同，但对于清零小的字对齐结构体
+ *	（如解析树节点）要快得多。这必须是宏，因为主要目的是避免函数调用
+ *	开销。然而，我们还发现在某些平台上，即使那些平台有汇编版的
+ *	memset() 函数，这个循环也比原生 libc memset() 更快。
+ *	需要做更多研究，也许可以通过 configure 中的 MEMSET_LOOP_LIMIT 测试。
  */
 #define MemSet(start, val, len) \
 	do \
 	{ \
-		/* must be void* because we don't know if it is integer aligned yet */ \
+		/* 必须是 void*，因为尚不知道是否整数对齐 */ \
 		void   *_vstart = (void *) (start); \
 		int		_val = (val); \
 		Size	_len = (len); \
@@ -1009,8 +961,8 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 			_val == 0 && \
 			_len <= MEMSET_LOOP_LIMIT && \
 			/* \
-			 *	If MEMSET_LOOP_LIMIT == 0, optimizer should find \
-			 *	the whole "if" false at compile time. \
+			 *	如果 MEMSET_LOOP_LIMIT == 0，编译器应发现整个 \
+			 *	"if" 在编译时为 false。 \
 			 */ \
 			MEMSET_LOOP_LIMIT != 0) \
 		{ \
@@ -1024,10 +976,9 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 	} while (0)
 
 /*
- * MemSetAligned is the same as MemSet except it omits the test to see if
- * "start" is word-aligned.  This is okay to use if the caller knows a-priori
- * that the pointer is suitably aligned (typically, because he just got it
- * from palloc(), which always delivers a max-aligned pointer).
+ * MemSetAligned 与 MemSet 相同，只是省略了检查 "start" 是否字对齐的测试。
+ * 如果调用者先验地知道指针已适当对齐（通常是因为刚从 palloc() 获得，而
+ * palloc() 总是返回最大对齐的指针），则可以使用此宏。
  */
 #define MemSetAligned(start, val, len) \
 	do \
@@ -1051,15 +1002,14 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 
 
 /*
- * Macros for range-checking float values before converting to integer.
- * We must be careful here that the boundary values are expressed exactly
- * in the float domain.  PG_INTnn_MIN is an exact power of 2, so it will
- * be represented exactly; but PG_INTnn_MAX isn't, and might get rounded
- * off, so avoid using that.
- * The input must be rounded to an integer beforehand, typically with rint(),
- * else we might draw the wrong conclusion about close-to-the-limit values.
- * These macros will do the right thing for Inf, but not necessarily for NaN,
- * so check isnan(num) first if that's a possibility.
+ * 在将浮点值转换为整数之前进行范围检查的宏。
+ * 我们必须注意，这里的边界值要在浮点域中精确表示。PG_INTnn_MIN 是 2 的
+ * 精确幂，因此可以精确表示；但 PG_INTnn_MAX 不是，可能会被舍入，所以要
+ * 避免使用它。
+ * 输入必须事先舍入到整数（通常用 rint()），否则可能会对接近极限的值得出
+ * 错误结论。
+ * 这些宏对 Inf 能够正确处理，但对 NaN 不一定，因此如果可能存在 NaN，
+ * 请先检查 isnan(num)。
  */
 #define FLOAT4_FITS_IN_INT16(num) \
 	((num) >= (float4) PG_INT16_MIN && (num) < -((float4) PG_INT16_MIN))
@@ -1076,25 +1026,22 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
 
 
 /* ----------------------------------------------------------------
- *				Section 8:	random stuff
+ *				第 8 节: 杂项
  * ----------------------------------------------------------------
  */
 
 /*
- * Invert the sign of a qsort-style comparison result, ie, exchange negative
- * and positive integer values, being careful not to get the wrong answer
- * for INT_MIN.  The argument should be an integral variable.
+ * 反转 qsort 风格比较结果的符号，即交换负值和正值，同时注意避免对
+ * INT_MIN 得出错误答案。参数应是一个整型变量。
  */
 #define INVERT_COMPARE_RESULT(var) \
 	((var) = ((var) < 0) ? 1 : -(var))
 
 /*
- * Use this, not "char buf[BLCKSZ]", to declare a field or local variable
- * holding a page buffer, if that page might be accessed as a page.  Otherwise
- * the variable might be under-aligned, causing problems on alignment-picky
- * hardware.  We include both "double" and "int64" in the union to ensure that
- * the compiler knows the value must be MAXALIGN'ed (cf. configure's
- * computation of MAXIMUM_ALIGNOF).
+ * 使用此宏（而非 "char buf[BLCKSZ]"）来声明持有页缓冲区的字段或局部变量，
+ * 前提是该页可能作为页来访问。否则变量可能对齐不足，在对齐敏感的硬件上
+ * 造成问题。我们在 union 中同时包含了 "double" 和 "int64"，以确保编译器知道
+ * 该值必须 MAXALIGN 对齐（参见 configure 中 MAXIMUM_ALIGNOF 的计算）。
  */
 typedef union PGAlignedBlock
 {
@@ -1104,12 +1051,10 @@ typedef union PGAlignedBlock
 } PGAlignedBlock;
 
 /*
- * Use this to declare a field or local variable holding a page buffer, if that
- * page might be accessed as a page or passed to an SMgr I/O function.  If
- * allocating using the MemoryContext API, the aligned allocation functions
- * should be used with PG_IO_ALIGN_SIZE.  This alignment may be more efficient
- * for I/O in general, but may be strictly required on some platforms when
- * using direct I/O.
+ * 使用此宏声明持有页缓冲区的字段或局部变量，前提是该页可能作为页来访问，
+ * 或者要传递给 SMgr I/O 函数。如果使用 MemoryContext API 分配，应当使用
+ * 对齐分配函数，并以 PG_IO_ALIGN_SIZE 为大小。这种对齐在一般情况下可能使
+ * I/O 更高效，但在某些平台上使用 direct I/O 时可能是强制要求的。
  */
 typedef union PGIOAlignedBlock
 {
@@ -1121,7 +1066,7 @@ typedef union PGIOAlignedBlock
 	int64		force_align_i64;
 } PGIOAlignedBlock;
 
-/* Same, but for an XLOG_BLCKSZ-sized buffer */
+/* 同理，用于 XLOG_BLCKSZ 大小的缓冲区 */
 typedef union PGAlignedXLogBlock
 {
 #ifdef pg_attribute_aligned
@@ -1132,15 +1077,14 @@ typedef union PGAlignedXLogBlock
 	int64		force_align_i64;
 } PGAlignedXLogBlock;
 
-/* msb for char */
+/* char 的最高位 */
 #define HIGHBIT					(0x80)
 #define IS_HIGHBIT_SET(ch)		((unsigned char)(ch) & HIGHBIT)
 
 /*
- * Support macros for escaping strings.  escape_backslash should be true
- * if generating a non-standard-conforming string.  Prefixing a string
- * with ESCAPE_STRING_SYNTAX guarantees it is non-standard-conforming.
- * Beware of multiple evaluation of the "ch" argument!
+ * 字符串转义的辅助宏。escape_backslash 在生成非标准合规字符串时应为 true。
+ * 在字符串前加上 ESCAPE_STRING_SYNTAX 可以保证它是非标准合规的。
+ * 注意 "ch" 参数会被多次求值！
  */
 #define SQL_STR_DOUBLE(ch, escape_backslash)	\
 	((ch) == '\'' || ((ch) == '\\' && (escape_backslash)))
@@ -1153,11 +1097,11 @@ typedef union PGAlignedXLogBlock
 #define STATUS_EOF				(-2)
 
 /*
- * gettext support
+ * gettext 支持
  */
 
 #ifndef ENABLE_NLS
-/* stuff we'd otherwise get from <libintl.h> */
+/* 我们本来会从 <libintl.h> 获取的内容 */
 #define gettext(x) (x)
 #define dgettext(d,x) (x)
 #define ngettext(s,p,n) ((n) == 1 ? (s) : (p))
@@ -1167,28 +1111,22 @@ typedef union PGAlignedXLogBlock
 #define _(x) gettext(x)
 
 /*
- *	Use this to mark string constants as needing translation at some later
- *	time, rather than immediately.  This is useful for cases where you need
- *	access to the original string and translated string, and for cases where
- *	immediate translation is not possible, like when initializing global
- *	variables.
+ *	使用此宏来标记字符串常量需要在将来的某个时刻（而非立即）进行翻译。
+ *	适用于需要同时访问原始字符串和翻译后字符串的场景，以及那些无法立即
+ *	翻译的场景，例如初始化全局变量时。
  *
  *	https://www.gnu.org/software/gettext/manual/html_node/Special-cases.html
  */
 #define gettext_noop(x) (x)
 
 /*
- * To better support parallel installations of major PostgreSQL
- * versions as well as parallel installations of major library soname
- * versions, we mangle the gettext domain name by appending those
- * version numbers.  The coding rule ought to be that wherever the
- * domain name is mentioned as a literal, it must be wrapped into
- * PG_TEXTDOMAIN().  The macros below do not work on non-literals; but
- * that is somewhat intentional because it avoids having to worry
- * about multiple states of premangling and postmangling as the values
- * are being passed around.
+ * 为了更好地支持 PostgreSQL 主版本的并行安装，以及主程序库 soname 版本的
+ * 并行安装，我们通过在 gettext 域名后添加这些版本号来修改域名。
+ * 编码规则是：无论何处，只要域名作为字面量提及，就必须包裹在
+ * PG_TEXTDOMAIN() 中。下面的宏不适用于非字面量；但这在某种程度上是有意为之，
+ * 因为这样可以避免在值传递过程中处理"前缀"和"后缀"的多种状态。
  *
- * Make sure this matches the installation rules in nls-global.mk.
+ * 请确保这与 nls-global.mk 中的安装规则匹配。
  */
 #ifdef SO_MAJOR_VERSION
 #define PG_TEXTDOMAIN(domain) (domain CppAsString2(SO_MAJOR_VERSION) "-" PG_MAJORVERSION)
@@ -1197,19 +1135,16 @@ typedef union PGAlignedXLogBlock
 #endif
 
 /*
- * Macro that allows to cast constness and volatile away from an expression, but doesn't
- * allow changing the underlying type.  Enforcement of the latter
- * currently only works for gcc like compilers.
+ * 允许从表达式中去除 const 和 volatile 修饰，但不允许改变底层类型的宏。
+ * 后者的强制执行目前只对 gcc 类编译器有效。
  *
- * Please note IT IS NOT SAFE to cast constness away if the result will ever
- * be modified (it would be undefined behaviour). Doing so anyway can cause
- * compiler misoptimizations or runtime crashes (modifying readonly memory).
- * It is only safe to use when the result will not be modified, but API
- * design or language restrictions prevent you from declaring that
- * (e.g. because a function returns both const and non-const variables).
+ * 请注意：如果结果将会被修改，去除 const 修饰是*不安全的*（这将是未定义
+ * 行为）。这样做仍然可能导致编译器错误优化或运行时崩溃（修改只读内存）。
+ * 仅当结果不会被修改，但 API 设计或语言限制阻止你声明这一点时
+ * （例如，因为某个函数同时返回 const 和非 const 变量），才安全使用。
  *
- * Note that this only works in function scope, not for global variables (it'd
- * be nice, but not trivial, to improve that).
+ * 注意，这仅在函数作用域内有效，对全局变量无效（改进这一点虽然不平凡，
+ * 但会很不错）。
  */
 #if defined(__cplusplus)
 #define unconstify(underlying_type, expr) const_cast<underlying_type>(expr)
@@ -1231,20 +1166,18 @@ typedef union PGAlignedXLogBlock
 #endif
 
 /* ----------------------------------------------------------------
- *				Section 9: system-specific hacks
+ *				第 9 节: 系统相关 hack
  *
- *		This should be limited to things that absolutely have to be
- *		included in every source file.  The port-specific header file
- *		is usually a better place for this sort of thing.
+ *		此节应仅限于绝对必须包含在每个源文件中的内容。
+ *		特定平台的端口头文件通常是放置此类内容的更好位置。
  * ----------------------------------------------------------------
  */
 
 /*
- *	NOTE:  this is also used for opening text files.
- *	WIN32 treats Control-Z as EOF in files opened in text mode.
- *	Therefore, we open files in binary mode on Win32 so we can read
- *	literal control-Z.  The other affect is that we see CRLF, but
- *	that is OK because we can already handle those cleanly.
+ *	注意：这也用于打开文本文件。
+ *	WIN32 将文本模式打开的文件中的 Control-Z 视为 EOF。
+ *	因此，我们在 Win32 上以二进制模式打开文件，以便读取字面量 control-Z。
+ *	另一个影响是我们会看到 CRLF，但这没有问题，因为我们已经能干净地处理它们。
  */
 #if defined(WIN32) || defined(__CYGWIN__)
 #define PG_BINARY	O_BINARY
@@ -1259,8 +1192,7 @@ typedef union PGAlignedXLogBlock
 #endif
 
 /*
- * Provide prototypes for routines not present in a particular machine's
- * standard C library.
+ * 为特定机器的标准 C 库中不存在的例程提供原型。
  */
 
 #if !HAVE_DECL_FDATASYNC
@@ -1268,9 +1200,9 @@ extern int	fdatasync(int fildes);
 #endif
 
 /*
- * Thin wrappers that convert strings to exactly 64-bit integers, matching our
- * definition of int64.  (For the naming, compare that POSIX has
- * strtoimax()/strtoumax() which return intmax_t/uintmax_t.)
+ * 将字符串精确转换为 64 位整数的薄包装，匹配我们对 int64 的定义。
+ * （关于命名，可比较 POSIX 的 strtoimax()/strtoumax()，它们返回
+ * intmax_t/uintmax_t。）
  */
 #if SIZEOF_LONG == 8
 #define strtoi64(str, endptr, base) ((int64) strtol(str, endptr, base))
@@ -1283,7 +1215,7 @@ extern int	fdatasync(int fildes);
 #endif
 
 /*
- * Similarly, wrappers around labs()/llabs() matching our int64.
+ * 类似地，匹配 int64 的 labs()/llabs() 包装。
  */
 #if SIZEOF_LONG == 8
 #define i64abs(i) ((int64) labs(i))
@@ -1294,21 +1226,18 @@ extern int	fdatasync(int fildes);
 #endif
 
 /*
- * Use "extern PGDLLIMPORT ..." to declare variables that are defined
- * in the core backend and need to be accessible by loadable modules.
- * No special marking is required on most ports.
+ * 使用 "extern PGDLLIMPORT ..." 来声明在核心后端中定义、需要被可加载模块
+ * 访问的变量。在大多数平台上不需要特殊标记。
  */
 #ifndef PGDLLIMPORT
 #define PGDLLIMPORT
 #endif
 
 /*
- * Use "extern PGDLLEXPORT ..." to declare functions that are defined in
- * loadable modules and need to be callable by the core backend or other
- * loadable modules.
- * If the compiler knows __attribute__((visibility("*"))), we use that,
- * unless we already have a platform-specific definition.  Otherwise,
- * no special marking is required.
+ * 使用 "extern PGDLLEXPORT ..." 来声明在可加载模块中定义、需要被核心后端
+ * 或其他可加载模块调用的函数。
+ * 如果编译器知道 __attribute__((visibility("*")))，我们就使用它，
+ * 除非已有平台相关的定义。否则，不需要特殊标记。
  */
 #ifndef PGDLLEXPORT
 #ifdef HAVE_VISIBILITY_ATTRIBUTE
@@ -1319,12 +1248,10 @@ extern int	fdatasync(int fildes);
 #endif
 
 /*
- * The following is used as the arg list for signal handlers.  Any ports
- * that take something other than an int argument should override this in
- * their pg_config_os.h file.  Note that variable names are required
- * because it is used in both the prototypes as well as the definitions.
- * Note also the long name.  We expect that this won't collide with
- * other names causing compiler warnings.
+ * 以下内容用作信号处理函数的参数列表。任何接收非 int 参数的端口应在其
+ * pg_config_os.h 文件中覆盖此定义。注意需要变量名，因为它同时用于原型和
+ * 定义中。还要注意这个名称很长。我们期望这不会与其他名称冲突而导致
+ * 编译器警告。
  */
 
 #ifndef SIGNAL_ARGS
@@ -1332,10 +1259,9 @@ extern int	fdatasync(int fildes);
 #endif
 
 /*
- * When there is no sigsetjmp, its functionality is provided by plain
- * setjmp.  We now support the case only on Windows.  However, it seems
- * that MinGW-64 has some longstanding issues in its setjmp support,
- * so on that toolchain we cheat and use gcc's builtins.
+ * 当没有 sigsetjmp 时，其功能由普通的 setjmp 提供。
+ * 我们现在仅在 Windows 上支持这种情况。然而，MinGW-64 的 setjmp 支持
+ * 似乎存在一些长期存在的问题，因此在该工具链上，我们取巧使用 gcc 的内置函数。
  */
 #ifdef WIN32
 #ifdef __MINGW64__
@@ -1349,7 +1275,7 @@ typedef intptr_t sigjmp_buf[5];
 #endif							/* __MINGW64__ */
 #endif							/* WIN32 */
 
-/* /port compatibility functions */
+/* /port 兼容函数 */
 #include "port.h"
 
 /* IWYU pragma: end_exports */

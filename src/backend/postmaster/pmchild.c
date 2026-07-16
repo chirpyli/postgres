@@ -1,23 +1,20 @@
 /*-------------------------------------------------------------------------
  *
  * pmchild.c
- *	  Functions for keeping track of postmaster child processes.
+ *	  用于跟踪 postmaster 子进程的函数。
  *
- * Postmaster keeps track of all child processes so that when a process exits,
- * it knows what kind of a process it was and can clean up accordingly.  Every
- * child process is allocated a PMChild struct from a fixed pool of structs.
- * The size of the pool is determined by various settings that configure how
- * many worker processes and backend connections are allowed, i.e.
- * autovacuum_worker_slots, max_worker_processes, max_wal_senders, and
- * max_connections.
+ * Postmaster 跟踪所有子进程，以便当某个进程退出时，它能知道该进程
+ * 是什么类型，并据此进行清理。每个子进程都会从一个固定大小的
+ * 结构体池（pool）中分配一个 PMChild 结构体。池的大小由配置允许
+ * 多少个工作进程和后端连接的各种参数决定，即 autovacuum_worker_slots、
+ * max_worker_processes、max_wal_senders 以及 max_connections。
  *
- * Dead-end backends are handled slightly differently.  There is no limit
- * on the number of dead-end backends, and they do not need unique IDs, so
- * their PMChild structs are allocated dynamically, not from a pool.
+ * 死端（dead-end）后端的处理方式略有不同。死端后端的数量没有限制，
+ * 并且它们不需要唯一的 ID，因此它们的 PMChild 结构体是动态分配的，
+ * 而不是从池中获取。
  *
- * The structures and functions in this file are private to the postmaster
- * process.  But note that there is an array in shared memory, managed by
- * pmsignal.c, that mirrors this.
+ * 本文件中的结构体和函数仅供 postmaster 进程私有使用。但需要注意，
+ * 在共享内存中有一个由 pmsignal.c 管理的数组，与之保持对应（mirror）。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -39,32 +36,31 @@
 #include "storage/proc.h"
 
 /*
- * Freelists for different kinds of child processes.  We maintain separate
- * pools for each, so that for example launching a lot of regular backends
- * cannot prevent autovacuum or an aux process from launching.
+ * 针对不同类型子进程的空闲链表（freelist）。我们为每种类型维护独立的
+ * 池，这样例如大量启动普通后端进程时，也不会妨碍 autovacuum 或
+ * 辅助进程的启动。
  */
 typedef struct PMChildPool
 {
-	int			size;			/* number of PMChild slots reserved for this
-								 * kind of processes */
-	int			first_slotno;	/* first slot belonging to this pool */
-	dlist_head	freelist;		/* currently unused PMChild entries */
+	int			size;			/* 为此类进程预留的 PMChild 槽位数量 */
+	int			first_slotno;	/* 属于本池的第一个槽位编号 */
+	dlist_head	freelist;		/* 当前未使用的 PMChild 条目 */
 } PMChildPool;
 
 static PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
 NON_EXEC_STATIC int num_pmchild_slots = 0;
 
 /*
- * List of active child processes.  This includes dead-end children.
+ * 活跃子进程列表。其中包含死端子进程。
  */
 dlist_head	ActiveChildList;
 
 /*
  * MaxLivePostmasterChildren
  *
- * This reports the number of postmaster child processes that can be active.
- * It includes all children except for dead-end children.  This allows the
- * array in shared memory (PMChildFlags) to have a fixed maximum size.
+ * 返回当前可以处于活跃状态的 postmaster 子进程数量。
+ * 它包含除死端子进程以外的所有子进程。这样可以让共享内存中的
+ * 数组（PMChildFlags）拥有固定的最大大小。
  */
 int
 MaxLivePostmasterChildren(void)
@@ -75,12 +71,11 @@ MaxLivePostmasterChildren(void)
 }
 
 /*
- * Initialize at postmaster startup
+ * 在 postmaster 启动时进行初始化
  *
- * Note: This is not called on crash restart.  We rely on PMChild entries to
- * remain valid through the restart process.  This is important because the
- * syslogger survives through the crash restart process, so we must not
- * invalidate its PMChild slot.
+ * 注意：在崩溃重启时不会调用本函数。我们依赖 PMChild 条目在重启
+ * 过程中保持有效。这一点很重要，因为 syslogger 会存活于崩溃重启
+ * 过程之中，因此我们不能使其 PMChild 槽位失效。
  */
 void
 InitPostmasterChildSlots(void)
@@ -89,13 +84,12 @@ InitPostmasterChildSlots(void)
 	PMChild    *slots;
 
 	/*
-	 * We allow more connections here than we can have backends because some
-	 * might still be authenticating; they might fail auth, or some existing
-	 * backend might exit before the auth cycle is completed.  The exact
-	 * MaxConnections limit is enforced when a new backend tries to join the
-	 * PGPROC array.
+	 * 这里允许的（潜在）连接数多于实际可拥有的后端数，因为有些连接
+	 * 可能仍在认证中；它们可能认证失败，或者在认证周期完成前就有
+	 * 既有后端退出。真正的 MaxConnections 限制会在新后端尝试加入
+	 * PGPROC 数组时强制执行。
 	 *
-	 * WAL senders start out as regular backends, so they share the same pool.
+	 * WAL 发送者最初以普通后端的形式启动，因此它们共享同一个池。
 	 */
 	pmchild_pools[B_BACKEND].size = 2 * (MaxConnections + max_wal_senders);
 
@@ -104,8 +98,7 @@ InitPostmasterChildSlots(void)
 	pmchild_pools[B_IO_WORKER].size = MAX_IO_WORKERS;
 
 	/*
-	 * There can be only one of each of these running at a time.  They each
-	 * get their own pool of just one entry.
+	 * 这些进程每种同时只能运行一个。它们各自拥有仅包含一个条目的池。
 	 */
 	pmchild_pools[B_AUTOVAC_LAUNCHER].size = 1;
 	pmchild_pools[B_SLOTSYNC_WORKER].size = 1;
@@ -118,14 +111,14 @@ InitPostmasterChildSlots(void)
 	pmchild_pools[B_WAL_WRITER].size = 1;
 	pmchild_pools[B_LOGGER].size = 1;
 
-	/* The rest of the pmchild_pools are left at zero size */
+	/* 其余的 pmchild_pools 保持为零大小（未分配） */
 
-	/* Count the total number of slots */
+	/* 统计槽位的总数 */
 	num_pmchild_slots = 0;
 	for (int i = 0; i < BACKEND_NUM_TYPES; i++)
 		num_pmchild_slots += pmchild_pools[i].size;
 
-	/* Initialize them */
+	/* 初始化这些槽位 */
 	slots = palloc(num_pmchild_slots * sizeof(PMChild));
 	slotno = 0;
 	for (int btype = 0; btype < BACKEND_NUM_TYPES; btype++)
@@ -146,17 +139,16 @@ InitPostmasterChildSlots(void)
 	}
 	Assert(slotno == num_pmchild_slots);
 
-	/* Initialize other structures */
+	/* 初始化其他结构 */
 	dlist_init(&ActiveChildList);
 }
 
 /*
- * Allocate a PMChild entry for a postmaster child process of given type.
+ * 为指定类型的 postmaster 子进程分配一个 PMChild 条目。
  *
- * The entry is taken from the right pool for the type.
+ * 该条目从对应类型的正确池中获取。
  *
- * pmchild->child_slot in the returned struct is unique among all active child
- * processes.
+ * 返回结构体中的 pmchild->child_slot 在所有活跃子进程中是唯一的。
  */
 PMChild *
 AssignPostmasterChildSlot(BackendType btype)
@@ -178,8 +170,8 @@ AssignPostmasterChildSlot(BackendType btype)
 	pmchild->bgworker_notify = true;
 
 	/*
-	 * pmchild->child_slot for each entry was initialized when the array of
-	 * slots was allocated.  Sanity check it.
+	 * 每个条目的 pmchild->child_slot 在槽位数组分配时就已经初始化。
+	 * 这里做一个健全性检查。
 	 */
 	if (!(pmchild->child_slot >= pmchild_pools[btype].first_slotno &&
 		  pmchild->child_slot < pmchild_pools[btype].first_slotno + pmchild_pools[btype].size))
@@ -190,7 +182,7 @@ AssignPostmasterChildSlot(BackendType btype)
 
 	dlist_push_head(&ActiveChildList, &pmchild->elem);
 
-	/* Update the status in the shared memory array */
+	/* 更新共享内存数组中的状态 */
 	MarkPostmasterChildSlotAssigned(pmchild->child_slot);
 
 	elog(DEBUG2, "assigned pm child slot %d for %s",
@@ -200,9 +192,8 @@ AssignPostmasterChildSlot(BackendType btype)
 }
 
 /*
- * Allocate a PMChild struct for a dead-end backend.  Dead-end children are
- * not assigned a child_slot number.  The struct is palloc'd; returns NULL if
- * out of memory.
+ * 为死端后端分配一个 PMChild 结构体。死端子进程不会被分配
+ * child_slot 编号。该结构体通过 palloc 分配；若内存不足则返回 NULL。
  */
 PMChild *
 AllocDeadEndChild(void)
@@ -227,10 +218,10 @@ AllocDeadEndChild(void)
 }
 
 /*
- * Release a PMChild slot, after the child process has exited.
+ * 在子进程退出后，释放其 PMChild 槽位。
  *
- * Returns true if the child detached cleanly from shared memory, false
- * otherwise (see MarkPostmasterChildSlotUnassigned).
+ * 如果子进程已干净地从共享内存中分离，则返回 true，否则返回 false
+ * （参见 MarkPostmasterChildSlotUnassigned）。
  */
 bool
 ReleasePostmasterChildSlot(PMChild *pmchild)
@@ -248,13 +239,13 @@ ReleasePostmasterChildSlot(PMChild *pmchild)
 
 		elog(DEBUG2, "releasing pm child slot %d", pmchild->child_slot);
 
-		/* WAL senders start out as regular backends, and share the pool */
+		/* WAL 发送者最初以普通后端的形式启动，并共享同一池 */
 		if (pmchild->bkend_type == B_WAL_SENDER)
 			pool = &pmchild_pools[B_BACKEND];
 		else
 			pool = &pmchild_pools[pmchild->bkend_type];
 
-		/* sanity check that we return the entry to the right pool */
+		/* 健全性检查：确保将条目归还到正确的池 */
 		if (!(pmchild->child_slot >= pool->first_slotno &&
 			  pmchild->child_slot < pool->first_slotno + pool->size))
 		{
@@ -268,7 +259,7 @@ ReleasePostmasterChildSlot(PMChild *pmchild)
 }
 
 /*
- * Find the PMChild entry of a running child process by PID.
+ * 通过 PID 查找正在运行的子进程的 PMChild 条目。
  */
 PMChild *
 FindPostmasterChildByPid(int pid)

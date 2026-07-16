@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
-# Check that the keyword lists in gram.y and kwlist.h are sane.
-# Usage: check_keywords.pl gram.y kwlist.h
+# 检查 gram.y 和 kwlist.h 中的关键字列表是否合理。
+# 用法：check_keywords.pl gram.y kwlist.h
 
 # src/backend/parser/check_keywords.pl
 # Copyright (c) 2009-2025, PostgreSQL Global Development Group
@@ -21,8 +21,8 @@ sub error
 	return;
 }
 
-# Check alphabetical order of a set of keyword symbols
-# (note these are NOT the actual keyword strings)
+# 检查一组关键字符号是否按字母顺序排列
+# （注意：这些并不是实际的关键字字符串）
 sub check_alphabetical_order
 {
 	my ($listname, $list) = @_;
@@ -30,7 +30,7 @@ sub check_alphabetical_order
 
 	foreach my $kword (@$list)
 	{
-		# Some symbols have a _P suffix. Remove it for the comparison.
+		# 部分符号带有 _P 后缀，比较时将其去掉。
 		my $bare_kword = $kword;
 		$bare_kword =~ s/_P$//;
 		if ($bare_kword le $prevkword)
@@ -43,8 +43,8 @@ sub check_alphabetical_order
 	return;
 }
 
-$, = ' ';     # set output field separator
-$\ = "\n";    # set output record separator
+$, = ' ';     # 设置输出字段分隔符
+$\ = "\n";    # 设置输出记录分隔符
 
 my %keyword_categories;
 $keyword_categories{'unreserved_keyword'} = 'UNRESERVED_KEYWORD';
@@ -67,18 +67,18 @@ line: while (my $S = <$gram>)
 
 	my $s;
 
-	# Make sure any braces are split
+	# 确保花括号被分割开
 	$s = '{', $S =~ s/$s/ { /g;
 	$s = '}', $S =~ s/$s/ } /g;
 
-	# Any comments are split
+	# 将任何注释分割开
 	$s = '[/][*]', $S =~ s#$s# /* #g;
 	$s = '[*][/]', $S =~ s#$s# */ #g;
 
 	if (!($kcat) && !($in_bare_labels))
 	{
 
-		# Is this the beginning of a keyword list?
+		# 这是否是一个关键字列表的开头？
 		foreach my $k (keys %keyword_categories)
 		{
 			if ($S =~ m/^($k):/)
@@ -88,16 +88,16 @@ line: while (my $S = <$gram>)
 			}
 		}
 
-		# Is this the beginning of the bare_label_keyword list?
+		# 这是否是 bare_label_keyword 列表的开头？
 		$in_bare_labels = 1 if ($S =~ m/^bare_label_keyword:/);
 
 		next line;
 	}
 
-	# Now split the line into individual fields
+	# 现在将该行拆分为单独的字段
 	my $n = (@arr = split(' ', $S));
 
-	# Ok, we're in a keyword list. Go through each field in turn
+	# 好，我们已经处于一个关键字列表中，逐个字段处理
 	for (my $fieldIndexer = 0; $fieldIndexer < $n; $fieldIndexer++)
 	{
 		if ($arr[$fieldIndexer] eq '*/' && $comment)
@@ -112,7 +112,7 @@ line: while (my $S = <$gram>)
 		elsif ($arr[$fieldIndexer] eq '/*')
 		{
 
-			# start of a multiline comment
+			# 多行注释的开始
 			$comment = 1;
 			next;
 		}
@@ -124,7 +124,7 @@ line: while (my $S = <$gram>)
 		if ($arr[$fieldIndexer] eq ';')
 		{
 
-			# end of keyword list
+			# 关键字列表结束
 			undef $kcat;
 			undef $in_bare_labels;
 			next;
@@ -135,7 +135,7 @@ line: while (my $S = <$gram>)
 			next;
 		}
 
-		# Put this keyword into the right list
+		# 将该关键字放入正确的列表中
 		if ($in_bare_labels)
 		{
 			push @bare_label_keywords, $arr[$fieldIndexer];
@@ -148,14 +148,13 @@ line: while (my $S = <$gram>)
 }
 close $gram;
 
-# Check that each keyword list is in alphabetical order (just for neatnik-ism)
+# 检查每个关键字列表是否按字母顺序排列（仅出于整洁性考虑）
 check_alphabetical_order($_, $keywords{$_}) for (keys %keyword_categories);
 check_alphabetical_order('bare_label_keyword', \@bare_label_keywords);
 
-# Transform the keyword lists into hashes.
-# kwhashes is a hash of hashes, keyed by keyword category id,
-# e.g. UNRESERVED_KEYWORD.
-# Each inner hash is keyed by keyword id, e.g. ABORT_P, with a dummy value.
+# 将关键字列表转换为哈希表。
+# kwhashes 是一个哈希的哈希，以关键字类别 id（例如 UNRESERVED_KEYWORD）作为键。
+# 每个内层哈希以关键字 id（例如 ABORT_P）作为键，取值为占位值。
 my %kwhashes;
 while (my ($kcat, $kcat_id) = each(%keyword_categories))
 {
@@ -168,7 +167,7 @@ while (my ($kcat, $kcat_id) = each(%keyword_categories))
 }
 my %bare_label_keywords = map { $_ => 1 } @bare_label_keywords;
 
-# Now read in kwlist.h
+# 现在读入 kwlist.h
 
 open(my $kwlist, '<', $kwlist_filename)
   || die("Could not open : $kwlist_filename");
@@ -187,7 +186,7 @@ kwlist_line: while (<$kwlist>)
 		my ($kwcat_id) = $3;
 		my ($collabel) = $4;
 
-		# Check that the list is in alphabetical order (critical!)
+		# 检查列表是否按字母顺序排列（关键！）
 		if ($kwstring le $prevkwstring)
 		{
 			error
@@ -195,21 +194,21 @@ kwlist_line: while (<$kwlist>)
 		}
 		$prevkwstring = $kwstring;
 
-		# Check that the keyword string is valid: all lower-case ASCII chars
+		# 检查关键字字符串是否合法：必须全部为小写 ASCII 字符
 		if ($kwstring !~ /^[a-z_]+$/)
 		{
 			error
 			  "'$kwstring' is not a valid keyword string, must be all lower-case ASCII chars";
 		}
 
-		# Check that the keyword name is valid: all upper-case ASCII chars
+		# 检查关键字名称是否合法：必须全部为大写 ASCII 字符
 		if ($kwname !~ /^[A-Z_]+$/)
 		{
 			error
 			  "'$kwname' is not a valid keyword name, must be all upper-case ASCII chars";
 		}
 
-		# Check that the keyword string matches keyword name
+		# 检查关键字字符串是否与关键字名称匹配
 		$bare_kwname = $kwname;
 		$bare_kwname =~ s/_P$//;
 		if ($bare_kwname ne uc($kwstring))
@@ -218,7 +217,7 @@ kwlist_line: while (<$kwlist>)
 			  "keyword name '$kwname' doesn't match keyword string '$kwstring'";
 		}
 
-		# Check that the keyword is present in the right category list
+		# 检查该关键字是否存在于正确的类别列表中
 		%kwhash = %{ $kwhashes{$kwcat_id} };
 
 		if (!(%kwhash))
@@ -234,14 +233,13 @@ kwlist_line: while (<$kwlist>)
 			else
 			{
 
-				# Remove it from the hash, so that we can
-				# complain at the end if there's keywords left
-				# that were not found in kwlist.h
+				# 将其从哈希中移除，以便最后检查是否还有
+				# 未被 kwlist.h 匹配到的关键字残留
 				delete $kwhashes{$kwcat_id}->{$kwname};
 			}
 		}
 
-		# Check that the keyword's collabel property matches gram.y
+		# 检查关键字的 collabel 属性是否与 gram.y 一致
 		if ($collabel eq 'BARE_LABEL')
 		{
 			unless ($bare_label_keywords{$kwname})
@@ -267,7 +265,7 @@ kwlist_line: while (<$kwlist>)
 }
 close $kwlist;
 
-# Check that we've paired up all keywords from gram.y with lines in kwlist.h
+# 检查是否已将 gram.y 中的所有关键字与 kwlist.h 中的行一一配对
 while (my ($kwcat, $kwcat_id) = each(%keyword_categories))
 {
 	%kwhash = %{ $kwhashes{$kwcat_id} };
