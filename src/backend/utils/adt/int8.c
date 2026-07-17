@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * int8.c
- *	  Internal 64-bit integer operations
+ *	  内部 64 位整数运算
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -36,12 +36,12 @@ typedef struct
 
 /***********************************************************************
  **
- **		Routines for 64-bit integers.
+ **		64 位整数相关例程。
  **
  ***********************************************************************/
 
 /*----------------------------------------------------------
- * Formatting and conversion routines.
+ * 格式化与转换例程。
  *---------------------------------------------------------*/
 
 /* int8in()
@@ -68,8 +68,8 @@ int8out(PG_FUNCTION_ARGS)
 	len = pg_lltoa(val, buf) + 1;
 
 	/*
-	 * Since the length is already known, we do a manual palloc() and memcpy()
-	 * to avoid the strlen() call that would otherwise be done in pstrdup().
+	 * 由于长度已经已知，我们手动调用 palloc() 和 memcpy()，
+	 * 以避免 pstrdup() 中本会被执行的 strlen() 调用。
 	 */
 	result = palloc(len);
 	memcpy(result, buf, len);
@@ -77,7 +77,7 @@ int8out(PG_FUNCTION_ARGS)
 }
 
 /*
- *		int8recv			- converts external binary format to int8
+ *		int8recv			- 将外部二进制格式转换为 int8
  */
 Datum
 int8recv(PG_FUNCTION_ARGS)
@@ -88,7 +88,7 @@ int8recv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		int8send			- converts int8 to binary format
+ *		int8send			- 将 int8 转换为二进制格式
  */
 Datum
 int8send(PG_FUNCTION_ARGS)
@@ -103,11 +103,11 @@ int8send(PG_FUNCTION_ARGS)
 
 
 /*----------------------------------------------------------
- *	Relational operators for int8s, including cross-data-type comparisons.
+ *	int8 的关系运算符，包括跨数据类型的比较。
  *---------------------------------------------------------*/
 
 /* int8relop()
- * Is val1 relop val2?
+ * 判断 val1 relop val2 是否为真。
  */
 Datum
 int8eq(PG_FUNCTION_ARGS)
@@ -164,7 +164,7 @@ int8ge(PG_FUNCTION_ARGS)
 }
 
 /* int84relop()
- * Is 64-bit val1 relop 32-bit val2?
+ * 判断 64 位的 val1 relop 32 位的 val2 是否为真。
  */
 Datum
 int84eq(PG_FUNCTION_ARGS)
@@ -221,7 +221,7 @@ int84ge(PG_FUNCTION_ARGS)
 }
 
 /* int48relop()
- * Is 32-bit val1 relop 64-bit val2?
+ * 判断 32 位的 val1 relop 64 位的 val2 是否为真。
  */
 Datum
 int48eq(PG_FUNCTION_ARGS)
@@ -278,7 +278,7 @@ int48ge(PG_FUNCTION_ARGS)
 }
 
 /* int82relop()
- * Is 64-bit val1 relop 16-bit val2?
+ * 判断 64 位的 val1 relop 16 位的 val2 是否为真。
  */
 Datum
 int82eq(PG_FUNCTION_ARGS)
@@ -335,7 +335,7 @@ int82ge(PG_FUNCTION_ARGS)
 }
 
 /* int28relop()
- * Is 16-bit val1 relop 64-bit val2?
+ * 判断 16 位的 val1 relop 64 位的 val2 是否为真。
  */
 Datum
 int28eq(PG_FUNCTION_ARGS)
@@ -392,10 +392,10 @@ int28ge(PG_FUNCTION_ARGS)
 }
 
 /*
- * in_range support function for int8.
+ * int8 的 in_range 支持函数。
  *
- * Note: we needn't supply int8_int4 or int8_int2 variants, as implicit
- * coercion of the offset value takes care of those scenarios just as well.
+ * 注意：我们无需提供 int8_int4 或 int8_int2 的变体，因为偏移量值的
+ * 隐式类型转换同样能妥善处理这些场景。
  */
 Datum
 in_range_int8_int8(PG_FUNCTION_ARGS)
@@ -413,14 +413,13 @@ in_range_int8_int8(PG_FUNCTION_ARGS)
 				 errmsg("invalid preceding or following size in window function")));
 
 	if (sub)
-		offset = -offset;		/* cannot overflow */
+		offset = -offset;		/* 不会溢出 */
 
 	if (unlikely(pg_add_s64_overflow(base, offset, &sum)))
 	{
 		/*
-		 * If sub is false, the true sum is surely more than val, so correct
-		 * answer is the same as "less".  If sub is true, the true sum is
-		 * surely less than val, so the answer is "!less".
+		 * 如果 sub 为假，真实的和必然大于 val，因此正确答案与"less"相同。
+		 * 如果 sub 为真，真实的和必然小于 val，因此答案为"!less"。
 		 */
 		PG_RETURN_BOOL(sub ? !less : less);
 	}
@@ -433,7 +432,7 @@ in_range_int8_int8(PG_FUNCTION_ARGS)
 
 
 /*----------------------------------------------------------
- *	Arithmetic operators on 64-bit integers.
+ *	64 位整数上的算术运算符。
  *---------------------------------------------------------*/
 
 Datum
@@ -512,15 +511,14 @@ int8div(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
-		/* ensure compiler realizes we mustn't reach the division (gcc bug) */
+		/* 确保编译器意识到我们不能到达除法处（gcc 的一个 bug） */
 		PG_RETURN_NULL();
 	}
 
 	/*
-	 * INT64_MIN / -1 is problematic, since the result can't be represented on
-	 * a two's-complement machine.  Some machines produce INT64_MIN, some
-	 * produce zero, some throw an exception.  We can dodge the problem by
-	 * recognizing that division by -1 is the same as negation.
+	 * INT64_MIN / -1 是有问题的，因为结果在补码机器上无法表示。
+	 * 有些机器会产生 INT64_MIN，有些会产生零，还有些会抛出异常。
+	 * 我们可以通过认识到"除以 -1"等价于取负来规避这个问题。
 	 */
 	if (arg2 == -1)
 	{
@@ -532,7 +530,7 @@ int8div(PG_FUNCTION_ARGS)
 		PG_RETURN_INT64(result);
 	}
 
-	/* No overflow is possible */
+	/* 不可能发生溢出 */
 
 	result = arg1 / arg2;
 
@@ -540,7 +538,7 @@ int8div(PG_FUNCTION_ARGS)
 }
 
 /* int8abs()
- * Absolute value
+ * 绝对值
  */
 Datum
 int8abs(PG_FUNCTION_ARGS)
@@ -557,7 +555,7 @@ int8abs(PG_FUNCTION_ARGS)
 }
 
 /* int8mod()
- * Modulo operation.
+ * 取模运算。
  */
 Datum
 int8mod(PG_FUNCTION_ARGS)
@@ -570,37 +568,35 @@ int8mod(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
-		/* ensure compiler realizes we mustn't reach the division (gcc bug) */
+		/* 确保编译器意识到我们不能到达除法处（gcc 的一个 bug） */
 		PG_RETURN_NULL();
 	}
 
 	/*
-	 * Some machines throw a floating-point exception for INT64_MIN % -1,
-	 * which is a bit silly since the correct answer is perfectly
-	 * well-defined, namely zero.
+	 * 某些机器在 INT64_MIN % -1 时会抛出浮点异常，这有些荒谬，
+	 * 因为正确答案其实非常明确，就是零。
 	 */
 	if (arg2 == -1)
 		PG_RETURN_INT64(0);
 
-	/* No overflow is possible */
+	/* 不可能发生溢出 */
 
 	PG_RETURN_INT64(arg1 % arg2);
 }
 
 /*
- * Greatest Common Divisor
+ * 最大公约数（Greatest Common Divisor）
  *
- * Returns the largest positive integer that exactly divides both inputs.
- * Special cases:
+ * 返回能同时整除两个输入的最大正整数。
+ * 特殊情况：
  *   - gcd(x, 0) = gcd(0, x) = abs(x)
- *   		because 0 is divisible by anything
+ *   		因为 0 可以被任何数整除
  *   - gcd(0, 0) = 0
- *   		complies with the previous definition and is a common convention
+ *   		符合上面的定义，且是一种通用约定
  *
- * Special care must be taken if either input is INT64_MIN ---
- * gcd(0, INT64_MIN), gcd(INT64_MIN, 0) and gcd(INT64_MIN, INT64_MIN) are
- * all equal to abs(INT64_MIN), which cannot be represented as a 64-bit signed
- * integer.
+ * 如果任一输入是 INT64_MIN，则必须特别小心 ---
+ * gcd(0, INT64_MIN)、gcd(INT64_MIN, 0) 以及 gcd(INT64_MIN, INT64_MIN)
+ * 都等于 abs(INT64_MIN)，而它无法用 64 位有符号整数表示。
  */
 static int64
 int8gcd_internal(int64 arg1, int64 arg2)
@@ -610,13 +606,12 @@ int8gcd_internal(int64 arg1, int64 arg2)
 				a2;
 
 	/*
-	 * Put the greater absolute value in arg1.
+	 * 将绝对值较大的放入 arg1。
 	 *
-	 * This would happen automatically in the loop below, but avoids an
-	 * expensive modulo operation, and simplifies the special-case handling
-	 * for INT64_MIN below.
+	 * 这在下面循环中会自动发生，但这里先做一次可以避免
+	 * 一次代价高昂的取模运算，并简化后面针对 INT64_MIN 的特殊处理。
 	 *
-	 * We do this in negative space in order to handle INT64_MIN.
+	 * 我们在负数空间中进行处理，以便能正确处理 INT64_MIN。
 	 */
 	a1 = (arg1 < 0) ? arg1 : -arg1;
 	a2 = (arg2 < 0) ? arg2 : -arg2;
@@ -627,7 +622,7 @@ int8gcd_internal(int64 arg1, int64 arg2)
 		arg2 = swap;
 	}
 
-	/* Special care needs to be taken with INT64_MIN.  See comments above. */
+	/* 对于 INT64_MIN 需要特别小心。参见上面的注释。 */
 	if (arg1 == PG_INT64_MIN)
 	{
 		if (arg2 == 0 || arg2 == PG_INT64_MIN)
@@ -636,16 +631,15 @@ int8gcd_internal(int64 arg1, int64 arg2)
 					 errmsg("bigint out of range")));
 
 		/*
-		 * Some machines throw a floating-point exception for INT64_MIN % -1,
-		 * which is a bit silly since the correct answer is perfectly
-		 * well-defined, namely zero.  Guard against this and just return the
-		 * result, gcd(INT64_MIN, -1) = 1.
+		 * 某些机器在 INT64_MIN % -1 时会抛出浮点异常，这有些荒谬，
+		 * 因为正确答案其实非常明确，就是零。这里加以防范并直接
+		 * 返回结果，即 gcd(INT64_MIN, -1) = 1。
 		 */
 		if (arg2 == -1)
 			return 1;
 	}
 
-	/* Use the Euclidean algorithm to find the GCD */
+	/* 使用欧几里得算法求最大公约数 */
 	while (arg2 != 0)
 	{
 		swap = arg2;
@@ -654,8 +648,7 @@ int8gcd_internal(int64 arg1, int64 arg2)
 	}
 
 	/*
-	 * Make sure the result is positive. (We know we don't have INT64_MIN
-	 * anymore).
+	 * 确保结果为正数。（我们知道此时已经不可能再是 INT64_MIN 了。）
 	 */
 	if (arg1 < 0)
 		arg1 = -arg1;
@@ -676,7 +669,7 @@ int8gcd(PG_FUNCTION_ARGS)
 }
 
 /*
- * Least Common Multiple
+ * 最小公倍数（Least Common Multiple）
  */
 Datum
 int8lcm(PG_FUNCTION_ARGS)
@@ -687,9 +680,9 @@ int8lcm(PG_FUNCTION_ARGS)
 	int64		result;
 
 	/*
-	 * Handle lcm(x, 0) = lcm(0, x) = 0 as a special case.  This prevents a
-	 * division-by-zero error below when x is zero, and an overflow error from
-	 * the GCD computation when x = INT64_MIN.
+	 * 将 lcm(x, 0) = lcm(0, x) = 0 作为特殊情况处理。这可以避免
+	 * 当 x 为零时下面出现除零错误，以及当 x = INT64_MIN 时
+	 * 在 GCD 计算中出现溢出错误。
 	 */
 	if (arg1 == 0 || arg2 == 0)
 		PG_RETURN_INT64(0);
@@ -703,7 +696,7 @@ int8lcm(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("bigint out of range")));
 
-	/* If the result is INT64_MIN, it cannot be represented. */
+	/* 如果结果是 INT64_MIN，则它无法被表示。 */
 	if (unlikely(result == PG_INT64_MIN))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -719,13 +712,13 @@ Datum
 int8inc(PG_FUNCTION_ARGS)
 {
 	/*
-	 * When int8 is pass-by-reference, we provide this special case to avoid
-	 * palloc overhead for COUNT(): when called as an aggregate, we know that
-	 * the argument is modifiable local storage, so just update it in-place.
-	 * (If int8 is pass-by-value, then of course this is useless as well as
-	 * incorrect, so just ifdef it out.)
+	 * 当 int8 是按引用传递时，我们提供这个特例以避免 COUNT() 的
+	 * palloc 开销：当它作为聚合函数被调用时，我们知道参数是可修改的
+	 * 本地存储，因此直接就地更新即可。
+	 *（如果 int8 是按值传递的，那么这当然是既无用又错误的，
+	 * 所以直接用 ifdef 将其排除。）
 	 */
-#ifndef USE_FLOAT8_BYVAL		/* controls int8 too */
+#ifndef USE_FLOAT8_BYVAL		/* 此处宏同时也控制着 int8 */
 	if (AggCheckCallContext(fcinfo, NULL))
 	{
 		int64	   *arg = (int64 *) PG_GETARG_POINTER(0);
@@ -740,7 +733,7 @@ int8inc(PG_FUNCTION_ARGS)
 	else
 #endif
 	{
-		/* Not called as an aggregate, so just do it the dumb way */
+		/* 不是作为聚合函数被调用，所以就用最朴素的方式处理 */
 		int64		arg = PG_GETARG_INT64(0);
 		int64		result;
 
@@ -757,13 +750,13 @@ Datum
 int8dec(PG_FUNCTION_ARGS)
 {
 	/*
-	 * When int8 is pass-by-reference, we provide this special case to avoid
-	 * palloc overhead for COUNT(): when called as an aggregate, we know that
-	 * the argument is modifiable local storage, so just update it in-place.
-	 * (If int8 is pass-by-value, then of course this is useless as well as
-	 * incorrect, so just ifdef it out.)
+	 * 当 int8 是按引用传递时，我们提供这个特例以避免 COUNT() 的
+	 * palloc 开销：当它作为聚合函数被调用时，我们知道参数是可修改的
+	 * 本地存储，因此直接就地更新即可。
+	 *（如果 int8 是按值传递的，那么这当然是既无用又错误的，
+	 * 所以直接用 ifdef 将其排除。）
 	 */
-#ifndef USE_FLOAT8_BYVAL		/* controls int8 too */
+#ifndef USE_FLOAT8_BYVAL		/* 此处宏同时也控制着 int8 */
 	if (AggCheckCallContext(fcinfo, NULL))
 	{
 		int64	   *arg = (int64 *) PG_GETARG_POINTER(0);
@@ -777,7 +770,7 @@ int8dec(PG_FUNCTION_ARGS)
 	else
 #endif
 	{
-		/* Not called as an aggregate, so just do it the dumb way */
+		/* 不是作为聚合函数被调用，所以就用最朴素的方式处理 */
 		int64		arg = PG_GETARG_INT64(0);
 		int64		result;
 
@@ -792,12 +785,11 @@ int8dec(PG_FUNCTION_ARGS)
 
 
 /*
- * These functions are exactly like int8inc/int8dec but are used for
- * aggregates that count only non-null values.  Since the functions are
- * declared strict, the null checks happen before we ever get here, and all we
- * need do is increment the state value.  We could actually make these pg_proc
- * entries point right at int8inc/int8dec, but then the opr_sanity regression
- * test would complain about mismatched entries for a built-in function.
+ * 这些函数与 int8inc/int8dec 完全相同，但用于只统计非 null 值的聚合。
+ * 由于这些函数被声明为严格（strict）函数，对 null 的检查在我们到达这里
+ * 之前就已经完成，我们只需要对状态值进行自增即可。实际上我们本可以让
+ * 这些 pg_proc 条目直接指向 int8inc/int8dec，但那样的话 opr_sanity
+ * 回归测试会抱怨内置函数的条目不匹配。
  */
 
 Datum
@@ -820,7 +812,7 @@ int8dec_any(PG_FUNCTION_ARGS)
 
 /*
  * int8inc_support
- *		prosupport function for int8inc() and int8inc_any()
+ *		int8inc() 与 int8inc_any() 的 prosupport 支持函数
  */
 Datum
 int8inc_support(PG_FUNCTION_ARGS)
@@ -833,22 +825,21 @@ int8inc_support(PG_FUNCTION_ARGS)
 		MonotonicFunction monotonic = MONOTONICFUNC_NONE;
 		int			frameOptions = req->window_clause->frameOptions;
 
-		/* No ORDER BY clause then all rows are peers */
+		/* 没有 ORDER BY 子句时，所有行都是同辈 */
 		if (req->window_clause->orderClause == NIL)
 			monotonic = MONOTONICFUNC_BOTH;
 		else
 		{
 			/*
-			 * Otherwise take into account the frame options.  When the frame
-			 * bound is the start of the window then the resulting value can
-			 * never decrease, therefore is monotonically increasing
+			 * 否则要考虑窗口帧选项。当帧边界是窗口的起始位置时，
+			 * 结果值永远不会减小，因此是单调递增的
 			 */
 			if (frameOptions & FRAMEOPTION_START_UNBOUNDED_PRECEDING)
 				monotonic |= MONOTONICFUNC_INCREASING;
 
 			/*
-			 * Likewise, if the frame bound is the end of the window then the
-			 * resulting value can never decrease.
+			 * 类似地，如果帧边界是窗口的结束位置，那么
+			 * 结果值永远不会减小。
 			 */
 			if (frameOptions & FRAMEOPTION_END_UNBOUNDED_FOLLOWING)
 				monotonic |= MONOTONICFUNC_DECREASING;
@@ -940,15 +931,14 @@ int84div(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
-		/* ensure compiler realizes we mustn't reach the division (gcc bug) */
+		/* 确保编译器意识到我们不能到达除法处（gcc 的一个 bug） */
 		PG_RETURN_NULL();
 	}
 
 	/*
-	 * INT64_MIN / -1 is problematic, since the result can't be represented on
-	 * a two's-complement machine.  Some machines produce INT64_MIN, some
-	 * produce zero, some throw an exception.  We can dodge the problem by
-	 * recognizing that division by -1 is the same as negation.
+	 * INT64_MIN / -1 是有问题的，因为结果在补码机器上无法表示。
+	 * 有些机器会产生 INT64_MIN，有些会产生零，还有些会抛出异常。
+	 * 我们可以通过认识到"除以 -1"等价于取负来规避这个问题。
 	 */
 	if (arg2 == -1)
 	{
@@ -960,7 +950,7 @@ int84div(PG_FUNCTION_ARGS)
 		PG_RETURN_INT64(result);
 	}
 
-	/* No overflow is possible */
+	/* 不可能发生溢出 */
 
 	result = arg1 / arg2;
 
@@ -1020,11 +1010,11 @@ int48div(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
-		/* ensure compiler realizes we mustn't reach the division (gcc bug) */
+		/* 确保编译器意识到我们不能到达除法处（gcc 的一个 bug） */
 		PG_RETURN_NULL();
 	}
 
-	/* No overflow is possible */
+	/* 不可能发生溢出 */
 	PG_RETURN_INT64((int64) arg1 / arg2);
 }
 
@@ -1082,15 +1072,14 @@ int82div(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
-		/* ensure compiler realizes we mustn't reach the division (gcc bug) */
+		/* 确保编译器意识到我们不能到达除法处（gcc 的一个 bug） */
 		PG_RETURN_NULL();
 	}
 
 	/*
-	 * INT64_MIN / -1 is problematic, since the result can't be represented on
-	 * a two's-complement machine.  Some machines produce INT64_MIN, some
-	 * produce zero, some throw an exception.  We can dodge the problem by
-	 * recognizing that division by -1 is the same as negation.
+	 * INT64_MIN / -1 是有问题的，因为结果在补码机器上无法表示。
+	 * 有些机器会产生 INT64_MIN，有些会产生零，还有些会抛出异常。
+	 * 我们可以通过认识到"除以 -1"等价于取负来规避这个问题。
 	 */
 	if (arg2 == -1)
 	{
@@ -1102,7 +1091,7 @@ int82div(PG_FUNCTION_ARGS)
 		PG_RETURN_INT64(result);
 	}
 
-	/* No overflow is possible */
+	/* 不可能发生溢出 */
 
 	result = arg1 / arg2;
 
@@ -1162,22 +1151,22 @@ int28div(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
-		/* ensure compiler realizes we mustn't reach the division (gcc bug) */
+		/* 确保编译器意识到我们不能到达除法处（gcc 的一个 bug） */
 		PG_RETURN_NULL();
 	}
 
-	/* No overflow is possible */
+	/* 不可能发生溢出 */
 	PG_RETURN_INT64((int64) arg1 / arg2);
 }
 
-/* Binary arithmetics
+/* 二进制算术运算
  *
- *		int8and		- returns arg1 & arg2
- *		int8or		- returns arg1 | arg2
- *		int8xor		- returns arg1 # arg2
- *		int8not		- returns ~arg1
- *		int8shl		- returns arg1 << arg2
- *		int8shr		- returns arg1 >> arg2
+ *		int8and		- 返回 arg1 & arg2
+ *		int8or		- 返回 arg1 | arg2
+ *		int8xor		- 返回 arg1 # arg2
+ *		int8not		- 返回 ~arg1
+ *		int8shl		- 返回 arg1 << arg2
+ *		int8shr		- 返回 arg1 >> arg2
  */
 
 Datum
@@ -1234,7 +1223,7 @@ int8shr(PG_FUNCTION_ARGS)
 }
 
 /*----------------------------------------------------------
- *	Conversion operators.
+ *	转换运算符。
  *---------------------------------------------------------*/
 
 Datum
@@ -1291,7 +1280,7 @@ i8tod(PG_FUNCTION_ARGS)
 }
 
 /* dtoi8()
- * Convert float8 to 8-byte integer.
+ * 将 float8 转换为 8 字节整数。
  */
 Datum
 dtoi8(PG_FUNCTION_ARGS)
@@ -1299,13 +1288,13 @@ dtoi8(PG_FUNCTION_ARGS)
 	float8		num = PG_GETARG_FLOAT8(0);
 
 	/*
-	 * Get rid of any fractional part in the input.  This is so we don't fail
-	 * on just-out-of-range values that would round into range.  Note
-	 * assumption that rint() will pass through a NaN or Inf unchanged.
+	 * 去掉输入中的小数部分。这样做是为了不让那些本可四舍五入进入
+	 * 范围的、刚好超出范围的值失败。注意：这里假定 rint() 会
+	 * 原样透传 NaN 或 Inf。
 	 */
 	num = rint(num);
 
-	/* Range check */
+	/* 范围检查 */
 	if (unlikely(isnan(num) || !FLOAT8_FITS_IN_INT64(num)))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -1326,7 +1315,7 @@ i8tof(PG_FUNCTION_ARGS)
 }
 
 /* ftoi8()
- * Convert float4 to 8-byte integer.
+ * 将 float4 转换为 8 字节整数。
  */
 Datum
 ftoi8(PG_FUNCTION_ARGS)
@@ -1334,13 +1323,13 @@ ftoi8(PG_FUNCTION_ARGS)
 	float4		num = PG_GETARG_FLOAT4(0);
 
 	/*
-	 * Get rid of any fractional part in the input.  This is so we don't fail
-	 * on just-out-of-range values that would round into range.  Note
-	 * assumption that rint() will pass through a NaN or Inf unchanged.
+	 * 去掉输入中的小数部分。这样做是为了不让那些本可四舍五入进入
+	 * 范围的、刚好超出范围的值失败。注意：这里假定 rint() 会
+	 * 原样透传 NaN 或 Inf。
 	 */
 	num = rint(num);
 
-	/* Range check */
+	/* 范围检查 */
 	if (unlikely(isnan(num) || !FLOAT4_FITS_IN_INT64(num)))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -1371,7 +1360,7 @@ oidtoi8(PG_FUNCTION_ARGS)
 }
 
 /*
- * non-persistent numeric series generator
+ * 非持久化的数值序列生成器
  */
 Datum
 generate_series_int8(PG_FUNCTION_ARGS)
@@ -1387,14 +1376,14 @@ generate_series_step_int8(PG_FUNCTION_ARGS)
 	int64		result;
 	MemoryContext oldcontext;
 
-	/* stuff done only on the first call of the function */
+	/* 仅在函数第一次被调用时执行的操作 */
 	if (SRF_IS_FIRSTCALL())
 	{
 		int64		start = PG_GETARG_INT64(0);
 		int64		finish = PG_GETARG_INT64(1);
 		int64		step = 1;
 
-		/* see if we were given an explicit step size */
+		/* 检查是否显式指定了步长 */
 		if (PG_NARGS() == 3)
 			step = PG_GETARG_INT64(2);
 		if (step == 0)
@@ -1402,20 +1391,20 @@ generate_series_step_int8(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("step size cannot equal zero")));
 
-		/* create a function context for cross-call persistence */
+		/* 创建用于跨调用持久化的函数上下文 */
 		funcctx = SRF_FIRSTCALL_INIT();
 
 		/*
-		 * switch to memory context appropriate for multiple function calls
+		 * 切换到适合多次函数调用的内存上下文
 		 */
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		/* allocate memory for user context */
+		/* 为用户上下文分配内存 */
 		fctx = (generate_series_fctx *) palloc(sizeof(generate_series_fctx));
 
 		/*
-		 * Use fctx to keep state from call to call. Seed current with the
-		 * original start value
+		 * 用 fctx 在多次调用之间保存状态。将 current 初始化为
+		 * 原始的起始值
 		 */
 		fctx->current = start;
 		fctx->finish = finish;
@@ -1425,11 +1414,11 @@ generate_series_step_int8(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 	}
 
-	/* stuff done on every call of the function */
+	/* 在函数的每一次调用中都要执行的操作 */
 	funcctx = SRF_PERCALL_SETUP();
 
 	/*
-	 * get the saved state and use current as the result for this iteration
+	 * 取出已保存的状态，并将 current 作为本次迭代的结果
 	 */
 	fctx = funcctx->user_fctx;
 	result = fctx->current;
@@ -1438,22 +1427,22 @@ generate_series_step_int8(PG_FUNCTION_ARGS)
 		(fctx->step < 0 && fctx->current >= fctx->finish))
 	{
 		/*
-		 * Increment current in preparation for next iteration. If next-value
-		 * computation overflows, this is the final result.
+		 * 自增 current 以准备下一次迭代。如果下一个值的
+		 * 计算发生溢出，则这就是最终结果。
 		 */
 		if (pg_add_s64_overflow(fctx->current, fctx->step, &fctx->current))
 			fctx->step = 0;
 
-		/* do when there is more left to send */
+		/* 还有更多数据要发送时执行 */
 		SRF_RETURN_NEXT(funcctx, Int64GetDatum(result));
 	}
 	else
-		/* do when there is no more left */
+		/* 没有更多数据要发送时执行 */
 		SRF_RETURN_DONE(funcctx);
 }
 
 /*
- * Planner support function for generate_series(int8, int8 [, int8])
+ * generate_series(int8, int8 [, int8]) 的优化器支持函数
  */
 Datum
 generate_series_int8_support(PG_FUNCTION_ARGS)
@@ -1463,17 +1452,17 @@ generate_series_int8_support(PG_FUNCTION_ARGS)
 
 	if (IsA(rawreq, SupportRequestRows))
 	{
-		/* Try to estimate the number of rows returned */
+		/* 尝试估算返回的行的数量 */
 		SupportRequestRows *req = (SupportRequestRows *) rawreq;
 
-		if (is_funcclause(req->node))	/* be paranoid */
+		if (is_funcclause(req->node))	/* 保持谨慎（be paranoid） */
 		{
 			List	   *args = ((FuncExpr *) req->node)->args;
 			Node	   *arg1,
 					   *arg2,
 					   *arg3;
 
-			/* We can use estimated argument values here */
+			/* 这里可以使用对参数的估值 */
 			arg1 = estimate_expression_value(req->root, linitial(args));
 			arg2 = estimate_expression_value(req->root, lsecond(args));
 			if (list_length(args) >= 3)
@@ -1482,10 +1471,9 @@ generate_series_int8_support(PG_FUNCTION_ARGS)
 				arg3 = NULL;
 
 			/*
-			 * If any argument is constant NULL, we can safely assume that
-			 * zero rows are returned.  Otherwise, if they're all non-NULL
-			 * constants, we can calculate the number of rows that will be
-			 * returned.  Use double arithmetic to avoid overflow hazards.
+			 * 如果任一参数是常量 NULL，我们可以安全地认为返回零行。
+			 * 否则，如果它们都是非 NULL 的常量，我们就可以计算出
+			 * 将要返回的行的数量。使用 double 算术以避免溢出风险。
 			 */
 			if ((IsA(arg1, Const) &&
 				 ((Const *) arg1)->constisnull) ||
@@ -1509,7 +1497,7 @@ generate_series_int8_support(PG_FUNCTION_ARGS)
 				finish = DatumGetInt64(((Const *) arg2)->constvalue);
 				step = arg3 ? DatumGetInt64(((Const *) arg3)->constvalue) : 1;
 
-				/* This equation works for either sign of step */
+				/* 这个等式对 step 的正负两种情况都适用 */
 				if (step != 0)
 				{
 					req->rows = floor((finish - start + step) / step);

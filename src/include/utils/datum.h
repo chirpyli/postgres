@@ -1,12 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * datum.h
- *	  POSTGRES Datum (abstract data type) manipulation routines.
+ *	  POSTGRES Datum（抽象数据类型）的操作例程。
  *
- * These routines are driven by the 'typbyval' and 'typlen' information,
- * which must previously have been obtained by the caller for the datatype
- * of the Datum.  (We do it this way because in most situations the caller
- * can look up the info just once and use it for many per-datum operations.)
+ * 这些例程由 'typbyval' 和 'typlen' 信息驱动，调用方须事先针对该 Datum
+ * 的数据类型取得这些信息。（我们采用这种方式，是因为在大多数情况下调用方
+ * 只需查询一次该信息，即可用于多次针对单个 datum 的操作。）
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -19,29 +18,29 @@
 #define DATUM_H
 
 /*
- * datumGetSize - find the "real" length of a datum
+ * datumGetSize - 求取一个 datum 的"实际"长度
  */
 extern Size datumGetSize(Datum value, bool typByVal, int typLen);
 
 /*
- * datumCopy - make a copy of a non-NULL datum.
+ * datumCopy - 复制一个非 NULL 的 datum。
  *
- * If the datatype is pass-by-reference, memory is obtained with palloc().
+ * 如果数据类型是按引用传递的，则使用 palloc() 分配内存。
  */
 extern Datum datumCopy(Datum value, bool typByVal, int typLen);
 
 /*
- * datumTransfer - transfer a non-NULL datum into the current memory context.
+ * datumTransfer - 将一个非 NULL 的 datum 转移到当前内存上下文。
  *
- * Differs from datumCopy() in its handling of read-write expanded objects.
+ * 与 datumCopy() 的不同之处在于它对可读写扩展对象的处理方式。
  */
 extern Datum datumTransfer(Datum value, bool typByVal, int typLen);
 
 /*
  * datumIsEqual
- * return true if two datums of the same type are equal, false otherwise.
+ * 如果两个同类型 datum 相等则返回 true，否则返回 false。
  *
- * XXX : See comments in the code for restrictions!
+ * XXX：限制条件参见代码中的注释！
  */
 extern bool datumIsEqual(Datum value1, Datum value2,
 						 bool typByVal, int typLen);
@@ -49,8 +48,8 @@ extern bool datumIsEqual(Datum value1, Datum value2,
 /*
  * datum_image_eq
  *
- * Compares two datums for identical contents, based on byte images.  Return
- * true if the two datums are equal, false otherwise.
+ * 基于字节映像比较两个 datum 的内容是否完全相同。若两个 datum 相等则返回
+ * true，否则返回 false。
  */
 extern bool datum_image_eq(Datum value1, Datum value2,
 						   bool typByVal, int typLen);
@@ -58,14 +57,12 @@ extern bool datum_image_eq(Datum value1, Datum value2,
 /*
  * datum_image_hash
  *
- * Generates hash value for 'value' based on its bits rather than logical
- * value.
+ * 为 'value' 生成哈希值，基于其二进制位而非逻辑值。
  */
 extern uint32 datum_image_hash(Datum value, bool typByVal, int typLen);
 
 /*
- * Serialize and restore datums so that we can transfer them to parallel
- * workers.
+ * 对 datum 进行序列化与反序列化，以便将其传递给并行工作进程。
  */
 extern Size datumEstimateSpace(Datum value, bool isnull, bool typByVal,
 							   int typLen);

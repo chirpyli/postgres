@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * xid.c
- *	  POSTGRES transaction identifier and command identifier datatypes.
+ *	  POSTGRES 事务标识符与命令标识符数据类型。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -50,7 +50,7 @@ xidout(PG_FUNCTION_ARGS)
 }
 
 /*
- *		xidrecv			- converts external binary format to xid
+ *		xidrecv			- 将外部二进制格式转换为 xid
  */
 Datum
 xidrecv(PG_FUNCTION_ARGS)
@@ -61,7 +61,7 @@ xidrecv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		xidsend			- converts xid to binary format
+ *		xidsend			- 将 xid 转换为二进制格式
  */
 Datum
 xidsend(PG_FUNCTION_ARGS)
@@ -75,7 +75,7 @@ xidsend(PG_FUNCTION_ARGS)
 }
 
 /*
- *		xideq			- are two xids equal?
+ *		xideq			- 两个 xid 是否相等？
  */
 Datum
 xideq(PG_FUNCTION_ARGS)
@@ -87,7 +87,7 @@ xideq(PG_FUNCTION_ARGS)
 }
 
 /*
- *		xidneq			- are two xids different?
+ *		xidneq			- 两个 xid 是否不同？
  */
 Datum
 xidneq(PG_FUNCTION_ARGS)
@@ -111,7 +111,7 @@ hashxidextended(PG_FUNCTION_ARGS)
 }
 
 /*
- *		xid_age			- compute age of an XID (relative to latest stable xid)
+ *		xid_age			- 计算 XID 的年龄（相对于最新稳定 xid）
  */
 Datum
 xid_age(PG_FUNCTION_ARGS)
@@ -119,7 +119,7 @@ xid_age(PG_FUNCTION_ARGS)
 	TransactionId xid = PG_GETARG_TRANSACTIONID(0);
 	TransactionId now = GetStableLatestTransactionId();
 
-	/* Permanent XIDs are always infinitely old */
+	/* 永久 XID 永远是无限旧的 */
 	if (!TransactionIdIsNormal(xid))
 		PG_RETURN_INT32(INT_MAX);
 
@@ -127,7 +127,7 @@ xid_age(PG_FUNCTION_ARGS)
 }
 
 /*
- *		mxid_age			- compute age of a multi XID (relative to latest stable mxid)
+ *		mxid_age			- 计算多事务 XID 的年龄（相对于最新稳定 mxid）
  */
 Datum
 mxid_age(PG_FUNCTION_ARGS)
@@ -143,10 +143,10 @@ mxid_age(PG_FUNCTION_ARGS)
 
 /*
  * xidComparator
- *		qsort comparison function for XIDs
+ *		XID 的 qsort 比较函数
  *
- * We can't use wraparound comparison for XIDs because that does not respect
- * the triangle inequality!  Any old sort order will do.
+ * 我们不能对 XID 使用回绕比较，因为它不满足三角不等式！
+ * 任何一种旧的排序顺序都可以。
  */
 int
 xidComparator(const void *arg1, const void *arg2)
@@ -159,11 +159,10 @@ xidComparator(const void *arg1, const void *arg2)
 
 /*
  * xidLogicalComparator
- *		qsort comparison function for XIDs
+ *		XID 的 qsort 比较函数
  *
- * This is used to compare only XIDs from the same epoch (e.g. for backends
- * running at the same time). So there must be only normal XIDs, so there's
- * no issue with triangle inequality.
+ * 这仅用于比较来自同一纪元（epoch）的 XID（例如同时运行的各后端）。
+ * 因此其中必然都是普通 XID，也就不存在三角不等式的问题。
  */
 int
 xidLogicalComparator(const void *arg1, const void *arg2)
@@ -337,11 +336,11 @@ xid8_smaller(PG_FUNCTION_ARGS)
 }
 
 /*****************************************************************************
- *	 COMMAND IDENTIFIER ROUTINES											 *
+ *	 命令标识符例程															 *
  *****************************************************************************/
 
 /*
- *		cidin	- converts CommandId to internal representation.
+ *		cidin	- 将 CommandId 转换为内部表示。
  */
 Datum
 cidin(PG_FUNCTION_ARGS)
@@ -354,7 +353,7 @@ cidin(PG_FUNCTION_ARGS)
 }
 
 /*
- *		cidout	- converts a cid to external representation.
+ *		cidout	- 将 cid 转换为外部表示。
  */
 Datum
 cidout(PG_FUNCTION_ARGS)
@@ -367,7 +366,7 @@ cidout(PG_FUNCTION_ARGS)
 }
 
 /*
- *		cidrecv			- converts external binary format to cid
+ *		cidrecv			- 将外部二进制格式转换为 cid
  */
 Datum
 cidrecv(PG_FUNCTION_ARGS)
@@ -378,7 +377,7 @@ cidrecv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		cidsend			- converts cid to binary format
+ *		cidsend			- 将 cid 转换为二进制格式
  */
 Datum
 cidsend(PG_FUNCTION_ARGS)

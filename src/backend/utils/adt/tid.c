@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * tid.c
- *	  Functions for the built-in type tuple id
+ *	  用于内置类型元组 id（tid）的函数
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -10,8 +10,8 @@
  * IDENTIFICATION
  *	  src/backend/utils/adt/tid.c
  *
- * NOTES
- *	  input routine largely stolen from boxin().
+ * 说明
+ *	  输入例程很大程度上借用了 boxin()。
  *
  *-------------------------------------------------------------------------
  */
@@ -82,9 +82,8 @@ tidin(PG_FUNCTION_ARGS)
 	blockNumber = (BlockNumber) cvt;
 
 	/*
-	 * Cope with possibility that unsigned long is wider than BlockNumber, in
-	 * which case strtoul will not raise an error for some values that are out
-	 * of the range of BlockNumber.  (See similar code in oidin().)
+	 * 处理 unsigned long 比 BlockNumber 更宽的可能性；在此情况下，strtoul
+	 * 不会对某些超出 BlockNumber 取值范围的值报错。（参见 oidin() 中的类似代码。）
 	 */
 #if SIZEOF_LONG > 4
 	if (cvt != (unsigned long) blockNumber &&
@@ -126,14 +125,14 @@ tidout(PG_FUNCTION_ARGS)
 	blockNumber = ItemPointerGetBlockNumberNoCheck(itemPtr);
 	offsetNumber = ItemPointerGetOffsetNumberNoCheck(itemPtr);
 
-	/* Perhaps someday we should output this as a record. */
+	/* 也许将来我们应该将其作为一条记录输出。 */
 	snprintf(buf, sizeof(buf), "(%u,%u)", blockNumber, offsetNumber);
 
 	PG_RETURN_CSTRING(pstrdup(buf));
 }
 
 /*
- *		tidrecv			- converts external binary format to tid
+ *		tidrecv			- 将外部二进制格式转换为 tid
  */
 Datum
 tidrecv(PG_FUNCTION_ARGS)
@@ -154,7 +153,7 @@ tidrecv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		tidsend			- converts tid to binary format
+ *		tidsend			- 将 tid 转换为二进制格式
  */
 Datum
 tidsend(PG_FUNCTION_ARGS)
@@ -169,7 +168,7 @@ tidsend(PG_FUNCTION_ARGS)
 }
 
 /*****************************************************************************
- *	 PUBLIC ROUTINES														 *
+ *	 公开例程																 *
  *****************************************************************************/
 
 Datum
@@ -259,10 +258,9 @@ hashtid(PG_FUNCTION_ARGS)
 	ItemPointer key = PG_GETARG_ITEMPOINTER(0);
 
 	/*
-	 * While you'll probably have a lot of trouble with a compiler that
-	 * insists on appending pad space to struct ItemPointerData, we can at
-	 * least make this code work, by not using sizeof(ItemPointerData).
-	 * Instead rely on knowing the sizes of the component fields.
+	 * 虽然对于坚持在 struct ItemPointerData 末尾追加填充空间的编译器，
+	 * 你大概会遇到不少麻烦，但我们至少可以通过不使用 sizeof(ItemPointerData)
+	 * 来让这段代码正常工作。转而是依靠已知各组成字段的大小。
 	 */
 	return hash_any((unsigned char *) key,
 					sizeof(BlockIdData) + sizeof(OffsetNumber));
@@ -274,7 +272,7 @@ hashtidextended(PG_FUNCTION_ARGS)
 	ItemPointer key = PG_GETARG_ITEMPOINTER(0);
 	uint64		seed = PG_GETARG_INT64(1);
 
-	/* As above */
+	/* 同上 */
 	return hash_any_extended((unsigned char *) key,
 							 sizeof(BlockIdData) + sizeof(OffsetNumber),
 							 seed);
@@ -282,15 +280,14 @@ hashtidextended(PG_FUNCTION_ARGS)
 
 
 /*
- *	Functions to get latest tid of a specified tuple.
+ *	获取指定元组最新 tid 的函数。
  *
- *	Maybe these implementations should be moved to another place
+ *	也许这些实现应当移到别处
  */
 
 /*
- * Utility wrapper for current CTID functions.
- *		Returns the latest version of a tuple pointing at "tid" for
- *		relation "rel".
+ * 当前 CTID 函数的实用封装器。
+ *		返回“rel”关系中指向“tid”的元组的最新版本。
  */
 static ItemPointer
 currtid_internal(Relation rel, ItemPointer tid)
@@ -330,9 +327,8 @@ currtid_internal(Relation rel, ItemPointer tid)
 }
 
 /*
- *	Handle CTIDs of views.
- *		CTID should be defined in the view and it must
- *		correspond to the CTID of a base relation.
+ *	处理视图的 CTID。
+ *		CTID 应当在视图中定义，且必须与某个基关系的 CTID 相对应。
  */
 static ItemPointer
 currtid_for_view(Relation viewrel, ItemPointer tid)
@@ -411,8 +407,7 @@ currtid_for_view(Relation viewrel, ItemPointer tid)
 
 /*
  * currtid_byrelname
- *		Get the latest tuple version of the tuple pointing at a CTID, for a
- *		given relation name.
+ *		对于给定的关系名，获取指向某 CTID 的元组的最新元组版本。
  */
 Datum
 currtid_byrelname(PG_FUNCTION_ARGS)
@@ -426,7 +421,7 @@ currtid_byrelname(PG_FUNCTION_ARGS)
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = table_openrv(relrv, AccessShareLock);
 
-	/* grab the latest tuple version associated to this CTID */
+	/* 获取与此 CTID 关联的最新元组版本 */
 	result = currtid_internal(rel, tid);
 
 	table_close(rel, AccessShareLock);

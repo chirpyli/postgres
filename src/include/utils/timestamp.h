@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * timestamp.h
- *	  Definitions for the SQL "timestamp" and "interval" types.
+ *	  SQL 的 "timestamp" 与 "interval" 类型的定义。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -19,10 +19,10 @@
 
 
 /*
- * Functions for fmgr-callable functions.
+ * fmgr 可调用函数的支持例程。
  *
- * For Timestamp, we make use of the same support routines as for int64.
- * Therefore Timestamp is pass-by-reference if and only if int64 is!
+ * 对于 Timestamp，我们复用与 int64 相同的支持例程。因此，Timestamp 当且仅当
+ * int64 为按引用传递时才按引用传递！
  */
 static inline Timestamp
 DatumGetTimestamp(Datum X)
@@ -72,7 +72,7 @@ IntervalPGetDatum(const Interval *X)
 #define TIMESTAMP_MASK(b) (1 << (b))
 #define INTERVAL_MASK(b) (1 << (b))
 
-/* Macros to handle packing and unpacking the typmod field for intervals */
+/* 用于处理 interval 的 typmod 字段打包与解包的宏 */
 #define INTERVAL_FULL_RANGE (0x7FFF)
 #define INTERVAL_RANGE_MASK (0x7FFF)
 #define INTERVAL_FULL_PRECISION (0xFFFF)
@@ -81,11 +81,11 @@ IntervalPGetDatum(const Interval *X)
 #define INTERVAL_PRECISION(t) ((t) & INTERVAL_PRECISION_MASK)
 #define INTERVAL_RANGE(t) (((t) >> 16) & INTERVAL_RANGE_MASK)
 
-/* Macros for doing timestamp arithmetic without assuming timestamp's units */
+/* 在不假定 timestamp 单位的前提下进行时间戳算术运算的宏 */
 #define TimestampTzPlusMilliseconds(tz,ms) ((tz) + ((ms) * (int64) 1000))
 #define TimestampTzPlusSeconds(tz,s) ((tz) + ((s) * (int64) 1000000))
 
-/* Helper for simple subtraction between two timestamps */
+/* 用于两个时间戳之间简单相减的辅助函数 */
 static inline uint64
 TimestampDifferenceMicroseconds(TimestampTz start_time,
 								TimestampTz stop_time)
@@ -95,14 +95,14 @@ TimestampDifferenceMicroseconds(TimestampTz start_time,
 	return (uint64) stop_time - start_time;
 }
 
-/* Set at postmaster start */
+/* 在 postmaster 启动时设置 */
 extern PGDLLIMPORT TimestampTz PgStartTime;
 
-/* Set at configuration reload */
+/* 在配置重新加载时设置 */
 extern PGDLLIMPORT TimestampTz PgReloadTime;
 
 
-/* Internal routines (not fmgr-callable) */
+/* 内部例程（不可由 fmgr 调用） */
 
 extern int32 anytimestamp_typmod_check(bool istz, int32 typmod);
 
@@ -139,7 +139,7 @@ extern void GetEpochTime(struct pg_tm *tm);
 
 extern int	timestamp_cmp_internal(Timestamp dt1, Timestamp dt2);
 
-/* timestamp comparison works for timestamptz also */
+/* 该时间戳比较同样适用于 timestamptz */
 #define timestamptz_cmp_internal(dt1,dt2)	timestamp_cmp_internal(dt1, dt2)
 
 extern TimestampTz timestamp2timestamptz_opt_overflow(Timestamp timestamp,

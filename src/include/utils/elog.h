@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * elog.h
- *	  POSTGRES error reporting/logging definitions.
+ *	  POSTGRES 的错误上报与日志定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -18,52 +18,37 @@
 
 #include "lib/stringinfo.h"
 
-/* We cannot include nodes.h yet, so forward-declare struct Node */
+/* 此时还无法包含 nodes.h，因此先前向声明 struct Node */
 struct Node;
 
 
-/* Error level codes */
-#define DEBUG5		10			/* Debugging messages, in categories of
-								 * decreasing detail. */
+/* 错误级别代码 */
+#define DEBUG5		10			/* 调试信息，按详尽程度递减分类。 */
 #define DEBUG4		11
 #define DEBUG3		12
 #define DEBUG2		13
-#define DEBUG1		14			/* used by GUC debug_* variables */
-#define LOG			15			/* Server operational messages; sent only to
-								 * server log by default. */
-#define LOG_SERVER_ONLY 16		/* Same as LOG for server reporting, but never
-								 * sent to client. */
-#define COMMERROR	LOG_SERVER_ONLY /* Client communication problems; same as
-									 * LOG for server reporting, but never
-									 * sent to client. */
-#define INFO		17			/* Messages specifically requested by user (eg
-								 * VACUUM VERBOSE output); always sent to
-								 * client regardless of client_min_messages,
-								 * but by default not sent to server log. */
-#define NOTICE		18			/* Helpful messages to users about query
-								 * operation; sent to client and not to server
-								 * log by default. */
-#define WARNING		19			/* Warnings.  NOTICE is for expected messages
-								 * like implicit sequence creation by SERIAL.
-								 * WARNING is for unexpected messages. */
-#define PGWARNING	19			/* Must equal WARNING; see NOTE below. */
-#define WARNING_CLIENT_ONLY	20	/* Warnings to be sent to client as usual, but
-								 * never to the server log. */
-#define ERROR		21			/* user error - abort transaction; return to
-								 * known state */
-#define PGERROR		21			/* Must equal ERROR; see NOTE below. */
-#define FATAL		22			/* fatal error - abort process */
-#define PANIC		23			/* take down the other backends with me */
+#define DEBUG1		14			/* 由 GUC 的 debug_* 变量使用 */
+#define LOG			15			/* 服务器运行消息；默认仅发送到服务器日志。 */
+#define LOG_SERVER_ONLY 16		/* 服务器上报方面与 LOG 相同，但从不发送给客户端。 */
+#define COMMERROR	LOG_SERVER_ONLY /* 客户端通信问题；服务器上报方面与LOG 相同，但从不发送给客户端。 */
+#define INFO		17			/* 用户特别请求的消息（例如VACUUM VERBOSE 的输出）；无论client_min_messages 如何，总是发送给客户端，但默认不写入服务器日志。 */
+#define NOTICE		18			/* 对用户有用的、关于查询执行的提示性消息；默认发送给客户端，但不写入服务器日志。 */
+#define WARNING		19			/* 警告。NOTICE 用于预期内的消息，例如 SERIAL 隐式创建序列； WARNING 用于非预期消息。 */
+#define PGWARNING	19			/* 必须与 WARNING 相等；见下方 NOTE。 */
+#define WARNING_CLIENT_ONLY	20	/* 照常发送给客户端的警告，但从不写入服务器日志。 */
+#define ERROR		21			/* 用户错误——中止事务；回到 已知状态 */
+#define PGERROR		21			/* 必须与 ERROR 相等；见下方 NOTE。 */
+#define FATAL		22			/* 致命错误——中止进程 */
+#define PANIC		23			/* 拉上其他后端一起陪葬 */
 
 /*
- * NOTE: the alternate names PGWARNING and PGERROR are useful for dealing
- * with third-party headers that make other definitions of WARNING and/or
- * ERROR.  One can, for example, re-define ERROR as PGERROR after including
- * such a header.
+ * 注意：别名 PGWARNING 与 PGERROR 用于处理那些对 WARNING 和/或
+ * ERROR 做了另行定义的第三方头文件。例如，在包含此类头文件之后，
+ * 可以把 ERROR 重新定义为 PGERROR。
  */
 
 
-/* macros for representing SQLSTATE strings compactly */
+/* 用于紧凑表示 SQLSTATE 字符串的宏 */
 #define PGSIXBIT(ch)	(((ch) - '0') & 0x3F)
 #define PGUNSIXBIT(val) (((val) & 0x3F) + '0')
 
@@ -71,21 +56,20 @@ struct Node;
 	(PGSIXBIT(ch1) + (PGSIXBIT(ch2) << 6) + (PGSIXBIT(ch3) << 12) + \
 	 (PGSIXBIT(ch4) << 18) + (PGSIXBIT(ch5) << 24))
 
-/* These macros depend on the fact that '0' becomes a zero in PGSIXBIT */
+/* 这些宏依赖于这样一个事实：'0' 经 PGSIXBIT 处理后变为 0 */
 #define ERRCODE_TO_CATEGORY(ec)  ((ec) & ((1 << 12) - 1))
 #define ERRCODE_IS_CATEGORY(ec)  (((ec) & ~((1 << 12) - 1)) == 0)
 
-/* SQLSTATE codes for errors are defined in a separate file */
+/* 错误的 SQLSTATE 代码定义在一个单独的文件里 */
 #include "utils/errcodes.h"
 
 /*
- * Provide a way to prevent "errno" from being accidentally used inside an
- * elog() or ereport() invocation.  Since we know that some operating systems
- * define errno as something involving a function call, we'll put a local
- * variable of the same name as that function in the local scope to force a
- * compile error.  On platforms that don't define errno in that way, nothing
- * happens, so we get no warning ... but we can live with that as long as it
- * happens on some popular platforms.
+ * 提供一种机制，防止在 elog() 或 ereport() 调用内部
+ * 意外使用 "errno"。由于我们知道某些操作系统把 errno 定义成
+ * 涉及函数调用的形式，我们会在局部作用域里放一个与该
+ * 函数同名的局部变量，从而强制产生编译错误。在那些不以这种方式
+ * 定义 errno 的平台上，不会发生任何事情，因此我们也不会收到警告……
+ * 但只要在一些主流平台上能触发该检查，我们就可以接受这种权衡。
  */
 #if defined(errno) && defined(__linux__)
 #define pg_prevent_errno_in_scope() int __errno_location pg_attribute_unused()
@@ -97,44 +81,40 @@ struct Node;
 
 
 /*----------
- * New-style error reporting API: to be used in this way:
+ * 新风格的错误上报 API：使用方式如下：
  *		ereport(ERROR,
  *				errcode(ERRCODE_UNDEFINED_CURSOR),
  *				errmsg("portal \"%s\" not found", stmt->portalname),
- *				... other errxxx() fields as needed ...);
+ *				... 其它所需的 errxxx() 字段 ...);
  *
- * The error level is required, and so is a primary error message (errmsg
- * or errmsg_internal).  All else is optional.  errcode() defaults to
- * ERRCODE_INTERNAL_ERROR if elevel is ERROR or more, ERRCODE_WARNING
- * if elevel is WARNING, or ERRCODE_SUCCESSFUL_COMPLETION if elevel is
- * NOTICE or below.
+ * 错误级别是必需的，一条主错误消息（errmsg 或
+ * errmsg_internal）同样必需。其余皆为可选项。若未指定 errcode()，
+ * 则当 elevel 为 ERROR 或更高时默认为 ERRCODE_INTERNAL_ERROR，
+ * 当 elevel 为 WARNING 时默认为 ERRCODE_WARNING，
+ * 当 elevel 为 NOTICE 或更低时默认为 ERRCODE_SUCCESSFUL_COMPLETION。
  *
- * Before Postgres v12, extra parentheses were required around the
- * list of auxiliary function calls; that's now optional.
+ * 在 Postgres v12 之前，辅助函数调用列表外面必须加额外的括号；
+ * 现在这已经变成可选项。
  *
- * ereport_domain() allows a message domain to be specified, for modules that
- * wish to use a different message catalog from the backend's.  To avoid having
- * one copy of the default text domain per .o file, we define it as NULL here
- * and have errstart insert the default text domain.  Modules can either use
- * ereport_domain() directly, or preferably they can override the TEXTDOMAIN
- * macro.
+ * ereport_domain() 允许指定一个消息域（message domain），供那些
+ * 希望使用与后端不同的消息目录（message catalog）的模块使用。
+ * 为了避免每个 .o 文件都各持有一份默认文本域，我们在这里把它
+ * 定义为 NULL，并让 errstart 插入默认文本域。模块既可以直接使用
+ * ereport_domain()，更好的做法则是重写 TEXTDOMAIN 宏。
  *
- * When __builtin_constant_p is available and elevel >= ERROR we make a call
- * to errstart_cold() instead of errstart().  This version of the function is
- * marked with pg_attribute_cold which will coax supporting compilers into
- * generating code which is more optimized towards non-ERROR cases.  Because
- * we use __builtin_constant_p() in the condition, when elevel is not a
- * compile-time constant, or if it is, but it's < ERROR, the compiler has no
- * need to generate any code for this branch.  It can simply call errstart()
- * unconditionally.
+ * 当存在 __builtin_constant_p 且 elevel >= ERROR 时，我们改为调用
+ * errstart_cold() 而非 errstart()。这个版本的.errstart 函数被标记为
+ * pg_attribute_cold，从而能促使支持的编译器生成更偏向非 ERROR
+ * 情形的优化代码。因为我们把 __builtin_constant_p() 用于条件判断，
+ * 当 elevel 不是编译期常量，或者虽是常量但小于 ERROR 时，编译器
+ * 无需为这个分支生成任何代码，它只需无条件地调用 errstart() 即可。
  *
- * If elevel >= ERROR, the call will not return; we try to inform the compiler
- * of that via pg_unreachable().  However, no useful optimization effect is
- * obtained unless the compiler sees elevel as a compile-time constant, else
- * we're just adding code bloat.  So, if __builtin_constant_p is available,
- * use that to cause the second if() to vanish completely for non-constant
- * cases.  We avoid using a local variable because it's not necessary and
- * prevents gcc from making the unreachability deduction at optlevel -O0.
+ * 如果 elevel >= ERROR，该调用不会返回；我们试图通过 pg_unreachable()
+ * 把这个事实告知编译器。然而，除非编译器把 elevel 视为编译期常量，
+ * 否则不会获得任何有用的优化效果，否则我们只是增加了代码体积。
+ * 因此，如果存在 __builtin_constant_p，就利用它让第二个 if() 在
+ * 非常量情形下完全消失。我们避免使用局部变量，因为那既无必要，
+ * 又会让 gcc 无法在 -O0 优化级别下做出不可达（unreachable）推断。
  *----------
  */
 #ifdef HAVE__BUILTIN_CONSTANT_P
@@ -148,7 +128,7 @@ struct Node;
 		if (__builtin_constant_p(elevel) && (elevel) >= ERROR) \
 			pg_unreachable(); \
 	} while(0)
-#else							/* !HAVE__BUILTIN_CONSTANT_P */
+#else							/* 非 HAVE__BUILTIN_CONSTANT_P 的情况 */
 #define ereport_domain(elevel, domain, ...)	\
 	do { \
 		const int elevel_ = (elevel); \
@@ -201,12 +181,12 @@ extern int	errhint_plural(const char *fmt_singular, const char *fmt_plural,
 						   unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
 
 /*
- * errcontext() is typically called in error context callback functions, not
- * within an ereport() invocation. The callback function can be in a different
- * module than the ereport() call, so the message domain passed in errstart()
- * is not usually the correct domain for translating the context message.
- * set_errcontext_domain() first sets the domain to be used, and
- * errcontext_msg() passes the actual message.
+ * errcontext() 通常在错误上下文回调函数（error context callback）
+ * 中调用，而不是在 ereport() 调用内部。回调函数可能位于与
+ * ereport() 调用不同的模块中，因此 errstart() 传入的消息域
+ * 通常并不是翻译上下文消息所用的正确域。
+ * set_errcontext_domain() 先设置要使用的域，而
+ * errcontext_msg() 传入实际的消息文本。
  */
 #define errcontext	set_errcontext_domain(TEXTDOMAIN),	errcontext_msg
 
@@ -232,7 +212,7 @@ extern int	getinternalerrposition(void);
 
 
 /*----------
- * Old-style error reporting API: to be used in this way:
+ * 旧风格的错误上报 API：使用方式如下：
  *		elog(ERROR, "portal \"%s\" not found", stmt->portalname);
  *----------
  */
@@ -241,27 +221,25 @@ extern int	getinternalerrposition(void);
 
 
 /*----------
- * Support for reporting "soft" errors that don't require a full transaction
- * abort to clean up.  This is to be used in this way:
+ * 支持上报“软”错误（soft error），这类错误不需要通过中止整个事务
+ * 来清理。使用方式如下：
  *		errsave(context,
  *				errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
  *				errmsg("invalid input syntax for type %s: \"%s\"",
  *					   "boolean", in_str),
- *				... other errxxx() fields as needed ...);
+ *				... 其它所需的 errxxx() 字段 ...);
  *
- * "context" is a node pointer or NULL, and the remaining auxiliary calls
- * provide the same error details as in ereport().  If context is not a
- * pointer to an ErrorSaveContext node, then errsave(context, ...)
- * behaves identically to ereport(ERROR, ...).  If context is a pointer
- * to an ErrorSaveContext node, then the information provided by the
- * auxiliary calls is stored in the context node and control returns
- * normally.  The caller of errsave() must then do any required cleanup
- * and return control back to its caller.  That caller must check the
- * ErrorSaveContext node to see whether an error occurred before
- * it can trust the function's result to be meaningful.
+ * "context" 是一个节点指针或 NULL，其余辅助调用提供的错误细节
+ * 与 ereport() 相同。如果 context 不是指向 ErrorSaveContext 节点的
+ * 指针，那么 errsave(context, ...) 的行为与 ereport(ERROR, ...)
+ * 完全一致。如果 context 是指向 ErrorSaveContext 节点的指针，那么
+ * 辅助调用所提供的信息会被存入该上下文节点，控制流正常返回。
+ * errsave() 的调用方随后必须完成任何必要的清理工作，并将控制权
+ * 返回给它的调用方。该调用方必须检查 ErrorSaveContext 节点，
+ * 以判断在信任本函数结果有意义之前是否发生了错误。
  *
- * errsave_domain() allows a message domain to be specified; it is
- * precisely analogous to ereport_domain().
+ * errsave_domain() 允许指定消息域；它与 ereport_domain()
+ * 完全类似。
  *----------
  */
 #define errsave_domain(context, domain, ...)	\
@@ -276,11 +254,11 @@ extern int	getinternalerrposition(void);
 	errsave_domain(context, TEXTDOMAIN, __VA_ARGS__)
 
 /*
- * "ereturn(context, dummy_value, ...);" is exactly the same as
- * "errsave(context, ...); return dummy_value;".  This saves a bit
- * of typing in the common case where a function has no cleanup
- * actions to take after reporting a soft error.  "dummy_value"
- * can be empty if the function returns void.
+ * "ereturn(context, dummy_value, ...);" 与
+ * "errsave(context, ...); return dummy_value;" 完全等价。
+ * 在函数在上报软错误后无需任何清理动作这种常见情形下，
+ * 这样能省去一些打字工作。"dummy_value" 在函数为
+ * 返回 void 时可以为空。
  */
 #define ereturn_domain(context, dummy_value, domain, ...)	\
 	do { \
@@ -297,13 +275,13 @@ extern void errsave_finish(struct Node *context,
 						   const char *funcname);
 
 
-/* Support for constructing error strings separately from ereport() calls */
+/* 支持与 ereport() 调用相分离地构造错误消息字符串 */
 
 extern void pre_format_elog_string(int errnumber, const char *domain);
 extern char *format_elog_string(const char *fmt,...) pg_attribute_printf(1, 2);
 
 
-/* Support for attaching context information to error reports */
+/* 支持向错误报告附加上下文信息 */
 
 typedef struct ErrorContextCallback
 {
@@ -316,70 +294,62 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
 
 
 /*----------
- * API for catching ereport(ERROR) exits.  Use these macros like so:
+ * 用于捕获 ereport(ERROR) 退出的 API。这些宏的使用方式如下：
  *
  *		PG_TRY();
  *		{
- *			... code that might throw ereport(ERROR) ...
+ *			... 可能抛出 ereport(ERROR) 的代码 ...
  *		}
  *		PG_CATCH();
  *		{
- *			... error recovery code ...
+ *			... 错误恢复代码 ...
  *		}
  *		PG_END_TRY();
  *
- * (The braces are not actually necessary, but are recommended so that
- * pgindent will indent the construct nicely.)  The error recovery code
- * can either do PG_RE_THROW to propagate the error outwards, or do a
- * (sub)transaction abort. Failure to do so may leave the system in an
- * inconsistent state for further processing.
+ * （花括号其实并非必要，但推荐使用，这样 pgindent 才能把该结构
+ * 漂亮地缩进。）错误恢复代码既可以调用 PG_RE_THROW 把错误向外传播，
+ * 也可以执行（子）事务中止。如果不这样做，可能会使系统处于
+ * 不一致的状态，影响后续处理。
  *
- * For the common case that the error recovery code and the cleanup in the
- * normal code path are identical, the following can be used instead:
+ * 对于错误恢复代码与正常代码路径中的清理工作完全相同的常见情形，
+ * 可以改用以下形式：
  *
  *		PG_TRY();
  *		{
- *			... code that might throw ereport(ERROR) ...
+ *			... 可能抛出 ereport(ERROR) 的代码 ...
  *		}
  *		PG_FINALLY();
  *		{
- *			... cleanup code ...
+ *			... 清理代码 ...
  *		}
  *      PG_END_TRY();
  *
- * The cleanup code will be run in either case, and any error will be rethrown
- * afterwards.
+ * 清理代码在两种情形下都会被执行，且任何错误随后都会被重新抛出。
  *
- * You cannot use both PG_CATCH() and PG_FINALLY() in the same
- * PG_TRY()/PG_END_TRY() block.
+ * 不能在同一个 PG_TRY()/PG_END_TRY() 块中同时使用 PG_CATCH() 和
+ * PG_FINALLY()。
  *
- * Note: while the system will correctly propagate any new ereport(ERROR)
- * occurring in the recovery section, there is a small limit on the number
- * of levels this will work for.  It's best to keep the error recovery
- * section simple enough that it can't generate any new errors, at least
- * not before popping the error stack.
+ * 注意：虽然系统能正确地传播在恢复段中新产生的任何 ereport(ERROR)，
+ * 但这种传播所支持的嵌套层数存在上限。最好让错误恢复段保持足够简单，
+ * 使其无法产生任何新错误，至少在弹出错误栈之前如此。
  *
- * Note: an ereport(FATAL) will not be caught by this construct; control will
- * exit straight through proc_exit().  Therefore, do NOT put any cleanup
- * of non-process-local resources into the error recovery section, at least
- * not without taking thought for what will happen during ereport(FATAL).
- * The PG_ENSURE_ERROR_CLEANUP macros provided by storage/ipc.h may be
- * helpful in such cases.
+ * 注意：ereport(FATAL) 不会被这一结构捕获；控制流会径直穿过
+ * proc_exit() 退出。因此，切勿把任何非进程本地资源的清理工作放入
+ * 错误恢复段，至少不要在不考虑 ereport(FATAL) 期间会发生什么的前提下
+ * 这样做。对于此类情形，storage/ipc.h 提供的
+ * PG_ENSURE_ERROR_CLEANUP 宏或许能帮上忙。
  *
- * Note: if a local variable of the function containing PG_TRY is modified
- * in the PG_TRY section and used in the PG_CATCH section, that variable
- * must be declared "volatile" for POSIX compliance.  This is not mere
- * pedantry; we have seen bugs from compilers improperly optimizing code
- * away when such a variable was not marked.  Beware that gcc's -Wclobbered
- * warnings are just about entirely useless for catching such oversights.
+ * 注意：如果包含 PG_TRY 的函数中的某个局部变量在 PG_TRY 段被修改、
+ * 并在 PG_CATCH 段被使用，那么该变量必须声明为 "volatile" 以满足
+ * POSIX 规范。这并非吹毛求疵；我们确实见过因为这类变量未被标记，
+ * 编译器错误地将其优化掉而引发的 bug。要注意，gcc 的 -Wclobbered
+ * 警告对于捕捉此类疏忽几乎毫无用处。
  *
- * Each of these macros accepts an optional argument which can be specified
- * to apply a suffix to the variables declared within the macros.  This suffix
- * can be used to avoid the compiler emitting warnings about shadowed
- * variables when compiling with -Wshadow in situations where nested PG_TRY()
- * statements are required.  The optional suffix may contain any character
- * that's allowed in a variable name.  The suffix, if specified, must be the
- * same within each component macro of the given PG_TRY() statement.
+ * 这些宏中的每一个都接受一个可选参数，可用于给宏内部声明的变量
+ * 追加一个后缀。在遇到需要嵌套 PG_TRY() 语句、并以 -Wshadow 编译时，
+ * 这个后缀可以避免编译器发出关于变量遮蔽（shadowed）的警告。
+ * 该可选后缀可以包含变量名所允许的任何字符。如果指定了后缀，那么
+ * 在给定 PG_TRY() 语句的各个组成宏中，后缀必须保持一致。
  *----------
  */
 #define PG_TRY(...)  \
@@ -421,45 +391,45 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
 extern PGDLLIMPORT sigjmp_buf *PG_exception_stack;
 
 
-/* Stuff that error handlers might want to use */
+/* 错误处理函数可能想要使用的东西 */
 
 /*
- * ErrorData holds the data accumulated during any one ereport() cycle.
- * Any non-NULL pointers must point to palloc'd data.
- * (The const pointers are an exception; we assume they point at non-freeable
- * constant strings.)
+ * ErrorData 保存在任意一次 ereport() 周期中累积起来的数据。
+ * 任何非 NULL 的指针都必须指向 palloc 分配的数据。
+ * （const 指针是例外；我们假设它们指向不可释放的
+ * 常量字符串。）
  */
 typedef struct ErrorData
 {
-	int			elevel;			/* error level */
-	bool		output_to_server;	/* will report to server log? */
-	bool		output_to_client;	/* will report to client? */
-	bool		hide_stmt;		/* true to prevent STATEMENT: inclusion */
-	bool		hide_ctx;		/* true to prevent CONTEXT: inclusion */
-	const char *filename;		/* __FILE__ of ereport() call */
-	int			lineno;			/* __LINE__ of ereport() call */
-	const char *funcname;		/* __func__ of ereport() call */
-	const char *domain;			/* message domain */
-	const char *context_domain; /* message domain for context message */
-	int			sqlerrcode;		/* encoded ERRSTATE */
-	char	   *message;		/* primary error message (translated) */
-	char	   *detail;			/* detail error message */
-	char	   *detail_log;		/* detail error message for server log only */
-	char	   *hint;			/* hint message */
-	char	   *context;		/* context message */
-	char	   *backtrace;		/* backtrace */
-	const char *message_id;		/* primary message's id (original string) */
-	char	   *schema_name;	/* name of schema */
-	char	   *table_name;		/* name of table */
-	char	   *column_name;	/* name of column */
-	char	   *datatype_name;	/* name of datatype */
-	char	   *constraint_name;	/* name of constraint */
-	int			cursorpos;		/* cursor index into query string */
-	int			internalpos;	/* cursor index into internalquery */
-	char	   *internalquery;	/* text of internally-generated query */
-	int			saved_errno;	/* errno at entry */
+	int			elevel;			/* 错误级别 */
+	bool		output_to_server;	/* 是否上报到服务器日志？ */
+	bool		output_to_client;	/* 是否上报到客户端？ */
+	bool		hide_stmt;		/* 为 true 则不在 STATEMENT: 中包含语句 */
+	bool		hide_ctx;		/* 为 true 则不在 CONTEXT: 中包含上下文 */
+	const char *filename;		/* ereport() 调用处的 __FILE__ */
+	int			lineno;			/* ereport() 调用处的 __LINE__ */
+	const char *funcname;		/* ereport() 调用处的 __func__ */
+	const char *domain;			/* 消息域 */
+	const char *context_domain; /* 上下文消息所用的消息域 */
+	int			sqlerrcode;		/* 编码后的 ERRSTATE */
+	char	   *message;		/* 主错误消息（已翻译） */
+	char	   *detail;			/* 详细错误消息 */
+	char	   *detail_log;		/* 仅用于服务器日志的详细错误消息 */
+	char	   *hint;			/* 提示消息 */
+	char	   *context;		/* 上下文消息 */
+	char	   *backtrace;		/* 回溯信息 */
+	const char *message_id;		/* 主消息的 id（原始字符串） */
+	char	   *schema_name;	/* 模式（schema）名 */
+	char	   *table_name;		/* 表名 */
+	char	   *column_name;	/* 列名 */
+	char	   *datatype_name;	/* 数据类型名 */
+	char	   *constraint_name;	/* 约束名 */
+	int			cursorpos;		/* 在查询字符串中的游标索引 */
+	int			internalpos;	/* 在 internalquery 中的游标索引 */
+	char	   *internalquery;	/* 内部生成的查询文本 */
+	int			saved_errno;	/* 进入时的 errno */
 
-	/* context containing associated non-constant strings */
+	/* 包含相关联的非常量字符串的上下文 */
 	struct MemoryContextData *assoc_context;
 } ErrorData;
 
@@ -473,18 +443,18 @@ pg_noreturn extern void pg_re_throw(void);
 
 extern char *GetErrorContextStack(void);
 
-/* Hook for intercepting messages before they are sent to the server log */
+/* 用于在消息发送到服务器日志之前拦截它们的钩子 */
 typedef void (*emit_log_hook_type) (ErrorData *edata);
 extern PGDLLIMPORT emit_log_hook_type emit_log_hook;
 
 
-/* GUC-configurable parameters */
+/* 可由 GUC 配置的参数 */
 
 typedef enum
 {
-	PGERROR_TERSE,				/* single-line error messages */
-	PGERROR_DEFAULT,			/* recommended style */
-	PGERROR_VERBOSE,			/* all the facts, ma'am */
+	PGERROR_TERSE,				/* 单行错误消息 */
+	PGERROR_DEFAULT,			/* 推荐的风格 */
+	PGERROR_VERBOSE,			/* 把所有事实都摆出来 */
 }			PGErrorVerbosity;
 
 extern PGDLLIMPORT int Log_error_verbosity;
@@ -494,21 +464,21 @@ extern PGDLLIMPORT char *Log_destination_string;
 extern PGDLLIMPORT bool syslog_sequence_numbers;
 extern PGDLLIMPORT bool syslog_split_messages;
 
-/* Log destination bitmap */
+/* 日志目标位图 */
 #define LOG_DESTINATION_STDERR	 1
 #define LOG_DESTINATION_SYSLOG	 2
 #define LOG_DESTINATION_EVENTLOG 4
 #define LOG_DESTINATION_CSVLOG	 8
 #define LOG_DESTINATION_JSONLOG	16
 
-/* Other exported functions */
+/* 其它导出函数 */
 extern void log_status_format(StringInfo buf, const char *format,
 							  ErrorData *edata);
 extern void DebugFileOpen(void);
 extern char *unpack_sql_state(int sql_state);
 extern bool in_error_recursion_trouble(void);
 
-/* Common functions shared across destinations */
+/* 各日志目标共用的函数 */
 extern void reset_formatted_start_time(void);
 extern char *get_formatted_start_time(void);
 extern char *get_formatted_log_time(void);
@@ -517,14 +487,14 @@ extern bool check_log_of_query(ErrorData *edata);
 extern const char *error_severity(int elevel);
 extern void write_pipe_chunks(char *data, int len, int dest);
 
-/* Destination-specific functions */
+/* 特定于各日志目标的函数 */
 extern void write_csvlog(ErrorData *edata);
 extern void write_jsonlog(ErrorData *edata);
 
 /*
- * Write errors to stderr (or by equal means when stderr is
- * not available). Used before ereport/elog can be used
- * safely (memory context, GUC load etc)
+ * 把错误写入 stderr（或在 stderr 不可用时用等效手段）。
+ * 用于 ereport/elog 尚不能安全使用之前（例如内存上下文、
+ * GUC 加载等情形）。
  */
 extern void write_stderr(const char *fmt,...) pg_attribute_printf(1, 2);
 extern void vwrite_stderr(const char *fmt, va_list ap) pg_attribute_printf(1, 0);

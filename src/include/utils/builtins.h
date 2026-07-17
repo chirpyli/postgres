@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * builtins.h
- *	  Declarations for operations on built-in types.
+ *	  内建（built-in）类型上各种操作的声明。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -18,7 +18,7 @@
 #include "nodes/nodes.h"
 #include "utils/fmgrprotos.h"
 
-/* Sign + the most decimal digits an 8-byte number could have */
+/* 符号位 + 8 字节整数可能拥有的最大十进制位数 */
 #define MAXINT8LEN 20
 
 /* bool.c */
@@ -121,11 +121,11 @@ extern Datum numeric_float8_no_overflow(PG_FUNCTION_ARGS);
 
 /* format_type.c */
 
-/* Control flags for format_type_extended */
-#define FORMAT_TYPE_TYPEMOD_GIVEN	0x01	/* typemod defined by caller */
-#define FORMAT_TYPE_ALLOW_INVALID	0x02	/* allow invalid types */
-#define FORMAT_TYPE_FORCE_QUALIFY	0x04	/* force qualification of type */
-#define FORMAT_TYPE_INVALID_AS_NULL	0x08	/* NULL if undefined */
+/* format_type_extended 的控制标志 */
+#define FORMAT_TYPE_TYPEMOD_GIVEN	0x01	/* typemod 由调用方提供 */
+#define FORMAT_TYPE_ALLOW_INVALID	0x02	/* 允许无效类型 */
+#define FORMAT_TYPE_FORCE_QUALIFY	0x04	/* 强制限定类型名 */
+#define FORMAT_TYPE_INVALID_AS_NULL	0x08	/* 未定义时返回 NULL */
 extern char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags);
 
 extern char *format_type_be(Oid type_oid);

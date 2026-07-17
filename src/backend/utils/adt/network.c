@@ -1,5 +1,5 @@
 /*
- *	PostgreSQL type definitions for the INET and CIDR types.
+ *	PostgreSQL 针对 INET 和 CIDR 类型的定义。
  *
  *	src/backend/utils/adt/network.c
  *
@@ -33,22 +33,21 @@
 
 
 /*
- * An IPv4 netmask size is a value in the range of 0 - 32, which is
- * represented with 6 bits in inet/cidr abbreviated keys where possible.
+ * IPv4 的子网掩码尺寸是 0-32 之间的一个值，在 inet/cidr 缩写键中（尽可能）
+ * 用 6 位表示。
  *
- * An IPv4 inet/cidr abbreviated key can use up to 25 bits for subnet
- * component.
+ * IPv4 的 inet/cidr 缩写键最多可用 25 位表示子网部分。
  */
 #define ABBREV_BITS_INET4_NETMASK_SIZE	6
 #define ABBREV_BITS_INET4_SUBNET		25
 
-/* sortsupport for inet/cidr */
+/* inet/cidr 的 sortsupport */
 typedef struct
 {
-	int64		input_count;	/* number of non-null values seen */
-	bool		estimating;		/* true if estimating cardinality */
+	int64		input_count;	/* 见到的非空值个数 */
+	bool		estimating;		/* 如果正在估计基数则为 true */
 
-	hyperLogLogState abbr_card; /* cardinality estimator */
+	hyperLogLogState abbr_card; /* 基数估计器 */
 } network_sortsupport_state;
 
 static int32 network_cmp_internal(inet *a1, inet *a2);
@@ -69,7 +68,7 @@ static inet *internal_inetpl(inet *ip, int64 addend);
 
 
 /*
- * Common INET/CIDR input routine
+ * 通用的 INET/CIDR 输入例程
  */
 static inet *
 network_in(char *src, bool is_cidr, Node *escontext)
@@ -80,9 +79,8 @@ network_in(char *src, bool is_cidr, Node *escontext)
 	dst = (inet *) palloc0(sizeof(inet));
 
 	/*
-	 * First, check to see if this is an IPv6 or IPv4 address.  IPv6 addresses
-	 * will have a : somewhere in them (several, in fact) so if there is one
-	 * present, assume it's V6, otherwise assume it's V4.
+	 * 首先，检查这是 IPv6 还是 IPv4 地址。IPv6 地址中会在某处（实际上是多处）
+	 * 出现 :，因此如果存在冒号，就假定为 V6，否则假定为 V4。
 	 */
 
 	if (strchr(src, ':') != NULL)
@@ -100,7 +98,7 @@ network_in(char *src, bool is_cidr, Node *escontext)
 						is_cidr ? "cidr" : "inet", src)));
 
 	/*
-	 * Error check: CIDR values must not have any bits set beyond the masklen.
+	 * 错误检查：CIDR 值不得在掩码长度之外设置任何位。
 	 */
 	if (is_cidr)
 	{
@@ -135,7 +133,7 @@ cidr_in(PG_FUNCTION_ARGS)
 
 
 /*
- * Common INET/CIDR output routine
+ * 通用的 INET/CIDR 输出例程
  */
 static char *
 network_out(inet *src, bool is_cidr)
@@ -151,7 +149,7 @@ network_out(inet *src, bool is_cidr)
 				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
 				 errmsg("could not format inet value: %m")));
 
-	/* For CIDR, add /n if not present */
+	/* 对于 CIDR，若不存在 /n 则补上 */
 	if (is_cidr && strchr(tmp, '/') == NULL)
 	{
 		len = strlen(tmp);
@@ -179,14 +177,13 @@ cidr_out(PG_FUNCTION_ARGS)
 
 
 /*
- *		network_recv		- converts external binary format to inet
+ *		network_recv		- 将外部二进制格式转换为 inet
  *
- * The external representation is (one byte apiece for)
- * family, bits, is_cidr, address length, address in network byte order.
+ * 外部表示为（各占一个字节）：family、bits、is_cidr、地址长度、按网络字节序
+ * 排列的地址。
  *
- * Presence of is_cidr is largely for historical reasons, though it might
- * allow some code-sharing on the client side.  We send it correctly on
- * output, but ignore the value on input.
+ * is_cidr 的存在主要出于历史原因，不过它或许能让客户端复用部分代码。我们在
+ * 输出时正确发送它，但在输入时忽略该值。
  */
 static inet *
 network_recv(StringInfo buf, bool is_cidr)
@@ -197,7 +194,7 @@ network_recv(StringInfo buf, bool is_cidr)
 	int			nb,
 				i;
 
-	/* make sure any unused bits in a CIDR value are zeroed */
+	/* 确保 CIDR 值中未使用的位都被清零 */
 	addr = (inet *) palloc0(sizeof(inet));
 
 	ip_family(addr) = pq_getmsgbyte(buf);
@@ -216,7 +213,7 @@ network_recv(StringInfo buf, bool is_cidr)
 				 errmsg("invalid bits in external \"%s\" value",
 						is_cidr ? "cidr" : "inet")));
 	ip_bits(addr) = bits;
-	i = pq_getmsgbyte(buf);		/* ignore is_cidr */
+	i = pq_getmsgbyte(buf);		/* 忽略 is_cidr */
 	nb = pq_getmsgbyte(buf);
 	if (nb != ip_addrsize(addr))
 		ereport(ERROR,
@@ -230,7 +227,7 @@ network_recv(StringInfo buf, bool is_cidr)
 		addrptr[i] = pq_getmsgbyte(buf);
 
 	/*
-	 * Error check: CIDR values must not have any bits set beyond the masklen.
+	 * 错误检查：CIDR 值不得在掩码长度之外设置任何位。
 	 */
 	if (is_cidr)
 	{
@@ -264,7 +261,7 @@ cidr_recv(PG_FUNCTION_ARGS)
 
 
 /*
- *		network_send		- converts inet to binary format
+ *		network_send		- 将 inet 转换为二进制格式
  */
 static bytea *
 network_send(inet *addr, bool is_cidr)
@@ -311,7 +308,7 @@ inet_to_cidr(PG_FUNCTION_ARGS)
 
 	bits = ip_bits(src);
 
-	/* safety check */
+	/* 安全检查 */
 	if ((bits < 0) || (bits > ip_maxbits(src)))
 		elog(ERROR, "invalid inet bit length: %d", bits);
 
@@ -333,7 +330,7 @@ inet_set_masklen(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid mask length: %d", bits)));
 
-	/* clone the original data */
+	/* 克隆原始数据 */
 	dst = (inet *) palloc(VARSIZE_ANY(src));
 	memcpy(dst, src, VARSIZE_ANY(src));
 
@@ -360,7 +357,7 @@ cidr_set_masklen(PG_FUNCTION_ARGS)
 }
 
 /*
- * Copy src and set mask length to 'bits' (which must be valid for the family)
+ * 复制 src 并将掩码长度设为 'bits'（该值必须对 family 有效）
  */
 inet *
 cidr_set_masklen_internal(const inet *src, int bits)
@@ -374,29 +371,27 @@ cidr_set_masklen_internal(const inet *src, int bits)
 	{
 		Assert(bits <= ip_maxbits(dst));
 
-		/* Clone appropriate bytes of the address, leaving the rest 0 */
+		/* 复制地址中相应的字节，其余保留为 0 */
 		memcpy(ip_addr(dst), ip_addr(src), (bits + 7) / 8);
 
-		/* Clear any unwanted bits in the last partial byte */
+		/* 清除最后一个不完整字节中不需要的位 */
 		if (bits % 8)
 			ip_addr(dst)[bits / 8] &= ~(0xFF >> (bits % 8));
 	}
 
-	/* Set varlena header correctly */
+	/* 正确设置 varlena 头部 */
 	SET_INET_VARSIZE(dst);
 
 	return dst;
 }
 
 /*
- *	Basic comparison function for sorting and inet/cidr comparisons.
+ *	用于排序及 inet/cidr 比较的基础比较函数。
  *
- * Comparison is first on the common bits of the network part, then on
- * the length of the network part, and then on the whole unmasked address.
- * The effect is that the network part is the major sort key, and for
- * equal network parts we sort on the host part.  Note this is only sane
- * for CIDR if address bits to the right of the mask are guaranteed zero;
- * otherwise logically-equal CIDRs might compare different.
+ * 比较先针对网络部分的公共位，然后是网络部分的长度，最后是整个未掩码地址。
+ * 其效果是网络部分成为主排序键，而网络部分相等时再按主机部分排序。注意，
+ * 这仅在 CIDR 中掩码右侧的地址位保证为零时才合理；否则逻辑上相等的 CIDR
+ * 可能会比较出不同结果。
  */
 
 static int32
@@ -429,7 +424,7 @@ network_cmp(PG_FUNCTION_ARGS)
 }
 
 /*
- * SortSupport strategy routine
+ * SortSupport 策略例程
  */
 Datum
 network_sortsupport(PG_FUNCTION_ARGS)
@@ -465,7 +460,7 @@ network_sortsupport(PG_FUNCTION_ARGS)
 }
 
 /*
- * SortSupport comparison func
+ * SortSupport 比较函数
  */
 static int
 network_fast_cmp(Datum x, Datum y, SortSupport ssup)
@@ -477,10 +472,9 @@ network_fast_cmp(Datum x, Datum y, SortSupport ssup)
 }
 
 /*
- * Callback for estimating effectiveness of abbreviated key optimization.
+ * 用于估计缩写键优化效果的回调。
  *
- * We pay no attention to the cardinality of the non-abbreviated data, because
- * there is no equality fast-path within authoritative inet comparator.
+ * 我们不关注未缩写数据的基数，因为在权威的 inet 比较器中不存在等值快速路径。
  */
 static bool
 network_abbrev_abort(int memtupcount, SortSupport ssup)
@@ -494,10 +488,9 @@ network_abbrev_abort(int memtupcount, SortSupport ssup)
 	abbr_card = estimateHyperLogLog(&uss->abbr_card);
 
 	/*
-	 * If we have >100k distinct values, then even if we were sorting many
-	 * billion rows we'd likely still break even, and the penalty of undoing
-	 * that many rows of abbrevs would probably not be worth it. At this point
-	 * we stop counting because we know that we're now fully committed.
+	 * 如果不同值超过 10 万，那么即使要排序数十亿行数据，我们也大概率仍得不
+	 * 偿失，而撤销这么多缩写行的代价很可能并不值得。此时我们停止计数，因为
+	 * 我们知道已经确定采用了缩写。
 	 */
 	if (abbr_card > 100000.0)
 	{
@@ -511,10 +504,8 @@ network_abbrev_abort(int memtupcount, SortSupport ssup)
 	}
 
 	/*
-	 * Target minimum cardinality is 1 per ~2k of non-null inputs. 0.5 row
-	 * fudge factor allows us to abort earlier on genuinely pathological data
-	 * where we've had exactly one abbreviated value in the first 2k
-	 * (non-null) rows.
+	 * 目标最小基数为每约 2k 个非空输入 1 个。0.5 行的容差系数让我们在遇到真正
+	 * 病态的数据时能更早中止——即前 2k 行（非空）中恰好只有一个缩写值的情况。
 	 */
 	if (abbr_card < uss->input_count / 2000.0 + 0.5)
 	{
@@ -536,60 +527,52 @@ network_abbrev_abort(int memtupcount, SortSupport ssup)
 }
 
 /*
- * SortSupport conversion routine. Converts original inet/cidr representation
- * to abbreviated key representation that works with simple 3-way unsigned int
- * comparisons. The network_cmp_internal() rules for sorting inet/cidr datums
- * are followed by abbreviated comparisons by an encoding scheme that
- * conditions keys through careful use of padding.
+ * SortSupport 转换例程。将原始的 inet/cidr 表示转换为缩写键表示，使其能与
+ * 简单的三路无符号整数比较配合工作。缩写比较通过一种借助精细填充来"调理"
+ * 键值的编码方案，遵循 network_cmp_internal() 对 inet/cidr datum 的排序规则。
  *
- * Some background: inet values have three major components (take for example
- * the address 1.2.3.4/24):
+ * 一点背景：inet 值有三个主要组成部分（以地址 1.2.3.4/24 为例）：
  *
- *     * A network, or netmasked bits (1.2.3.0).
- *     * A netmask size (/24).
- *     * A subnet, or bits outside of the netmask (0.0.0.4).
+ *     * 网络，即被掩码的位（1.2.3.0）。
+ *     * 网络掩码尺寸（/24）。
+ *     * 子网，即掩码之外的位（0.0.0.4）。
  *
- * cidr values are the same except that with only the first two components --
- * all their subnet bits *must* be zero (1.2.3.0/24).
+ * cidr 值与此相同，只是仅含前两个部分——它们的所有子网位*必须*为零
+ * （1.2.3.0/24）。
  *
- * IPv4 and IPv6 are identical in this makeup, with the difference being that
- * IPv4 addresses have a maximum of 32 bits compared to IPv6's 64 bits, so in
- * IPv6 each part may be larger.
+ * IPv4 和 IPv6 在此构成上一致，区别在于 IPv4 地址最多 32 位，而 IPv6 为 64
+ * 位，因此 IPv6 中每个部分都可能更大。
  *
- * inet/cidr types compare using these sorting rules. If inequality is detected
- * at any step, comparison is finished. If any rule is a tie, the algorithm
- * drops through to the next to break it:
+ * inet/cidr 类型按照以下排序规则进行比较。若在某一步检测到不等，则比较结束；
+ * 若某条规则打平，则算法落入下一条规则来打破平局：
  *
- *     1. IPv4 always appears before IPv6.
- *     2. Network bits are compared.
- *     3. Netmask size is compared.
- *     4. All bits are compared (having made it here, we know that both
- *        netmasked bits and netmask size are equal, so we're in effect only
- *        comparing subnet bits).
+ *     1. IPv4 总是排在 IPv6 之前。
+ *     2. 比较网络位。
+ *     3. 比较网络掩码尺寸。
+ *     4. 比较所有位（能走到此处，说明网络掩码位与网络掩码尺寸都相等，因此
+ *        实际上我们只是在比较子网位）。
  *
- * When generating abbreviated keys for SortSupport, we pack as much as we can
- * into a datum while ensuring that when comparing those keys as integers,
- * these rules will be respected. Exact contents depend on IP family and datum
- * size.
+ * 为 SortSupport 生成缩写键时，我们在确保将这些键作为整数比较时上述规则仍
+ * 被遵守的前提下，尽量把内容塞进一个 datum。具体内容与 IP 地址族及 datum
+ * 大小有关。
  *
  * IPv4
  * ----
  *
- * 4 byte datums:
+ * 4 字节 datum：
  *
- * Start with 1 bit for the IP family (IPv4 or IPv6; this bit is present in
- * every case below) followed by all but 1 of the netmasked bits.
+ * 先放 1 位表示 IP 地址族（IPv4 或 IPv6；这一位在下面每种情形中都存在），
+ * 其后紧跟除 1 位之外的全部网络掩码位。
  *
  * +----------+---------------------+
  * | 1 bit IP |   31 bits network   |     (1 bit network
  * |  family  |     (truncated)     |      omitted)
  * +----------+---------------------+
  *
- * 8 byte datums:
+ * 8 字节 datum：
  *
- * We have space to store all netmasked bits, followed by the netmask size,
- * followed by 25 bits of the subnet (25 bits is usually more than enough in
- * practice). cidr datums always have all-zero subnet bits.
+ * 我们有空间存放全部网络掩码位，其后是网络掩码尺寸，再其后是 25 位子网
+ * （实践中 25 位通常已绰绰有余）。cidr datum 的子网位始终全为零。
  *
  * +----------+-----------------------+--------------+--------------------+
  * | 1 bit IP |    32 bits network    |    6 bits    |   25 bits subnet   |
@@ -599,14 +582,14 @@ network_abbrev_abort(int memtupcount, SortSupport ssup)
  * IPv6
  * ----
  *
- * 4 byte datums:
+ * 4 字节 datum：
  *
  * +----------+---------------------+
  * | 1 bit IP |   31 bits network   |    (up to 97 bits
  * |  family  |     (truncated)     |   network omitted)
  * +----------+---------------------+
  *
- * 8 byte datums:
+ * 8 字节 datum：
  *
  * +----------+---------------------------------+
  * | 1 bit IP |         63 bits network         |    (up to 65 bits
@@ -628,14 +611,11 @@ network_abbrev_convert(Datum original, SortSupport ssup)
 		   ip_family(authoritative) == PGSQL_AF_INET6);
 
 	/*
-	 * Get an unsigned integer representation of the IP address by taking its
-	 * first 4 or 8 bytes. Always take all 4 bytes of an IPv4 address. Take
-	 * the first 8 bytes of an IPv6 address with an 8 byte datum and 4 bytes
-	 * otherwise.
+	 * 通过取 IP 地址的前 4 或 8 字节，得到其无符号整数表示。IPv4 地址总是取
+	 * 全部 4 字节。对于 IPv6 地址，在 8 字节 datum 下取前 8 字节，否则取 4 字节。
 	 *
-	 * We're consuming an array of unsigned char, so byteswap on little endian
-	 * systems (an inet's ipaddr field stores the most significant byte
-	 * first).
+	 * 我们消费的是一个 unsigned char 数组，因此在小端系统上需要字节交换（inet
+	 * 的 ipaddr 字段以最高有效字节在前的方式存储）。
 	 */
 	if (ip_family(authoritative) == PGSQL_AF_INET)
 	{
@@ -643,62 +623,57 @@ network_abbrev_convert(Datum original, SortSupport ssup)
 
 		memcpy(&ipaddr_datum32, ip_addr(authoritative), sizeof(uint32));
 
-		/* Must byteswap on little-endian machines */
+		/* 在小端机器上必须做字节交换 */
 #ifndef WORDS_BIGENDIAN
 		ipaddr_datum = pg_bswap32(ipaddr_datum32);
 #else
 		ipaddr_datum = ipaddr_datum32;
 #endif
 
-		/* Initialize result without setting ipfamily bit */
+		/* 初始化结果，但不设置 ipfamily 位 */
 		res = (Datum) 0;
 	}
 	else
 	{
 		memcpy(&ipaddr_datum, ip_addr(authoritative), sizeof(Datum));
 
-		/* Must byteswap on little-endian machines */
+		/* 在小端机器上必须做字节交换 */
 		ipaddr_datum = DatumBigEndianToNative(ipaddr_datum);
 
-		/* Initialize result with ipfamily (most significant) bit set */
+		/* 初始化结果，并设置 ipfamily（最高有效）位 */
 		res = ((Datum) 1) << (SIZEOF_DATUM * BITS_PER_BYTE - 1);
 	}
 
 	/*
-	 * ipaddr_datum must be "split": high order bits go in "network" component
-	 * of abbreviated key (often with zeroed bits at the end due to masking),
-	 * while low order bits go in "subnet" component when there is space for
-	 * one. This is often accomplished by generating a temp datum subnet
-	 * bitmask, which we may reuse later when generating the subnet bits
-	 * themselves.  (Note that subnet bits are only used with IPv4 datums on
-	 * platforms where datum is 8 bytes.)
+	 * ipaddr_datum 必须被"拆分"：高位进入缩写键的 "network" 部分（因掩码往往
+	 * 末尾补零），而低位在有余地时进入 "subnet" 部分。这通常通过生成一个临时的
+	 * datum 子网位掩码来实现，该掩码在后续生成子网位时可能复用。（注意，子网
+	 * 位仅在 datum 为 8 字节的平台上配合 IPv4 datum 使用。）
 	 *
-	 * The number of bits in subnet is used to generate a datum subnet
-	 * bitmask. For example, with a /24 IPv4 datum there are 8 subnet bits
-	 * (since 32 - 24 is 8), so the final subnet bitmask is B'1111 1111'. We
-	 * need explicit handling for cases where the ipaddr bits cannot all fit
-	 * in a datum, though (otherwise we'd incorrectly mask the network
-	 * component with IPv6 values).
+	 * 子网中的位数用于生成 datum 子网位掩码。例如，对于 /24 的 IPv4 datum，
+	 * 子网位有 8 位（因为 32 - 24 = 8），所以最终子网位掩码为 B'1111 1111'。
+	 * 但对于 ipaddr 位无法全部放入 datum 的情况，我们需要显式处理（否则会用
+	 * IPv6 值错误地掩掉 network 部分）。
 	 */
 	subnet_size = ip_maxbits(authoritative) - ip_bits(authoritative);
 	Assert(subnet_size >= 0);
-	/* subnet size must work with prefix ipaddr cases */
+	/* 子网尺寸必须能配合前缀 ipaddr 的情形 */
 	subnet_size %= SIZEOF_DATUM * BITS_PER_BYTE;
 	if (ip_bits(authoritative) == 0)
 	{
-		/* Fit as many ipaddr bits as possible into subnet */
+		/* 尽可能多的 ipaddr 位放入 subnet */
 		subnet_bitmask = ((Datum) 0) - 1;
 		network = 0;
 	}
 	else if (ip_bits(authoritative) < SIZEOF_DATUM * BITS_PER_BYTE)
 	{
-		/* Split ipaddr bits between network and subnet */
+		/* 在 network 与 subnet 之间拆分 ipaddr 位 */
 		subnet_bitmask = (((Datum) 1) << subnet_size) - 1;
 		network = ipaddr_datum & ~subnet_bitmask;
 	}
 	else
 	{
-		/* Fit as many ipaddr bits as possible into network */
+		/* 尽可能多的 ipaddr 位放入 network */
 		subnet_bitmask = 0;
 		network = ipaddr_datum;
 	}
@@ -707,47 +682,40 @@ network_abbrev_convert(Datum original, SortSupport ssup)
 	if (ip_family(authoritative) == PGSQL_AF_INET)
 	{
 		/*
-		 * IPv4 with 8 byte datums: keep all 32 netmasked bits, netmask size,
-		 * and most significant 25 subnet bits
+		 * IPv4 配合 8 字节 datum：保留全部 32 个网络掩码位、网络掩码尺寸，以及
+		 * 最高有效的 25 个 subnet 位
 		 */
 		Datum		netmask_size = (Datum) ip_bits(authoritative);
 		Datum		subnet;
 
 		/*
-		 * Shift left 31 bits: 6 bits netmask size + 25 subnet bits.
+		 * 左移 31 位：6 位网络掩码尺寸 + 25 位 subnet 位。
 		 *
-		 * We don't make any distinction between network bits that are zero
-		 * due to masking and "true"/non-masked zero bits.  An abbreviated
-		 * comparison that is resolved by comparing a non-masked and non-zero
-		 * bit to a masked/zeroed bit is effectively resolved based on
-		 * ip_bits(), even though the comparison won't reach the netmask_size
-		 * bits.
+		 * 我们不对因掩码而为零的 network 位与"真正"/未掩码的零位做任何区分。
+		 * 一个通过比较未掩码的非零位与已掩码/清零的位来决出的缩写比较，实际上
+		 * 是基于 ip_bits() 决出的，即便该比较不会到达 netmask_size 位。
 		 */
 		network <<= (ABBREV_BITS_INET4_NETMASK_SIZE +
 					 ABBREV_BITS_INET4_SUBNET);
 
-		/* Shift size to make room for subnet bits at the end */
+		/* 移位为末尾的 subnet 位腾出空间 */
 		netmask_size <<= ABBREV_BITS_INET4_SUBNET;
 
-		/* Extract subnet bits without shifting them */
+		/* 提取 subnet 位但不移动它们 */
 		subnet = ipaddr_datum & subnet_bitmask;
 
 		/*
-		 * If we have more than 25 subnet bits, we can't fit everything. Shift
-		 * subnet down to avoid clobbering bits that are only supposed to be
-		 * used for netmask_size.
+		 * 如果 subnet 位超过 25 个，我们就无法全部容纳。将 subnet 下移，以避免
+		 * 覆盖那些本应只用于 netmask_size 的位。
 		 *
-		 * Discarding the least significant subnet bits like this is correct
-		 * because abbreviated comparisons that are resolved at the subnet
-		 * level must have had equal netmask_size/ip_bits() values in order to
-		 * get that far.
+		 * 像这样丢弃最低有效的 subnet 位是正确的，因为在 subnet 层级决出的缩写
+		 * 比较，必然已经具有相等的 netmask_size/ip_bits() 值才能走到这一步。
 		 */
 		if (subnet_size > ABBREV_BITS_INET4_SUBNET)
 			subnet >>= subnet_size - ABBREV_BITS_INET4_SUBNET;
 
 		/*
-		 * Assemble the final abbreviated key without clobbering the ipfamily
-		 * bit that must remain a zero.
+		 * 组装最终的缩写键，同时不破坏必须保持为零的 ipfamily 位。
 		 */
 		res |= network | netmask_size | subnet;
 	}
@@ -755,16 +723,15 @@ network_abbrev_convert(Datum original, SortSupport ssup)
 #endif
 	{
 		/*
-		 * 4 byte datums, or IPv6 with 8 byte datums: Use as many of the
-		 * netmasked bits as will fit in final abbreviated key. Avoid
-		 * clobbering the ipfamily bit that was set earlier.
+		 * 4 字节 datum，或者配合 8 字节 datum 的 IPv6：使用尽可能多的网络掩码位
+		 * 填入最终缩写键。同时避免破坏先前已设置的 ipfamily 位。
 		 */
 		res |= network >> 1;
 	}
 
 	uss->input_count += 1;
 
-	/* Hash abbreviated key */
+	/* 对缩写键做哈希 */
 	if (uss->estimating)
 	{
 		uint32		tmp;
@@ -839,7 +806,7 @@ network_ne(PG_FUNCTION_ARGS)
 }
 
 /*
- * MIN/MAX support functions.
+ * 最小值/最大值支持函数。
  */
 Datum
 network_smaller(PG_FUNCTION_ARGS)
@@ -866,7 +833,7 @@ network_larger(PG_FUNCTION_ARGS)
 }
 
 /*
- * Support function for hash indexes on inet/cidr.
+ * 用于 inet/cidr 上哈希索引的支持函数。
  */
 Datum
 hashinet(PG_FUNCTION_ARGS)
@@ -874,7 +841,7 @@ hashinet(PG_FUNCTION_ARGS)
 	inet	   *addr = PG_GETARG_INET_PP(0);
 	int			addrsize = ip_addrsize(addr);
 
-	/* XXX this assumes there are no pad bytes in the data structure */
+	/* XXX 这里假设数据结构中不存在填充字节 */
 	return hash_any((unsigned char *) VARDATA_ANY(addr), addrsize + 2);
 }
 
@@ -889,7 +856,7 @@ hashinetextended(PG_FUNCTION_ARGS)
 }
 
 /*
- *	Boolean network-inclusion tests.
+ *	布尔网络包含测试。
  */
 Datum
 network_sub(PG_FUNCTION_ARGS)
@@ -967,7 +934,7 @@ network_overlap(PG_FUNCTION_ARGS)
 }
 
 /*
- * Planner support function for network subset/superset operators
+ * 用于网络子集/超集运算符的规划器支持函数
  */
 Datum
 network_subset_support(PG_FUNCTION_ARGS)
@@ -977,7 +944,7 @@ network_subset_support(PG_FUNCTION_ARGS)
 
 	if (IsA(rawreq, SupportRequestIndexCondition))
 	{
-		/* Try to convert operator/function call to index conditions */
+		/* 尝试将运算符/函数调用转换为索引条件 */
 		SupportRequestIndexCondition *req = (SupportRequestIndexCondition *) rawreq;
 
 		if (is_opclause(req->node))
@@ -992,7 +959,7 @@ network_subset_support(PG_FUNCTION_ARGS)
 									   req->funcid,
 									   req->opfamily);
 		}
-		else if (is_funcclause(req->node))	/* be paranoid */
+		else if (is_funcclause(req->node))	/* 保持谨慎 */
 		{
 			FuncExpr   *clause = (FuncExpr *) req->node;
 
@@ -1011,10 +978,9 @@ network_subset_support(PG_FUNCTION_ARGS)
 
 /*
  * match_network_function
- *	  Try to generate an indexqual for a network subset/superset function.
+ *	  尝试为网络子集/超集函数生成索引条件。
  *
- * This layer is just concerned with identifying the function and swapping
- * the arguments if necessary.
+ * 这一层只负责识别函数，并在必要时交换参数。
  */
 static List *
 match_network_function(Node *leftop,
@@ -1026,25 +992,25 @@ match_network_function(Node *leftop,
 	switch (funcid)
 	{
 		case F_NETWORK_SUB:
-			/* indexkey must be on the left */
+			/* 索引键必须在左侧 */
 			if (indexarg != 0)
 				return NIL;
 			return match_network_subset(leftop, rightop, false, opfamily);
 
 		case F_NETWORK_SUBEQ:
-			/* indexkey must be on the left */
+			/* 索引键必须在左侧 */
 			if (indexarg != 0)
 				return NIL;
 			return match_network_subset(leftop, rightop, true, opfamily);
 
 		case F_NETWORK_SUP:
-			/* indexkey must be on the right */
+			/* 索引键必须在右侧 */
 			if (indexarg != 1)
 				return NIL;
 			return match_network_subset(rightop, leftop, false, opfamily);
 
 		case F_NETWORK_SUPEQ:
-			/* indexkey must be on the right */
+			/* 索引键必须在右侧 */
 			if (indexarg != 1)
 				return NIL;
 			return match_network_subset(rightop, leftop, true, opfamily);
@@ -1052,9 +1018,8 @@ match_network_function(Node *leftop,
 		default:
 
 			/*
-			 * We'd only get here if somebody attached this support function
-			 * to an unexpected function.  Maybe we should complain, but for
-			 * now, do nothing.
+			 * 只有某人将这个支持函数附加到了一个预期之外的函数时，才会走到这里。
+			 * 也许我们应该报错，但目前先什么都不做。
 			 */
 			return NIL;
 	}
@@ -1062,7 +1027,7 @@ match_network_function(Node *leftop,
 
 /*
  * match_network_subset
- *	  Try to generate an indexqual for a network subset function.
+ *	  尝试为网络子集函数生成索引条件。
  */
 static List *
 match_network_subset(Node *leftop,
@@ -1080,11 +1045,10 @@ match_network_subset(Node *leftop,
 	Expr	   *expr;
 
 	/*
-	 * Can't do anything with a non-constant or NULL comparison value.
+	 * 对于非常量或 NULL 的比较值，无法做任何处理。
 	 *
-	 * Note that since we restrict ourselves to cases with a hard constant on
-	 * the RHS, it's a-fortiori a pseudoconstant, and we don't need to worry
-	 * about verifying that.
+	 * 注意，由于我们只处理 RHS 上带有硬常量的情况，它自然就是伪常量，因此
+	 * 我们无需操心去验证这一点。
 	 */
 	if (!IsA(rightop, Const) ||
 		((Const *) rightop)->constisnull)
@@ -1092,8 +1056,8 @@ match_network_subset(Node *leftop,
 	rightopval = ((Const *) rightop)->constvalue;
 
 	/*
-	 * create clause "key >= network_scan_first( rightopval )", or ">" if the
-	 * operator disallows equality.
+	 * 创建子句 "key >= network_scan_first( rightopval )"，若运算符不允许等值
+	 * 则为 ">"。
 	 */
 	opr1oid = get_opfamily_member_for_cmptype(opfamily, datatype, datatype, is_eq ? COMPARE_GE : COMPARE_GT);
 	if (opr1oid == InvalidOid)
@@ -1104,13 +1068,13 @@ match_network_subset(Node *leftop,
 	expr = make_opclause(opr1oid, BOOLOID, false,
 						 (Expr *) leftop,
 						 (Expr *) makeConst(datatype, -1,
-											InvalidOid, /* not collatable */
+											InvalidOid, /* 不可排序 */
 											-1, opr1right,
 											false, false),
 						 InvalidOid, InvalidOid);
 	result = list_make1(expr);
 
-	/* create clause "key <= network_scan_last( rightopval )" */
+	/* 创建子句 "key <= network_scan_last( rightopval )" */
 
 	opr2oid = get_opfamily_member_for_cmptype(opfamily, datatype, datatype, COMPARE_LE);
 	if (opr2oid == InvalidOid)
@@ -1121,7 +1085,7 @@ match_network_subset(Node *leftop,
 	expr = make_opclause(opr2oid, BOOLOID, false,
 						 (Expr *) leftop,
 						 (Expr *) makeConst(datatype, -1,
-											InvalidOid, /* not collatable */
+											InvalidOid, /* 不可排序 */
 											-1, opr2right,
 											false, false),
 						 InvalidOid, InvalidOid);
@@ -1132,7 +1096,7 @@ match_network_subset(Node *leftop,
 
 
 /*
- * Extract data from a network datatype.
+ * 从网络数据类型中提取数据。
  */
 Datum
 network_host(PG_FUNCTION_ARGS)
@@ -1141,14 +1105,14 @@ network_host(PG_FUNCTION_ARGS)
 	char	   *ptr;
 	char		tmp[sizeof("xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:255.255.255.255/128")];
 
-	/* force display of max bits, regardless of masklen... */
+	/* 强制显示最大位数，忽略掩码长度…… */
 	if (pg_inet_net_ntop(ip_family(ip), ip_addr(ip), ip_maxbits(ip),
 						 tmp, sizeof(tmp)) == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
 				 errmsg("could not format inet value: %m")));
 
-	/* Suppress /n if present (shouldn't happen now) */
+	/* 若存在 /n 则抑制之（现在本不该出现） */
 	if ((ptr = strchr(tmp, '/')) != NULL)
 		*ptr = '\0';
 
@@ -1156,9 +1120,8 @@ network_host(PG_FUNCTION_ARGS)
 }
 
 /*
- * network_show implements the inet and cidr casts to text.  This is not
- * quite the same behavior as network_out, hence we can't drop it in favor
- * of CoerceViaIO.
+ * network_show 实现了 inet 和 cidr 到 text 的强制转换。其行为与 network_out
+ * 并不完全相同，因此无法用 CoerceViaIO 取代它。
  */
 Datum
 network_show(PG_FUNCTION_ARGS)
@@ -1173,7 +1136,7 @@ network_show(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
 				 errmsg("could not format inet value: %m")));
 
-	/* Add /n if not present (which it won't be) */
+	/* 若不存在 /n 则补上（实际上不会缺失） */
 	if (strchr(tmp, '/') == NULL)
 	{
 		len = strlen(tmp);
@@ -1258,7 +1221,7 @@ network_broadcast(PG_FUNCTION_ARGS)
 	unsigned char *a,
 			   *b;
 
-	/* make sure any unused bits are zeroed */
+	/* 确保任何未使用的位都被清零 */
 	dst = (inet *) palloc0(sizeof(inet));
 
 	maxbytes = ip_addrsize(ip);
@@ -1302,7 +1265,7 @@ network_network(PG_FUNCTION_ARGS)
 	unsigned char *a,
 			   *b;
 
-	/* make sure any unused bits are zeroed */
+	/* 确保任何未使用的位都被清零 */
 	dst = (inet *) palloc0(sizeof(inet));
 
 	bits = ip_bits(ip);
@@ -1345,7 +1308,7 @@ network_netmask(PG_FUNCTION_ARGS)
 	unsigned char mask;
 	unsigned char *b;
 
-	/* make sure any unused bits are zeroed */
+	/* 确保任何未使用的位都被清零 */
 	dst = (inet *) palloc0(sizeof(inet));
 
 	bits = ip_bits(ip);
@@ -1388,7 +1351,7 @@ network_hostmask(PG_FUNCTION_ARGS)
 	unsigned char mask;
 	unsigned char *b;
 
-	/* make sure any unused bits are zeroed */
+	/* 确保任何未使用的位都被清零 */
 	dst = (inet *) palloc0(sizeof(inet));
 
 	maxbytes = ip_addrsize(ip);
@@ -1422,8 +1385,8 @@ network_hostmask(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns true if the addresses are from the same family, or false.  Used to
- * check that we can create a network which contains both of the networks.
+ * 如果两个地址来自同一地址族则返回 true，否则返回 false。用于检查我们是否能
+ * 够创建一个同时包含两个网络的网络。
  */
 Datum
 inet_same_family(PG_FUNCTION_ARGS)
@@ -1435,7 +1398,7 @@ inet_same_family(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns the smallest CIDR which contains both of the inputs.
+ * 返回同时包含两个输入的最小 CIDR。
  */
 Datum
 inet_merge(PG_FUNCTION_ARGS)
@@ -1456,12 +1419,11 @@ inet_merge(PG_FUNCTION_ARGS)
 }
 
 /*
- * Convert a value of a network datatype to an approximate scalar value.
- * This is used for estimating selectivities of inequality operators
- * involving network types.
+ * 将一个网络数据类型的值转换为近似标量值。
  *
- * On failure (e.g., unsupported typid), set *failure to true;
- * otherwise, that variable is not changed.
+ * 这用于估计涉及网络类型的不等运算符的选择率。
+ *
+ * 失败时（例如不支持的 typid），将 *failure 设为 true；否则该变量不变。
  */
 double
 convert_network_to_scalar(Datum value, Oid typid, bool *failure)
@@ -1477,7 +1439,7 @@ convert_network_to_scalar(Datum value, Oid typid, bool *failure)
 				int			i;
 
 				/*
-				 * Note that we don't use the full address for IPv6.
+				 * 注意，对于 IPv6 我们并不使用完整的地址。
 				 */
 				if (ip_family(ip) == PGSQL_AF_INET)
 					len = 4;
@@ -1521,14 +1483,13 @@ convert_network_to_scalar(Datum value, Oid typid, bool *failure)
 /*
  * int
  * bitncmp(l, r, n)
- *		compare bit masks l and r, for n bits.
- * return:
- *		<0, >0, or 0 in the libc tradition.
- * note:
- *		network byte order assumed.  this means 192.5.5.240/28 has
- *		0x11110000 in its fourth octet.
- * author:
- *		Paul Vixie (ISC), June 1996
+ *		比较位掩码 l 和 r，共 n 位。
+ * 返回值：
+ *		按 libc 惯例，返回 <0、>0 或 0。
+ * 说明：
+ *		假定采用网络字节序。这意味着 192.5.5.240/28 的第四个字节为 0x11110000。
+ * 作者：
+ *		Paul Vixie (ISC)，1996 年 6 月
  */
 int
 bitncmp(const unsigned char *l, const unsigned char *r, int n)
@@ -1560,9 +1521,9 @@ bitncmp(const unsigned char *l, const unsigned char *r, int n)
 }
 
 /*
- * bitncommon: compare bit masks l and r, for up to n bits.
+ * bitncommon：比较位掩码 l 和 r，最多 n 位。
  *
- * Returns the number of leading bits that match (0 to n).
+ * 返回相匹配的前导位数（0 到 n）。
  */
 int
 bitncommon(const unsigned char *l, const unsigned char *r, int n)
@@ -1570,27 +1531,27 @@ bitncommon(const unsigned char *l, const unsigned char *r, int n)
 	int			byte,
 				nbits;
 
-	/* number of bits to examine in last byte */
+	/* 最后一个字节中需要检查的位数 */
 	nbits = n % 8;
 
-	/* check whole bytes */
+	/* 检查完整的字节 */
 	for (byte = 0; byte < n / 8; byte++)
 	{
 		if (l[byte] != r[byte])
 		{
-			/* at least one bit in the last byte is not common */
+			/* 最后一个字节中至少有一个位不相同 */
 			nbits = 7;
 			break;
 		}
 	}
 
-	/* check bits in last partial byte */
+	/* 检查最后一个不完整字节中的位 */
 	if (nbits != 0)
 	{
-		/* calculate diff of first non-matching bytes */
+		/* 计算首个不匹配字节的差值 */
 		unsigned int diff = l[byte] ^ r[byte];
 
-		/* compare the bits from the most to the least */
+		/* 从最高位到最低位逐位比较 */
 		while ((diff >> (8 - nbits)) != 0)
 			nbits--;
 	}
@@ -1600,7 +1561,7 @@ bitncommon(const unsigned char *l, const unsigned char *r, int n)
 
 
 /*
- * Verify a CIDR address is OK (doesn't have bits set past the masklen)
+ * 验证 CIDR 地址是否合法（掩码长度之外没有设置位）
  */
 static bool
 addressOK(unsigned char *a, int bits, int family)
@@ -1646,11 +1607,10 @@ addressOK(unsigned char *a, int bits, int family)
 
 
 /*
- * These functions are used by planner to generate indexscan limits
- * for clauses a << b and a <<= b
+ * 这些函数被规划器用来为 a << b 与 a <<= b 这类子句生成索引扫描的边界。
  */
 
-/* return the minimal value for an IP on a given network */
+/* 返回给定网络上某个 IP 的最小值 */
 Datum
 network_scan_first(Datum in)
 {
@@ -1658,12 +1618,11 @@ network_scan_first(Datum in)
 }
 
 /*
- * return "last" IP on a given network. It's the broadcast address,
- * however, masklen has to be set to its max bits, since
- * 192.168.0.255/24 is considered less than 192.168.0.255/32
+ * 返回给定网络上的"最后"一个 IP。它是广播地址，但 masklen 必须设为它的最大
+ * 位数，因为 192.168.0.255/24 被认为小于 192.168.0.255/32。
  *
- * inet_set_masklen() hacked to max out the masklength to 128 for IPv6
- * and 32 for IPv4 when given '-1' as argument.
+ * inet_set_masklen() 被改造为：当传入参数 '-1' 时，将 IPv6 的掩码长度取最大
+ * 128、IPv4 取最大 32。
  */
 Datum
 network_scan_last(Datum in)
@@ -1675,7 +1634,7 @@ network_scan_last(Datum in)
 
 
 /*
- * IP address that the client is connecting from (NULL if Unix socket)
+ * 客户端连接所用的 IP 地址（若为 Unix 套接字则为 NULL）
  */
 Datum
 inet_client_addr(PG_FUNCTION_ARGS)
@@ -1712,7 +1671,7 @@ inet_client_addr(PG_FUNCTION_ARGS)
 
 
 /*
- * port that the client is connecting from (NULL if Unix socket)
+ * 客户端连接所用的端口（若为 Unix 套接字则为 NULL）
  */
 Datum
 inet_client_port(PG_FUNCTION_ARGS)
@@ -1747,7 +1706,7 @@ inet_client_port(PG_FUNCTION_ARGS)
 
 
 /*
- * IP address that the server accepted the connection on (NULL if Unix socket)
+ * 服务器接受连接的 IP 地址（若为 Unix 套接字则为 NULL）
  */
 Datum
 inet_server_addr(PG_FUNCTION_ARGS)
@@ -1784,7 +1743,7 @@ inet_server_addr(PG_FUNCTION_ARGS)
 
 
 /*
- * port that the server accepted the connection on (NULL if Unix socket)
+ * 服务器接受连接的端口（若为 Unix 套接字则为 NULL）
  */
 Datum
 inet_server_port(PG_FUNCTION_ARGS)
@@ -1927,22 +1886,18 @@ internal_inetpl(inet *ip, int64 addend)
 			carry >>= 8;
 
 			/*
-			 * We have to be careful about right-shifting addend because
-			 * right-shift isn't portable for negative values, while simply
-			 * dividing by 256 doesn't work (the standard rounding is in the
-			 * wrong direction, besides which there may be machines out there
-			 * that round the wrong way).  So, explicitly clear the low-order
-			 * byte to remove any doubt about the correct result of the
-			 * division, and then divide rather than shift.
+			 * 对 addend 做右移时必须小心，因为右移对负值而言并非可移植操作，而
+			 * 简单地除以 256 也行不通（标准舍入方向不对，此外还可能存在舍入方式
+			 * 相反的机器）。因此，我们显式清空低字节以消解除法正确结果上的疑虑，
+			 * 然后采用除法而非移位。
 			 */
 			addend &= ~((int64) 0xFF);
 			addend /= 0x100;
 		}
 
 		/*
-		 * At this point we should have addend and carry both zero if original
-		 * addend was >= 0, or addend -1 and carry 1 if original addend was <
-		 * 0.  Anything else means overflow.
+		 * 此时，若原始 addend 为 >= 0，则 addend 和 carry 都应为零；若原始 addend
+		 * 为 < 0，则 addend 应为 -1 且 carry 为 1。其他任何情况都意味着溢出。
 		 */
 		if (!((addend == 0 && carry == 0) ||
 			  (addend == -1 && carry == 1)))
@@ -1993,10 +1948,9 @@ inetmi(PG_FUNCTION_ARGS)
 	else
 	{
 		/*
-		 * We form the difference using the traditional complement, increment,
-		 * and add rule, with the increment part being handled by starting the
-		 * carry off at 1.  If you don't think integer arithmetic is done in
-		 * two's complement, too bad.
+		 * 我们使用传统的"取补、加一、相加"规则来构造差值，其中"加一"部分通过令
+		 * 初始 carry 为 1 来实现。如果你不认为整数运算采用二进制补码形式，那也
+		 * 只能如此了。
 		 */
 		int			nb = ip_addrsize(ip);
 		int			byte = 0;
@@ -2017,9 +1971,8 @@ inetmi(PG_FUNCTION_ARGS)
 			else
 			{
 				/*
-				 * Input wider than int64: check for overflow.  All bytes to
-				 * the left of what will fit should be 0 or 0xFF, depending on
-				 * sign of the now-complete result.
+				 * 输入宽于 int64：检查溢出。在能容纳的范围左侧的所有字节，应根据
+				 * 当前已完成结果的符号，分别为 0 或 0xFF。
 				 */
 				if ((res < 0) ? (lobyte != 0xFF) : (lobyte != 0))
 					ereport(ERROR,
@@ -2031,8 +1984,7 @@ inetmi(PG_FUNCTION_ARGS)
 		}
 
 		/*
-		 * If input is narrower than int64, overflow is not possible, but we
-		 * have to do proper sign extension.
+		 * 如果输入窄于 int64，则不可能溢出，但我们必须做正确的符号扩展。
 		 */
 		if (carry == 0 && byte < sizeof(int64))
 			res |= ((uint64) (int64) -1) << (byte * 8);
@@ -2043,18 +1995,16 @@ inetmi(PG_FUNCTION_ARGS)
 
 
 /*
- * clean_ipv6_addr --- remove any '%zone' part from an IPv6 address string
+ * clean_ipv6_addr --- 从 IPv6 地址字符串中移除任何 '%zone' 部分
  *
- * XXX This should go away someday!
+ * XXX 这终有一天应该被移除！
  *
- * This is a kluge needed because we don't yet support zones in stored inet
- * values.  Since the result of getnameinfo() might include a zone spec,
- * call this to remove it anywhere we want to feed getnameinfo's output to
- * network_in.  Beats failing entirely.
+ * 这是一个权宜之计，因为我们尚未在存储的 inet 值中支持 zone。由于
+ * getnameinfo() 的结果可能包含 zone 说明，因此在任何要将 getnameinfo() 输出
+ * 喂给 network_in 的地方都调用本函数来移除它。总好过完全失败。
  *
- * An alternative approach would be to let network_in ignore %-parts for
- * itself, but that would mean we'd silently drop zone specs in user input,
- * which seems not such a good idea.
+ * 另一种做法是让 network_in 自己忽略 %-部分，但那意味着我们会静默丢弃用户
+ * 输入中的 zone 说明，这似乎不是个好主意。
  */
 void
 clean_ipv6_addr(int addr_family, char *addr)

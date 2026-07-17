@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * date.c
- *	  implements DATE and TIME data types specified in SQL standard
+ *	  实现 SQL 标准中规定的 DATE 和 TIME 数据类型
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
@@ -38,15 +38,15 @@
 #include "utils/sortsupport.h"
 
 /*
- * gcc's -ffast-math switch breaks routines that expect exact results from
- * expressions like timeval / SECS_PER_HOUR, where timeval is double.
+ * gcc 的 -ffast-math 选项会破坏那些期望从 timeval / SECS_PER_HOUR
+ * （其中 timeval 为 double 类型）这类表达式得到精确结果的例程。
  */
 #ifdef __FAST_MATH__
 #error -ffast-math is known to break this code
 #endif
 
 
-/* common code for timetypmodin and timetztypmodin */
+/* timetypmodin 和 timetztypmodin 共用的代码 */
 static int32
 anytime_typmodin(bool istz, ArrayType *ta)
 {
@@ -56,8 +56,8 @@ anytime_typmodin(bool istz, ArrayType *ta)
 	tl = ArrayGetIntegerTypmods(ta, &n);
 
 	/*
-	 * we're not too tense about good error message here because grammar
-	 * shouldn't allow wrong number of modifiers for TIME
+	 * 这里我们不需要对错误信息过于苛求，因为语法分析器本就不允许
+	 * TIME 出现错误数量的修饰符
 	 */
 	if (n != 1)
 		ereport(ERROR,
@@ -67,7 +67,7 @@ anytime_typmodin(bool istz, ArrayType *ta)
 	return anytime_typmod_check(istz, tl[0]);
 }
 
-/* exported so parse_expr.c can use it */
+/* 导出该符号以便 parse_expr.c 能够使用 */
 int32
 anytime_typmod_check(bool istz, int32 typmod)
 {
@@ -89,7 +89,7 @@ anytime_typmod_check(bool istz, int32 typmod)
 	return typmod;
 }
 
-/* common code for timetypmodout and timetztypmodout */
+/* timetypmodout 和 timetztypmodout 共用的代码 */
 static char *
 anytime_typmodout(bool istz, int32 typmod)
 {
@@ -103,12 +103,12 @@ anytime_typmodout(bool istz, int32 typmod)
 
 
 /*****************************************************************************
- *	 Date ADT
+ *	 日期 ADT
  *****************************************************************************/
 
 
 /* date_in()
- * Given date text string, convert to internal date format.
+ * 将日期文本字符串转换为内部日期格式。
  */
 Datum
 date_in(PG_FUNCTION_ARGS)
@@ -161,7 +161,7 @@ date_in(PG_FUNCTION_ARGS)
 			PG_RETURN_NULL();
 	}
 
-	/* Prevent overflow in Julian-day routines */
+	/* 防止在儒略日例程中发生溢出 */
 	if (!IS_VALID_JULIAN(tm->tm_year, tm->tm_mon, tm->tm_mday))
 		ereturn(escontext, (Datum) 0,
 				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
@@ -169,7 +169,7 @@ date_in(PG_FUNCTION_ARGS)
 
 	date = date2j(tm->tm_year, tm->tm_mon, tm->tm_mday) - POSTGRES_EPOCH_JDATE;
 
-	/* Now check for just-out-of-range dates */
+	/* 再检查是否刚好处于日期范围之外 */
 	if (!IS_VALID_DATE(date))
 		ereturn(escontext, (Datum) 0,
 				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
@@ -179,7 +179,7 @@ date_in(PG_FUNCTION_ARGS)
 }
 
 /* date_out()
- * Given internal format date, convert to text string.
+ * 将内部格式的日期转换为文本字符串。
  */
 Datum
 date_out(PG_FUNCTION_ARGS)
@@ -204,7 +204,7 @@ date_out(PG_FUNCTION_ARGS)
 }
 
 /*
- *		date_recv			- converts external binary format to date
+ *		date_recv			- 将外部二进制格式转换为 date
  */
 Datum
 date_recv(PG_FUNCTION_ARGS)
@@ -214,9 +214,9 @@ date_recv(PG_FUNCTION_ARGS)
 
 	result = (DateADT) pq_getmsgint(buf, sizeof(DateADT));
 
-	/* Limit to the same range that date_in() accepts. */
+	/* 限制为与 date_in() 可接受的范围相同。 */
 	if (DATE_NOT_FINITE(result))
-		 /* ok */ ;
+		 /* 正常 */ ;
 	else if (!IS_VALID_DATE(result))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
@@ -226,7 +226,7 @@ date_recv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		date_send			- converts date to binary format
+ *		date_send			- 将 date 转换为二进制格式
  */
 Datum
 date_send(PG_FUNCTION_ARGS)
@@ -240,7 +240,7 @@ date_send(PG_FUNCTION_ARGS)
 }
 
 /*
- *		make_date			- date constructor
+ *		make_date			- 日期构造器
  */
 Datum
 make_date(PG_FUNCTION_ARGS)
@@ -254,7 +254,7 @@ make_date(PG_FUNCTION_ARGS)
 	tm.tm_mon = PG_GETARG_INT32(1);
 	tm.tm_mday = PG_GETARG_INT32(2);
 
-	/* Handle negative years as BC */
+	/* 将负数年份按公元前（BC）处理 */
 	if (tm.tm_year < 0)
 	{
 		int			year = tm.tm_year;
@@ -276,7 +276,7 @@ make_date(PG_FUNCTION_ARGS)
 				 errmsg("date field value out of range: %d-%02d-%02d",
 						tm.tm_year, tm.tm_mon, tm.tm_mday)));
 
-	/* Prevent overflow in Julian-day routines */
+	/* 防止在儒略日例程中发生溢出 */
 	if (!IS_VALID_JULIAN(tm.tm_year, tm.tm_mon, tm.tm_mday))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
@@ -285,7 +285,7 @@ make_date(PG_FUNCTION_ARGS)
 
 	date = date2j(tm.tm_year, tm.tm_mon, tm.tm_mday) - POSTGRES_EPOCH_JDATE;
 
-	/* Now check for just-out-of-range dates */
+	/* 再检查是否刚好处于日期范围之外 */
 	if (!IS_VALID_DATE(date))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
@@ -296,7 +296,7 @@ make_date(PG_FUNCTION_ARGS)
 }
 
 /*
- * Convert reserved date values to string.
+ * 将特殊的保留日期值转换为字符串。
  */
 void
 EncodeSpecialDate(DateADT dt, char *str)
@@ -305,13 +305,13 @@ EncodeSpecialDate(DateADT dt, char *str)
 		strcpy(str, EARLY);
 	else if (DATE_IS_NOEND(dt))
 		strcpy(str, LATE);
-	else						/* shouldn't happen */
+	else						/* 不应发生 */
 		elog(ERROR, "invalid argument for EncodeSpecialDate");
 }
 
 
 /*
- * GetSQLCurrentDate -- implements CURRENT_DATE
+ * GetSQLCurrentDate -- 实现 CURRENT_DATE
  */
 DateADT
 GetSQLCurrentDate(void)
@@ -326,9 +326,8 @@ GetSQLCurrentDate(void)
 	GetCurrentDateTime(&tm);
 
 	/*
-	 * date2j involves several integer divisions; moreover, unless our session
-	 * lives across local midnight, we don't really have to do it more than
-	 * once.  So it seems worth having a separate cache here.
+	 * date2j 涉及多次整数除法；此外，除非我们的会话跨越本地午夜，
+	 * 否则实际上不必多次计算。因此在这里单独做一个缓存似乎是值得的。
 	 */
 	if (tm.tm_year != cache_year ||
 		tm.tm_mon != cache_mon ||
@@ -344,7 +343,7 @@ GetSQLCurrentDate(void)
 }
 
 /*
- * GetSQLCurrentTime -- implements CURRENT_TIME, CURRENT_TIME(n)
+ * GetSQLCurrentTime -- 实现 CURRENT_TIME、CURRENT_TIME(n)
  */
 TimeTzADT *
 GetSQLCurrentTime(int32 typmod)
@@ -364,7 +363,7 @@ GetSQLCurrentTime(int32 typmod)
 }
 
 /*
- * GetSQLLocalTime -- implements LOCALTIME, LOCALTIME(n)
+ * GetSQLLocalTime -- 实现 LOCALTIME、LOCALTIME(n)
  */
 TimeADT
 GetSQLLocalTime(int32 typmod)
@@ -384,7 +383,7 @@ GetSQLLocalTime(int32 typmod)
 
 
 /*
- * Comparison functions for dates
+ * 日期的比较函数
  */
 
 Datum
@@ -470,7 +469,7 @@ date_decrement(Relation rel, Datum existing, bool *underflow)
 
 	if (dexisting == DATEVAL_NOBEGIN)
 	{
-		/* return value is undefined */
+		/* 返回值未定义 */
 		*underflow = true;
 		return (Datum) 0;
 	}
@@ -486,7 +485,7 @@ date_increment(Relation rel, Datum existing, bool *overflow)
 
 	if (dexisting == DATEVAL_NOEND)
 	{
-		/* return value is undefined */
+		/* 返回值未定义 */
 		*overflow = true;
 		return (Datum) 0;
 	}
@@ -546,7 +545,7 @@ date_smaller(PG_FUNCTION_ARGS)
 	PG_RETURN_DATEADT((dateVal1 < dateVal2) ? dateVal1 : dateVal2);
 }
 
-/* Compute difference between two dates in days.
+/* 计算两个日期之间相差的天数。
  */
 Datum
 date_mi(PG_FUNCTION_ARGS)
@@ -562,8 +561,8 @@ date_mi(PG_FUNCTION_ARGS)
 	PG_RETURN_INT32((int32) (dateVal1 - dateVal2));
 }
 
-/* Add a number of days to a date, giving a new date.
- * Must handle both positive and negative numbers of days.
+/* 给日期加上若干天，得到一个新的日期。
+ * 必须同时处理正数和负数天数的情况。
  */
 Datum
 date_pli(PG_FUNCTION_ARGS)
@@ -573,11 +572,11 @@ date_pli(PG_FUNCTION_ARGS)
 	DateADT		result;
 
 	if (DATE_NOT_FINITE(dateVal))
-		PG_RETURN_DATEADT(dateVal); /* can't change infinity */
+		PG_RETURN_DATEADT(dateVal); /* 无法改变无穷值 */
 
 	result = dateVal + days;
 
-	/* Check for integer overflow and out-of-allowed-range */
+	/* 检查整数溢出以及是否超出允许的范围 */
 	if ((days >= 0 ? (result < dateVal) : (result > dateVal)) ||
 		!IS_VALID_DATE(result))
 		ereport(ERROR,
@@ -587,7 +586,7 @@ date_pli(PG_FUNCTION_ARGS)
 	PG_RETURN_DATEADT(result);
 }
 
-/* Subtract a number of days from a date, giving a new date.
+/* 从日期中减去若干天，得到一个新的日期。
  */
 Datum
 date_mii(PG_FUNCTION_ARGS)
@@ -597,11 +596,11 @@ date_mii(PG_FUNCTION_ARGS)
 	DateADT		result;
 
 	if (DATE_NOT_FINITE(dateVal))
-		PG_RETURN_DATEADT(dateVal); /* can't change infinity */
+		PG_RETURN_DATEADT(dateVal); /* 无法改变无穷值 */
 
 	result = dateVal - days;
 
-	/* Check for integer overflow and out-of-allowed-range */
+	/* 检查整数溢出以及是否超出允许的范围 */
 	if ((days >= 0 ? (result > dateVal) : (result < dateVal)) ||
 		!IS_VALID_DATE(result))
 		ereport(ERROR,
@@ -613,17 +612,17 @@ date_mii(PG_FUNCTION_ARGS)
 
 
 /*
- * Promote date to timestamp.
+ * 将 date 提升为 timestamp。
  *
- * On successful conversion, *overflow is set to zero if it's not NULL.
+ * 转换成功时，若 overflow 不为 NULL，则将其置为零。
  *
- * If the date is finite but out of the valid range for timestamp, then:
- * if overflow is NULL, we throw an out-of-range error.
- * if overflow is not NULL, we store +1 or -1 there to indicate the sign
- * of the overflow, and return the appropriate timestamp infinity.
+ * 如果日期是有限的，但超出了 timestamp 的有效范围，则：
+ * 若 overflow 为 NULL，我们抛出超出范围的错误。
+ * 若 overflow 不为 NULL，我们在此处存入 +1 或 -1 以表示溢出的符号，
+ * 并返回相应的 timestamp 无穷值。
  *
- * Note: *overflow = -1 is actually not possible currently, since both
- * datatypes have the same lower bound, Julian day zero.
+ * 注意：*overflow = -1 目前实际上不可能出现，因为两种数据类型的
+ * 下界相同，均为儒略日零。
  */
 Timestamp
 date2timestamp_opt_overflow(DateADT dateVal, int *overflow)
@@ -640,8 +639,7 @@ date2timestamp_opt_overflow(DateADT dateVal, int *overflow)
 	else
 	{
 		/*
-		 * Since dates have the same minimum values as timestamps, only upper
-		 * boundary need be checked for overflow.
+		 * 由于日期与 timestamp 具有相同的最小值，因此只需检查上边界是否溢出。
 		 */
 		if (dateVal >= (TIMESTAMP_END_JULIAN - POSTGRES_EPOCH_JDATE))
 		{
@@ -659,7 +657,7 @@ date2timestamp_opt_overflow(DateADT dateVal, int *overflow)
 			}
 		}
 
-		/* date is days since 2000, timestamp is microseconds since same... */
+		/* date 是自 2000 年起的天数，timestamp 是自该年起的微秒数…… */
 		result = dateVal * USECS_PER_DAY;
 	}
 
@@ -667,7 +665,7 @@ date2timestamp_opt_overflow(DateADT dateVal, int *overflow)
 }
 
 /*
- * Promote date to timestamp, throwing error for overflow.
+ * 将 date 提升为 timestamp，溢出时抛出错误。
  */
 static TimestampTz
 date2timestamp(DateADT dateVal)
@@ -676,14 +674,14 @@ date2timestamp(DateADT dateVal)
 }
 
 /*
- * Promote date to timestamp with time zone.
+ * 将 date 提升为带时区的 timestamp（timestamptz）。
  *
- * On successful conversion, *overflow is set to zero if it's not NULL.
+ * 转换成功时，若 overflow 不为 NULL，则将其置为零。
  *
- * If the date is finite but out of the valid range for timestamptz, then:
- * if overflow is NULL, we throw an out-of-range error.
- * if overflow is not NULL, we store +1 or -1 there to indicate the sign
- * of the overflow, and return the appropriate timestamptz infinity.
+ * 如果日期是有限的，但超出了 timestamptz 的有效范围，则：
+ * 若 overflow 为 NULL，我们抛出超出范围的错误。
+ * 若 overflow 不为 NULL，我们在此处存入 +1 或 -1 以表示溢出的符号，
+ * 并返回相应的 timestamptz 无穷值。
  */
 TimestampTz
 date2timestamptz_opt_overflow(DateADT dateVal, int *overflow)
@@ -703,8 +701,7 @@ date2timestamptz_opt_overflow(DateADT dateVal, int *overflow)
 	else
 	{
 		/*
-		 * Since dates have the same minimum values as timestamps, only upper
-		 * boundary need be checked for overflow.
+		 * 由于日期与 timestamp 具有相同的最小值，因此只需检查上边界是否溢出。
 		 */
 		if (dateVal >= (TIMESTAMP_END_JULIAN - POSTGRES_EPOCH_JDATE))
 		{
@@ -732,8 +729,8 @@ date2timestamptz_opt_overflow(DateADT dateVal, int *overflow)
 		result = dateVal * USECS_PER_DAY + tz * USECS_PER_SEC;
 
 		/*
-		 * Since it is possible to go beyond allowed timestamptz range because
-		 * of time zone, check for allowed timestamp range after adding tz.
+		 * 由于加上时区后有可能超出允许的 timestamptz 范围，
+		 * 因此在加上时区之后需检查 timestamp 范围是否有效。
 		 */
 		if (!IS_VALID_TIMESTAMP(result))
 		{
@@ -763,7 +760,7 @@ date2timestamptz_opt_overflow(DateADT dateVal, int *overflow)
 }
 
 /*
- * Promote date to timestamptz, throwing error for overflow.
+ * 将 date 提升为 timestamptz，溢出时抛出错误。
  */
 static TimestampTz
 date2timestamptz(DateADT dateVal)
@@ -774,12 +771,10 @@ date2timestamptz(DateADT dateVal)
 /*
  * date2timestamp_no_overflow
  *
- * This is chartered to produce a double value that is numerically
- * equivalent to the corresponding Timestamp value, if the date is in the
- * valid range of Timestamps, but in any case not throw an overflow error.
- * We can do this since the numerical range of double is greater than
- * that of non-erroneous timestamps.  The results are currently only
- * used for statistical estimation purposes.
+ * 该函数的职责是产生一个 double 值，当日期处于 Timestamp 的有效范围内时，
+ * 该值与对应的 Timestamp 数值相等；但无论如何都不会抛出溢出错误。
+ * 我们可以这样做，因为 double 的数值范围大于非错误 timestamp 的范围。
+ * 目前其结果仅用于统计估算。
  */
 double
 date2timestamp_no_overflow(DateADT dateVal)
@@ -792,7 +787,7 @@ date2timestamp_no_overflow(DateADT dateVal)
 		result = DBL_MAX;
 	else
 	{
-		/* date is days since 2000, timestamp is microseconds since same... */
+		/* date 是自 2000 年起的天数，timestamp 是自该年起的微秒数…… */
 		result = dateVal * (double) USECS_PER_DAY;
 	}
 
@@ -801,7 +796,7 @@ date2timestamp_no_overflow(DateADT dateVal)
 
 
 /*
- * Crosstype comparison functions for dates
+ * 跨类型的日期比较函数
  */
 
 int32
@@ -813,7 +808,7 @@ date_cmp_timestamp_internal(DateADT dateVal, Timestamp dt2)
 	dt1 = date2timestamp_opt_overflow(dateVal, &overflow);
 	if (overflow > 0)
 	{
-		/* dt1 is larger than any finite timestamp, but less than infinity */
+		/* dt1 大于任何有限的 timestamp，但小于无穷大 */
 		return TIMESTAMP_IS_NOEND(dt2) ? -1 : +1;
 	}
 	Assert(overflow == 0);		/* -1 case cannot occur */
@@ -893,12 +888,12 @@ date_cmp_timestamptz_internal(DateADT dateVal, TimestampTz dt2)
 	dt1 = date2timestamptz_opt_overflow(dateVal, &overflow);
 	if (overflow > 0)
 	{
-		/* dt1 is larger than any finite timestamp, but less than infinity */
+		/* dt1 大于任何有限的 timestamp，但小于无穷大 */
 		return TIMESTAMP_IS_NOEND(dt2) ? -1 : +1;
 	}
 	if (overflow < 0)
 	{
-		/* dt1 is less than any finite timestamp, but more than -infinity */
+		/* dt1 小于任何有限的 timestamp，但大于负无穷大 */
 		return TIMESTAMP_IS_NOBEGIN(dt2) ? +1 : -1;
 	}
 
@@ -1095,10 +1090,10 @@ timestamptz_cmp_date(PG_FUNCTION_ARGS)
 }
 
 /*
- * in_range support function for date.
+ * date 的 in_range 支持函数。
  *
- * We implement this by promoting the dates to timestamp (without time zone)
- * and then using the timestamp-and-interval in_range function.
+ * 我们的实现方式是先将日期提升为 timestamp（不带时区），
+ * 然后再使用 timestamp 与 interval 的 in_range 函数。
  */
 Datum
 in_range_date_interval(PG_FUNCTION_ARGS)
@@ -1111,7 +1106,7 @@ in_range_date_interval(PG_FUNCTION_ARGS)
 	Timestamp	valStamp;
 	Timestamp	baseStamp;
 
-	/* XXX we could support out-of-range cases here, perhaps */
+	/* XXX 或许我们也可以在此时支持超出范围的情况 */
 	valStamp = date2timestamp(val);
 	baseStamp = date2timestamp(base);
 
@@ -1125,7 +1120,7 @@ in_range_date_interval(PG_FUNCTION_ARGS)
 
 
 /* extract_date()
- * Extract specified field from date type.
+ * 从 date 类型中提取指定的字段。
  */
 Datum
 extract_date(PG_FUNCTION_ARGS)
@@ -1152,7 +1147,7 @@ extract_date(PG_FUNCTION_ARGS)
 	{
 		switch (val)
 		{
-				/* Oscillating units */
+				/* 振荡类单位 */
 			case DTK_DAY:
 			case DTK_MONTH:
 			case DTK_QUARTER:
@@ -1163,7 +1158,7 @@ extract_date(PG_FUNCTION_ARGS)
 				PG_RETURN_NULL();
 				break;
 
-				/* Monotonically-increasing units */
+				/* 单调递增类单位 */
 			case DTK_YEAR:
 			case DTK_DECADE:
 			case DTK_CENTURY:
@@ -1214,12 +1209,12 @@ extract_date(PG_FUNCTION_ARGS)
 				if (year > 0)
 					intresult = year;
 				else
-					/* there is no year 0, just 1 BC and 1 AD */
+					/* 不存在公元 0 年，只有公元前 1 年和公元 1 年 */
 					intresult = year - 1;
 				break;
 
 			case DTK_DECADE:
-				/* see comments in timestamp_part */
+				/* 参见 timestamp_part 中的注释 */
 				if (year >= 0)
 					intresult = year / 10;
 				else
@@ -1227,7 +1222,7 @@ extract_date(PG_FUNCTION_ARGS)
 				break;
 
 			case DTK_CENTURY:
-				/* see comments in timestamp_part */
+				/* 参见 timestamp_part 中的注释 */
 				if (year > 0)
 					intresult = (year + 99) / 100;
 				else
@@ -1235,7 +1230,7 @@ extract_date(PG_FUNCTION_ARGS)
 				break;
 
 			case DTK_MILLENNIUM:
-				/* see comments in timestamp_part */
+				/* 参见 timestamp_part 中的注释 */
 				if (year > 0)
 					intresult = (year + 999) / 1000;
 				else
@@ -1248,7 +1243,7 @@ extract_date(PG_FUNCTION_ARGS)
 
 			case DTK_ISOYEAR:
 				intresult = date2isoyear(year, mon, mday);
-				/* Adjust BC years */
+				/* 调整公元前（BC）年份 */
 				if (intresult <= 0)
 					intresult -= 1;
 				break;
@@ -1301,11 +1296,11 @@ extract_date(PG_FUNCTION_ARGS)
 }
 
 
-/* Add an interval to a date, giving a new date.
- * Must handle both positive and negative intervals.
+/* 给日期加上一个 interval，得到一个新的日期。
+ * 必须同时处理正数和负数 interval。
  *
- * We implement this by promoting the date to timestamp (without time zone)
- * and then using the timestamp plus interval function.
+ * 我们的实现方式是先将日期提升为 timestamp（不带时区），
+ * 然后再使用 timestamp 加 interval 的函数。
  */
 Datum
 date_pl_interval(PG_FUNCTION_ARGS)
@@ -1321,11 +1316,11 @@ date_pl_interval(PG_FUNCTION_ARGS)
 							   PointerGetDatum(span));
 }
 
-/* Subtract an interval from a date, giving a new date.
- * Must handle both positive and negative intervals.
+/* 从日期中减去一个 interval，得到一个新的日期。
+ * 必须同时处理正数和负数 interval。
  *
- * We implement this by promoting the date to timestamp (without time zone)
- * and then using the timestamp minus interval function.
+ * 我们的实现方式是先将日期提升为 timestamp（不带时区），
+ * 然后再使用 timestamp 减 interval 的函数。
  */
 Datum
 date_mi_interval(PG_FUNCTION_ARGS)
@@ -1342,7 +1337,7 @@ date_mi_interval(PG_FUNCTION_ARGS)
 }
 
 /* date_timestamp()
- * Convert date to timestamp data type.
+ * 将 date 转换为 timestamp 数据类型。
  */
 Datum
 date_timestamp(PG_FUNCTION_ARGS)
@@ -1356,7 +1351,7 @@ date_timestamp(PG_FUNCTION_ARGS)
 }
 
 /* timestamp_date()
- * Convert timestamp to date data type.
+ * 将 timestamp 转换为 date 数据类型。
  */
 Datum
 timestamp_date(PG_FUNCTION_ARGS)
@@ -1386,7 +1381,7 @@ timestamp_date(PG_FUNCTION_ARGS)
 
 
 /* date_timestamptz()
- * Convert date to timestamp with time zone data type.
+ * 将 date 转换为带时区的 timestamp 数据类型。
  */
 Datum
 date_timestamptz(PG_FUNCTION_ARGS)
@@ -1401,7 +1396,7 @@ date_timestamptz(PG_FUNCTION_ARGS)
 
 
 /* timestamptz_date()
- * Convert timestamp with time zone to date data type.
+ * 将带时区的 timestamp 转换为 date 数据类型。
  */
 Datum
 timestamptz_date(PG_FUNCTION_ARGS)
@@ -1432,7 +1427,7 @@ timestamptz_date(PG_FUNCTION_ARGS)
 
 
 /*****************************************************************************
- *	 Time ADT
+ *	 时间 ADT
  *****************************************************************************/
 
 Datum
@@ -1475,7 +1470,7 @@ time_in(PG_FUNCTION_ARGS)
 }
 
 /* tm2time()
- * Convert a tm structure to a time data type.
+ * 将 tm 结构转换为 time 数据类型。
  */
 int
 tm2time(struct pg_tm *tm, fsec_t fsec, TimeADT *result)
@@ -1486,12 +1481,12 @@ tm2time(struct pg_tm *tm, fsec_t fsec, TimeADT *result)
 }
 
 /* time_overflows()
- * Check to see if a broken-down time-of-day is out of range.
+ * 检查分解后的当日时间是否超出范围。
  */
 bool
 time_overflows(int hour, int min, int sec, fsec_t fsec)
 {
-	/* Range-check the fields individually. */
+	/* 逐个检查各字段是否在范围内。 */
 	if (hour < 0 || hour > HOURS_PER_DAY ||
 		min < 0 || min >= MINS_PER_HOUR ||
 		sec < 0 || sec > SECS_PER_MINUTE ||
@@ -1499,8 +1494,8 @@ time_overflows(int hour, int min, int sec, fsec_t fsec)
 		return true;
 
 	/*
-	 * Because we allow, eg, hour = 24 or sec = 60, we must check separately
-	 * that the total time value doesn't exceed 24:00:00.
+	 * 因为我们允许例如 hour = 24 或 sec = 60 这样的取值，
+	 * 所以必须单独检查总时间值不超过 24:00:00。
 	 */
 	if ((((((hour * MINS_PER_HOUR + min) * SECS_PER_MINUTE)
 		   + sec) * USECS_PER_SEC) + fsec) > USECS_PER_DAY)
@@ -1510,20 +1505,20 @@ time_overflows(int hour, int min, int sec, fsec_t fsec)
 }
 
 /* float_time_overflows()
- * Same, when we have seconds + fractional seconds as one "double" value.
+ * 同上，但此时秒数与小数秒合并为一个 "double" 值。
  */
 bool
 float_time_overflows(int hour, int min, double sec)
 {
-	/* Range-check the fields individually. */
+	/* 逐个检查各字段是否在范围内。 */
 	if (hour < 0 || hour > HOURS_PER_DAY ||
 		min < 0 || min >= MINS_PER_HOUR)
 		return true;
 
 	/*
-	 * "sec", being double, requires extra care.  Cope with NaN, and round off
-	 * before applying the range check to avoid unexpected errors due to
-	 * imprecise input.  (We assume rint() behaves sanely with infinities.)
+	 * "sec" 是 double 类型，需要额外小心。要处理 NaN，并在进行范围检查之前
+	 * 先四舍五入，以避免因输入不精确而产生意外错误。
+	 * （我们假设 rint() 在无穷大时也能正常处理。）
 	 */
 	if (isnan(sec))
 		return true;
@@ -1532,9 +1527,9 @@ float_time_overflows(int hour, int min, double sec)
 		return true;
 
 	/*
-	 * Because we allow, eg, hour = 24 or sec = 60, we must check separately
-	 * that the total time value doesn't exceed 24:00:00.  This must match the
-	 * way that callers will convert the fields to a time.
+	 * 因为我们允许例如 hour = 24 或 sec = 60 这样的取值，
+	 * 所以必须单独检查总时间值不超过 24:00:00。这里必须与调用方将这些字段
+	 * 转换为 time 的方式保持一致。
 	 */
 	if (((((hour * MINS_PER_HOUR + min) * SECS_PER_MINUTE)
 		  * USECS_PER_SEC) + (int64) sec) > USECS_PER_DAY)
@@ -1545,9 +1540,9 @@ float_time_overflows(int hour, int min, double sec)
 
 
 /* time2tm()
- * Convert time data type to POSIX time structure.
+ * 将 time 数据类型转换为 POSIX 时间结构。
  *
- * Note that only the hour/min/sec/fractional-sec fields are filled in.
+ * 注意：只填充 hour/min/sec/小数秒 这几个字段。
  */
 int
 time2tm(TimeADT time, struct pg_tm *tm, fsec_t *fsec)
@@ -1580,7 +1575,7 @@ time_out(PG_FUNCTION_ARGS)
 }
 
 /*
- *		time_recv			- converts external binary format to time
+ *		time_recv			- 将外部二进制格式转换为 time
  */
 Datum
 time_recv(PG_FUNCTION_ARGS)
@@ -1606,7 +1601,7 @@ time_recv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		time_send			- converts time to binary format
+ *		time_send			- 将 time 转换为二进制格式
  */
 Datum
 time_send(PG_FUNCTION_ARGS)
@@ -1636,7 +1631,7 @@ timetypmodout(PG_FUNCTION_ARGS)
 }
 
 /*
- *		make_time			- time constructor
+ *		make_time			- 时间构造器
  */
 Datum
 make_time(PG_FUNCTION_ARGS)
@@ -1646,14 +1641,14 @@ make_time(PG_FUNCTION_ARGS)
 	double		sec = PG_GETARG_FLOAT8(2);
 	TimeADT		time;
 
-	/* Check for time overflow */
+	/* 检查时间是否溢出 */
 	if (float_time_overflows(tm_hour, tm_min, sec))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
 				 errmsg("time field value out of range: %d:%02d:%02g",
 						tm_hour, tm_min, sec)));
 
-	/* This should match tm2time */
+	/* 这里应与 tm2time 保持一致 */
 	time = (((tm_hour * MINS_PER_HOUR + tm_min) * SECS_PER_MINUTE)
 			* USECS_PER_SEC) + (int64) rint(sec * USECS_PER_SEC);
 
@@ -1663,8 +1658,8 @@ make_time(PG_FUNCTION_ARGS)
 
 /* time_support()
  *
- * Planner support function for the time_scale() and timetz_scale()
- * length coercion functions (we need not distinguish them here).
+ * time_scale() 和 timetz_scale() 这两个长度强制转换函数的优化器支持函数
+ *（此处无需对二者加以区分）。
  */
 Datum
 time_support(PG_FUNCTION_ARGS)
@@ -1683,8 +1678,8 @@ time_support(PG_FUNCTION_ARGS)
 }
 
 /* time_scale()
- * Adjust time type for specified scale factor.
- * Used by PostgreSQL type system to stuff columns.
+ * 根据指定的缩放因子调整 time 类型。
+ * 由 PostgreSQL 类型系统用于填充列。
  */
 Datum
 time_scale(PG_FUNCTION_ARGS)
@@ -1700,11 +1695,10 @@ time_scale(PG_FUNCTION_ARGS)
 }
 
 /* AdjustTimeForTypmod()
- * Force the precision of the time value to a specified value.
- * Uses *exactly* the same code as in AdjustTimestampForTypmod()
- * but we make a separate copy because those types do not
- * have a fundamental tie together but rather a coincidence of
- * implementation. - thomas
+ * 将 time 值的精度强制调整为指定值。
+ * 使用与 AdjustTimestampForTypmod() 中*完全相同*的代码，
+ * 但此处单独保留一份副本，因为这两种类型之间并无本质关联，
+ * 只是实现上的巧合而已。- thomas
  */
 void
 AdjustTimeForTypmod(TimeADT *time, int32 typmod)
@@ -1838,18 +1832,17 @@ time_smaller(PG_FUNCTION_ARGS)
 	PG_RETURN_TIMEADT((time1 < time2) ? time1 : time2);
 }
 
-/* overlaps_time() --- implements the SQL OVERLAPS operator.
+/* overlaps_time() --- 实现 SQL 的 OVERLAPS 运算符。
  *
- * Algorithm is per SQL spec.  This is much harder than you'd think
- * because the spec requires us to deliver a non-null answer in some cases
- * where some of the inputs are null.
+ * 算法遵循 SQL 规范。这比你想象的要困难得多，
+ * 因为规范要求在部分输入为 null 的某些情况下给出非 null 的答案。
  */
 Datum
 overlaps_time(PG_FUNCTION_ARGS)
 {
 	/*
-	 * The arguments are TimeADT, but we leave them as generic Datums to avoid
-	 * dereferencing nulls (TimeADT is pass-by-reference!)
+	 * 参数是 TimeADT，但我们将它们保留为通用的 Datum，
+	 * 以避免解引用 null（TimeADT 是按引用传递的！）
 	 */
 	Datum		ts1 = PG_GETARG_DATUM(0);
 	Datum		te1 = PG_GETARG_DATUM(1);
@@ -1866,15 +1859,15 @@ overlaps_time(PG_FUNCTION_ARGS)
 	(DatumGetTimeADT(t1) < DatumGetTimeADT(t2))
 
 	/*
-	 * If both endpoints of interval 1 are null, the result is null (unknown).
-	 * If just one endpoint is null, take ts1 as the non-null one. Otherwise,
-	 * take ts1 as the lesser endpoint.
+	 * 如果区间 1 的两个端点都为 null，则结果为 null（未知）。
+	 * 如果只有一个端点为 null，则将 ts1 取为非 null 的那个。否则，
+	 * 将 ts1 取为较小的端点。
 	 */
 	if (ts1IsNull)
 	{
 		if (te1IsNull)
 			PG_RETURN_NULL();
-		/* swap null for non-null */
+		/* 用非 null 交换 null */
 		ts1 = te1;
 		te1IsNull = true;
 	}
@@ -1889,12 +1882,12 @@ overlaps_time(PG_FUNCTION_ARGS)
 		}
 	}
 
-	/* Likewise for interval 2. */
+	/* 区间 2 同理。 */
 	if (ts2IsNull)
 	{
 		if (te2IsNull)
 			PG_RETURN_NULL();
-		/* swap null for non-null */
+		/* 用非 null 交换 null */
 		ts2 = te2;
 		te2IsNull = true;
 	}
@@ -1910,14 +1903,14 @@ overlaps_time(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * At this point neither ts1 nor ts2 is null, so we can consider three
-	 * cases: ts1 > ts2, ts1 < ts2, ts1 = ts2
+	 * 此时 ts1 和 ts2 均不为 null，因此我们可以考虑三种
+	 * 情况：ts1 > ts2、ts1 < ts2、ts1 = ts2
 	 */
 	if (TIMEADT_GT(ts1, ts2))
 	{
 		/*
-		 * This case is ts1 < te2 OR te1 < te2, which may look redundant but
-		 * in the presence of nulls it's not quite completely so.
+		 * 此情况是 ts1 < te2 或 te1 < te2，这看起来可能冗余，但在
+		 * 存在 null 的情况下并不完全冗余。
 		 */
 		if (te2IsNull)
 			PG_RETURN_NULL();
@@ -1927,14 +1920,14 @@ overlaps_time(PG_FUNCTION_ARGS)
 			PG_RETURN_NULL();
 
 		/*
-		 * If te1 is not null then we had ts1 <= te1 above, and we just found
-		 * ts1 >= te2, hence te1 >= te2.
+		 * 如果 te1 不为 null，则前面已有 ts1 <= te1，而这里我们又得到
+		 * ts1 >= te2，因此 te1 >= te2。
 		 */
 		PG_RETURN_BOOL(false);
 	}
 	else if (TIMEADT_LT(ts1, ts2))
 	{
-		/* This case is ts2 < te1 OR te2 < te1 */
+		/* 此情况是 ts2 < te1 或 te2 < te1 */
 		if (te1IsNull)
 			PG_RETURN_NULL();
 		if (TIMEADT_LT(ts2, te1))
@@ -1943,16 +1936,16 @@ overlaps_time(PG_FUNCTION_ARGS)
 			PG_RETURN_NULL();
 
 		/*
-		 * If te2 is not null then we had ts2 <= te2 above, and we just found
-		 * ts2 >= te1, hence te2 >= te1.
+		 * 如果 te2 不为 null，则前面已有 ts2 <= te2，而这里我们又得到
+		 * ts2 >= te1，因此 te2 >= te1。
 		 */
 		PG_RETURN_BOOL(false);
 	}
 	else
 	{
 		/*
-		 * For ts1 = ts2 the spec says te1 <> te2 OR te1 = te2, which is a
-		 * rather silly way of saying "true if both are nonnull, else null".
+		 * 当 ts1 = ts2 时，规范写的是 te1 <> te2 或 te1 = te2，这其实是
+		 * 一种很别扭的说法，意思就是"两者都非 null 时为真，否则为 null"。
 		 */
 		if (te1IsNull || te2IsNull)
 			PG_RETURN_NULL();
@@ -1964,7 +1957,7 @@ overlaps_time(PG_FUNCTION_ARGS)
 }
 
 /* timestamp_time()
- * Convert timestamp to time data type.
+ * 将 timestamp 转换为 time 数据类型。
  */
 Datum
 timestamp_time(PG_FUNCTION_ARGS)
@@ -1984,7 +1977,7 @@ timestamp_time(PG_FUNCTION_ARGS)
 				 errmsg("timestamp out of range")));
 
 	/*
-	 * Could also do this with time = (timestamp / USECS_PER_DAY *
+	 * 也可以这样实现：time = (timestamp / USECS_PER_DAY *
 	 * USECS_PER_DAY) - timestamp;
 	 */
 	result = ((((tm->tm_hour * MINS_PER_HOUR + tm->tm_min) * SECS_PER_MINUTE) + tm->tm_sec) *
@@ -1994,7 +1987,7 @@ timestamp_time(PG_FUNCTION_ARGS)
 }
 
 /* timestamptz_time()
- * Convert timestamptz to time data type.
+ * 将 timestamptz 转换为 time 数据类型。
  */
 Datum
 timestamptz_time(PG_FUNCTION_ARGS)
@@ -2015,7 +2008,7 @@ timestamptz_time(PG_FUNCTION_ARGS)
 				 errmsg("timestamp out of range")));
 
 	/*
-	 * Could also do this with time = (timestamp / USECS_PER_DAY *
+	 * 也可以这样实现：time = (timestamp / USECS_PER_DAY *
 	 * USECS_PER_DAY) - timestamp;
 	 */
 	result = ((((tm->tm_hour * MINS_PER_HOUR + tm->tm_min) * SECS_PER_MINUTE) + tm->tm_sec) *
@@ -2025,7 +2018,7 @@ timestamptz_time(PG_FUNCTION_ARGS)
 }
 
 /* datetime_timestamp()
- * Convert date and time to timestamp data type.
+ * 将 date 和 time 转换为 timestamp 数据类型。
  */
 Datum
 datetime_timestamp(PG_FUNCTION_ARGS)
@@ -2048,7 +2041,7 @@ datetime_timestamp(PG_FUNCTION_ARGS)
 }
 
 /* time_interval()
- * Convert time to interval data type.
+ * 将 time 转换为 interval 数据类型。
  */
 Datum
 time_interval(PG_FUNCTION_ARGS)
@@ -2066,12 +2059,11 @@ time_interval(PG_FUNCTION_ARGS)
 }
 
 /* interval_time()
- * Convert interval to time data type.
+ * 将 interval 转换为 time 数据类型。
  *
- * This is defined as producing the fractional-day portion of the interval.
- * Therefore, we can just ignore the months field.  It is not real clear
- * what to do with negative intervals, but we choose to subtract the floor,
- * so that, say, '-2 hours' becomes '22:00:00'.
+ * 该函数被定义为产生 interval 的小数天部分。
+ * 因此我们可以忽略 months 字段。对于负的 interval 该如何处理并不十分明确，
+ * 但我们选择减去向下取整值，这样例如 '-2 hours' 会变成 '22:00:00'。
  */
 Datum
 interval_time(PG_FUNCTION_ARGS)
@@ -2092,7 +2084,7 @@ interval_time(PG_FUNCTION_ARGS)
 }
 
 /* time_mi_time()
- * Subtract two times to produce an interval.
+ * 将两个 time 相减得到一个 interval。
  */
 Datum
 time_mi_time(PG_FUNCTION_ARGS)
@@ -2111,7 +2103,7 @@ time_mi_time(PG_FUNCTION_ARGS)
 }
 
 /* time_pl_interval()
- * Add interval to time.
+ * 给 time 加上 interval。
  */
 Datum
 time_pl_interval(PG_FUNCTION_ARGS)
@@ -2134,7 +2126,7 @@ time_pl_interval(PG_FUNCTION_ARGS)
 }
 
 /* time_mi_interval()
- * Subtract interval from time.
+ * 从 time 中减去 interval。
  */
 Datum
 time_mi_interval(PG_FUNCTION_ARGS)
@@ -2157,7 +2149,7 @@ time_mi_interval(PG_FUNCTION_ARGS)
 }
 
 /*
- * in_range support function for time.
+ * time 的 in_range 支持函数。
  */
 Datum
 in_range_time_interval(PG_FUNCTION_ARGS)
@@ -2170,9 +2162,9 @@ in_range_time_interval(PG_FUNCTION_ARGS)
 	TimeADT		sum;
 
 	/*
-	 * Like time_pl_interval/time_mi_interval, we disregard the month and day
-	 * fields of the offset.  So our test for negative should too.  This also
-	 * catches -infinity, so we only need worry about +infinity below.
+	 * 与 time_pl_interval/time_mi_interval 类似，我们忽略 offset 的 month 和
+	 * day 字段。因此我们对负数的检查也应如此处理。这同时也能捕获 -infinity，
+	 * 所以下面只需要考虑 +infinity。
 	 */
 	if (offset->time < 0)
 		ereport(ERROR,
@@ -2180,11 +2172,10 @@ in_range_time_interval(PG_FUNCTION_ARGS)
 				 errmsg("invalid preceding or following size in window function")));
 
 	/*
-	 * We can't use time_pl_interval/time_mi_interval here, because their
-	 * wraparound behavior would give wrong (or at least undesirable) answers.
-	 * Fortunately the equivalent non-wrapping behavior is trivial, except
-	 * that adding an infinite (or very large) interval might cause integer
-	 * overflow.  Subtraction cannot overflow here.
+	 * 我们这里不能使用 time_pl_interval/time_mi_interval，因为它们的回绕
+	 * 行为会得到错误（或至少不理想的）结果。所幸等价的非回绕行为非常直接，
+	 * 只是加上一个无穷（或极大）的 interval 可能引发整数溢出。
+	 * 而减法在这里不会溢出。
 	 */
 	if (sub)
 		sum = base - offset->time;
@@ -2198,8 +2189,8 @@ in_range_time_interval(PG_FUNCTION_ARGS)
 }
 
 
-/* time_part() and extract_time()
- * Extract specified field from time type.
+/* time_part() 与 extract_time()
+ * 从 time 类型中提取指定的字段。
  */
 static Datum
 time_part_common(PG_FUNCTION_ARGS, bool retnumeric)
@@ -2318,11 +2309,11 @@ extract_time(PG_FUNCTION_ARGS)
 
 
 /*****************************************************************************
- *	 Time With Time Zone ADT
+ *	 带时区的 Time ADT
  *****************************************************************************/
 
 /* tm2timetz()
- * Convert a tm structure to a time data type.
+ * 将 tm 结构转换为 time 数据类型。
  */
 int
 tm2timetz(struct pg_tm *tm, fsec_t fsec, int tz, TimeTzADT *result)
@@ -2394,7 +2385,7 @@ timetz_out(PG_FUNCTION_ARGS)
 }
 
 /*
- *		timetz_recv			- converts external binary format to timetz
+ *		timetz_recv			- 将外部二进制格式转换为 timetz
  */
 Datum
 timetz_recv(PG_FUNCTION_ARGS)
@@ -2418,7 +2409,7 @@ timetz_recv(PG_FUNCTION_ARGS)
 
 	result->zone = pq_getmsgint(buf, sizeof(result->zone));
 
-	/* Check for sane GMT displacement; see notes in datatype/timestamp.h */
+	/* 检查 GMT 偏移量是否合理；参见 datatype/timestamp.h 中的说明 */
 	if (result->zone <= -TZDISP_LIMIT || result->zone >= TZDISP_LIMIT)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TIME_ZONE_DISPLACEMENT_VALUE),
@@ -2430,7 +2421,7 @@ timetz_recv(PG_FUNCTION_ARGS)
 }
 
 /*
- *		timetz_send			- converts timetz to binary format
+ *		timetz_send			- 将 timetz 转换为二进制格式
  */
 Datum
 timetz_send(PG_FUNCTION_ARGS)
@@ -2462,7 +2453,7 @@ timetztypmodout(PG_FUNCTION_ARGS)
 
 
 /* timetz2tm()
- * Convert TIME WITH TIME ZONE data type to POSIX time structure.
+ * 将 TIME WITH TIME ZONE 数据类型转换为 POSIX 时间结构。
  */
 int
 timetz2tm(TimeTzADT *time, struct pg_tm *tm, fsec_t *fsec, int *tzp)
@@ -2483,8 +2474,8 @@ timetz2tm(TimeTzADT *time, struct pg_tm *tm, fsec_t *fsec, int *tzp)
 }
 
 /* timetz_scale()
- * Adjust time type for specified scale factor.
- * Used by PostgreSQL type system to stuff columns.
+ * 根据指定的缩放因子调整 time 类型。
+ * 由 PostgreSQL 类型系统用于填充列。
  */
 Datum
 timetz_scale(PG_FUNCTION_ARGS)
@@ -2510,7 +2501,7 @@ timetz_cmp_internal(TimeTzADT *time1, TimeTzADT *time2)
 	TimeOffset	t1,
 				t2;
 
-	/* Primary sort is by true (GMT-equivalent) time */
+	/* 主要按真实的（等价于 GMT 的）时间排序 */
 	t1 = time1->time + (time1->zone * USECS_PER_SEC);
 	t2 = time2->time + (time2->zone * USECS_PER_SEC);
 
@@ -2520,8 +2511,8 @@ timetz_cmp_internal(TimeTzADT *time1, TimeTzADT *time2)
 		return -1;
 
 	/*
-	 * If same GMT time, sort by timezone; we only want to say that two
-	 * timetz's are equal if both the time and zone parts are equal.
+	 * 如果 GMT 时间相同，则按时区排序；我们只希望在两个
+	 * timetz 的 time 和 zone 部分都相等时才认为它们相等。
 	 */
 	if (time1->zone > time2->zone)
 		return 1;
@@ -2601,8 +2592,8 @@ timetz_hash(PG_FUNCTION_ARGS)
 	uint32		thash;
 
 	/*
-	 * To avoid any problems with padding bytes in the struct, we figure the
-	 * field hashes separately and XOR them.
+	 * 为了避免结构体中填充字节带来的任何问题，我们分别计算
+	 * 各字段的哈希值，再将它们异或。
 	 */
 	thash = DatumGetUInt32(DirectFunctionCall1(hashint8,
 											   Int64GetDatumFast(key->time)));
@@ -2617,7 +2608,7 @@ timetz_hash_extended(PG_FUNCTION_ARGS)
 	Datum		seed = PG_GETARG_DATUM(1);
 	uint64		thash;
 
-	/* Same approach as timetz_hash */
+	/* 与 timetz_hash 采用相同的方式 */
 	thash = DatumGetUInt64(DirectFunctionCall2(hashint8extended,
 											   Int64GetDatumFast(key->time),
 											   seed));
@@ -2655,7 +2646,7 @@ timetz_smaller(PG_FUNCTION_ARGS)
 }
 
 /* timetz_pl_interval()
- * Add interval to timetz.
+ * 给 timetz 加上 interval。
  */
 Datum
 timetz_pl_interval(PG_FUNCTION_ARGS)
@@ -2682,7 +2673,7 @@ timetz_pl_interval(PG_FUNCTION_ARGS)
 }
 
 /* timetz_mi_interval()
- * Subtract interval from timetz.
+ * 从 timetz 中减去 interval。
  */
 Datum
 timetz_mi_interval(PG_FUNCTION_ARGS)
@@ -2709,7 +2700,7 @@ timetz_mi_interval(PG_FUNCTION_ARGS)
 }
 
 /*
- * in_range support function for timetz.
+ * timetz 的 in_range 支持函数。
  */
 Datum
 in_range_timetz_interval(PG_FUNCTION_ARGS)
@@ -2722,9 +2713,9 @@ in_range_timetz_interval(PG_FUNCTION_ARGS)
 	TimeTzADT	sum;
 
 	/*
-	 * Like timetz_pl_interval/timetz_mi_interval, we disregard the month and
-	 * day fields of the offset.  So our test for negative should too. This
-	 * also catches -infinity, so we only need worry about +infinity below.
+	 * 与 timetz_pl_interval/timetz_mi_interval 类似，我们忽略 offset 的 month 和
+	 * day 字段。因此我们对负数的检查也应如此处理。这同时也能捕获 -infinity，
+	 * 所以下面只需要考虑 +infinity。
 	 */
 	if (offset->time < 0)
 		ereport(ERROR,
@@ -2732,11 +2723,10 @@ in_range_timetz_interval(PG_FUNCTION_ARGS)
 				 errmsg("invalid preceding or following size in window function")));
 
 	/*
-	 * We can't use timetz_pl_interval/timetz_mi_interval here, because their
-	 * wraparound behavior would give wrong (or at least undesirable) answers.
-	 * Fortunately the equivalent non-wrapping behavior is trivial, except
-	 * that adding an infinite (or very large) interval might cause integer
-	 * overflow.  Subtraction cannot overflow here.
+	 * 我们这里不能使用 timetz_pl_interval/timetz_mi_interval，因为它们的
+	 * 回绕行为会得到错误（或至少不理想的）结果。所幸等价的非回绕行为非常
+	 * 直接，只是加上一个无穷（或极大）的 interval 可能引发整数溢出。
+	 * 而减法在这里不会溢出。
 	 */
 	if (sub)
 		sum.time = base->time - offset->time;
@@ -2750,18 +2740,17 @@ in_range_timetz_interval(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(timetz_cmp_internal(val, &sum) >= 0);
 }
 
-/* overlaps_timetz() --- implements the SQL OVERLAPS operator.
+/* overlaps_timetz() --- 实现 SQL 的 OVERLAPS 运算符。
  *
- * Algorithm is per SQL spec.  This is much harder than you'd think
- * because the spec requires us to deliver a non-null answer in some cases
- * where some of the inputs are null.
+ * 算法遵循 SQL 规范。这比你想象的要困难得多，
+ * 因为规范要求在部分输入为 null 的某些情况下给出非 null 的答案。
  */
 Datum
 overlaps_timetz(PG_FUNCTION_ARGS)
 {
 	/*
-	 * The arguments are TimeTzADT *, but we leave them as generic Datums for
-	 * convenience of notation --- and to avoid dereferencing nulls.
+	 * 参数是 TimeTzADT *，但我们将它们保留为通用的 Datum，
+	 * 一是为了记法方便，二是为了避免解引用 null。
 	 */
 	Datum		ts1 = PG_GETARG_DATUM(0);
 	Datum		te1 = PG_GETARG_DATUM(1);
@@ -2778,15 +2767,15 @@ overlaps_timetz(PG_FUNCTION_ARGS)
 	DatumGetBool(DirectFunctionCall2(timetz_lt,t1,t2))
 
 	/*
-	 * If both endpoints of interval 1 are null, the result is null (unknown).
-	 * If just one endpoint is null, take ts1 as the non-null one. Otherwise,
-	 * take ts1 as the lesser endpoint.
+	 * 如果区间 1 的两个端点都为 null，则结果为 null（未知）。
+	 * 如果只有一个端点为 null，则将 ts1 取为非 null 的那个。否则，
+	 * 将 ts1 取为较小的端点。
 	 */
 	if (ts1IsNull)
 	{
 		if (te1IsNull)
 			PG_RETURN_NULL();
-		/* swap null for non-null */
+		/* 用非 null 交换 null */
 		ts1 = te1;
 		te1IsNull = true;
 	}
@@ -2801,12 +2790,12 @@ overlaps_timetz(PG_FUNCTION_ARGS)
 		}
 	}
 
-	/* Likewise for interval 2. */
+	/* 区间 2 同理。 */
 	if (ts2IsNull)
 	{
 		if (te2IsNull)
 			PG_RETURN_NULL();
-		/* swap null for non-null */
+		/* 用非 null 交换 null */
 		ts2 = te2;
 		te2IsNull = true;
 	}
@@ -2822,14 +2811,14 @@ overlaps_timetz(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * At this point neither ts1 nor ts2 is null, so we can consider three
-	 * cases: ts1 > ts2, ts1 < ts2, ts1 = ts2
+	 * 此时 ts1 和 ts2 均不为 null，因此我们可以考虑三种
+	 * 情况：ts1 > ts2、ts1 < ts2、ts1 = ts2
 	 */
 	if (TIMETZ_GT(ts1, ts2))
 	{
 		/*
-		 * This case is ts1 < te2 OR te1 < te2, which may look redundant but
-		 * in the presence of nulls it's not quite completely so.
+		 * 此情况是 ts1 < te2 或 te1 < te2，这看起来可能冗余，但在
+		 * 存在 null 的情况下并不完全冗余。
 		 */
 		if (te2IsNull)
 			PG_RETURN_NULL();
@@ -2839,14 +2828,14 @@ overlaps_timetz(PG_FUNCTION_ARGS)
 			PG_RETURN_NULL();
 
 		/*
-		 * If te1 is not null then we had ts1 <= te1 above, and we just found
-		 * ts1 >= te2, hence te1 >= te2.
+		 * 如果 te1 不为 null，则前面已有 ts1 <= te1，而这里我们又得到
+		 * ts1 >= te2，因此 te1 >= te2。
 		 */
 		PG_RETURN_BOOL(false);
 	}
 	else if (TIMETZ_LT(ts1, ts2))
 	{
-		/* This case is ts2 < te1 OR te2 < te1 */
+		/* 此情况是 ts2 < te1 或 te2 < te1 */
 		if (te1IsNull)
 			PG_RETURN_NULL();
 		if (TIMETZ_LT(ts2, te1))
@@ -2855,16 +2844,16 @@ overlaps_timetz(PG_FUNCTION_ARGS)
 			PG_RETURN_NULL();
 
 		/*
-		 * If te2 is not null then we had ts2 <= te2 above, and we just found
-		 * ts2 >= te1, hence te2 >= te1.
+		 * 如果 te2 不为 null，则前面已有 ts2 <= te2，而这里我们又得到
+		 * ts2 >= te1，因此 te2 >= te1。
 		 */
 		PG_RETURN_BOOL(false);
 	}
 	else
 	{
 		/*
-		 * For ts1 = ts2 the spec says te1 <> te2 OR te1 = te2, which is a
-		 * rather silly way of saying "true if both are nonnull, else null".
+		 * 当 ts1 = ts2 时，规范写的是 te1 <> te2 或 te1 = te2，这其实是
+		 * 一种很别扭的说法，意思就是"两者都非 null 时为真，否则为 null"。
 		 */
 		if (te1IsNull || te2IsNull)
 			PG_RETURN_NULL();
@@ -2882,7 +2871,7 @@ timetz_time(PG_FUNCTION_ARGS)
 	TimeTzADT  *timetz = PG_GETARG_TIMETZADT_P(0);
 	TimeADT		result;
 
-	/* swallow the time zone and just return the time */
+	/* 吞掉时区，仅返回时间部分 */
 	result = timetz->time;
 
 	PG_RETURN_TIMEADT(result);
@@ -2913,7 +2902,7 @@ time_timetz(PG_FUNCTION_ARGS)
 
 
 /* timestamptz_timetz()
- * Convert timestamp to timetz data type.
+ * 将 timestamp 转换为 timetz 数据类型。
  */
 Datum
 timestamptz_timetz(PG_FUNCTION_ARGS)
@@ -2942,9 +2931,9 @@ timestamptz_timetz(PG_FUNCTION_ARGS)
 
 
 /* datetimetz_timestamptz()
- * Convert date and timetz to timestamp with time zone data type.
- * Timestamp is stored in GMT, so add the time zone
- * stored with the timetz to the result.
+ * 将 date 和 timetz 转换为带时区的 timestamp 数据类型。
+ * timestamp 以 GMT 存储，因此要把 timetz 所带时区
+ * 加到结果上。
  * - thomas 2000-03-10
  */
 Datum
@@ -2961,9 +2950,8 @@ datetimetz_timestamptz(PG_FUNCTION_ARGS)
 	else
 	{
 		/*
-		 * Date's range is wider than timestamp's, so check for boundaries.
-		 * Since dates have the same minimum values as timestamps, only upper
-		 * boundary need be checked for overflow.
+		 * date 的范围比 timestamp 更广，因此需要检查边界。
+		 * 由于 date 与 timestamp 具有相同的最小值，因此只需检查上边界是否溢出。
 		 */
 		if (date >= (TIMESTAMP_END_JULIAN - POSTGRES_EPOCH_JDATE))
 			ereport(ERROR,
@@ -2972,8 +2960,8 @@ datetimetz_timestamptz(PG_FUNCTION_ARGS)
 		result = date * USECS_PER_DAY + time->time + time->zone * USECS_PER_SEC;
 
 		/*
-		 * Since it is possible to go beyond allowed timestamptz range because
-		 * of time zone, check for allowed timestamp range after adding tz.
+		 * 由于加上时区后有可能超出允许的 timestamptz 范围，
+		 * 因此在加上时区之后需检查 timestamp 范围是否有效。
 		 */
 		if (!IS_VALID_TIMESTAMP(result))
 			ereport(ERROR,
@@ -2985,8 +2973,8 @@ datetimetz_timestamptz(PG_FUNCTION_ARGS)
 }
 
 
-/* timetz_part() and extract_timetz()
- * Extract specified field from time type.
+/* timetz_part() 与 extract_timetz()
+ * 从 time 类型中提取指定的字段。
  */
 static Datum
 timetz_part_common(PG_FUNCTION_ARGS, bool retnumeric)
@@ -3118,8 +3106,8 @@ extract_timetz(PG_FUNCTION_ARGS)
 }
 
 /* timetz_zone()
- * Encode time with time zone type with specified time zone.
- * Applies DST rules as of the transaction start time.
+ * 使用指定的时区对带时区的时间类型进行编码。
+ * 采用事务开始时刻的夏令时规则。
  */
 Datum
 timetz_zone(PG_FUNCTION_ARGS)
@@ -3134,7 +3122,7 @@ timetz_zone(PG_FUNCTION_ARGS)
 	pg_tz	   *tzp;
 
 	/*
-	 * Look up the requested timezone.
+	 * 查找所请求的时区。
 	 */
 	text_to_cstring_buffer(zone, tzname, sizeof(tzname));
 
@@ -3142,12 +3130,12 @@ timetz_zone(PG_FUNCTION_ARGS)
 
 	if (type == TZNAME_FIXED_OFFSET)
 	{
-		/* fixed-offset abbreviation */
+		/* 固定偏移量的缩写 */
 		tz = -val;
 	}
 	else if (type == TZNAME_DYNTZ)
 	{
-		/* dynamic-offset abbreviation, resolve using transaction start time */
+		/* 动态偏移量缩写，使用事务开始时刻来解析 */
 		TimestampTz now = GetCurrentTransactionStartTimestamp();
 		int			isdst;
 
@@ -3155,7 +3143,7 @@ timetz_zone(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		/* Get the offset-from-GMT that is valid now for the zone name */
+		/* 获取该时区名称当前有效的相对于 GMT 的偏移量 */
 		TimestampTz now = GetCurrentTransactionStartTimestamp();
 		struct pg_tm tm;
 		fsec_t		fsec;
@@ -3169,7 +3157,7 @@ timetz_zone(PG_FUNCTION_ARGS)
 	result = (TimeTzADT *) palloc(sizeof(TimeTzADT));
 
 	result->time = t->time + (t->zone - tz) * USECS_PER_SEC;
-	/* C99 modulo has the wrong sign convention for negative input */
+	/* C99 的取模运算对负数输入的符合约定有误 */
 	while (result->time < INT64CONST(0))
 		result->time += USECS_PER_DAY;
 	if (result->time >= USECS_PER_DAY)
@@ -3181,7 +3169,7 @@ timetz_zone(PG_FUNCTION_ARGS)
 }
 
 /* timetz_izone()
- * Encode time with time zone type with specified time interval as time zone.
+ * 使用指定的时间间隔作为时区，对带时区的时间类型进行编码。
  */
 Datum
 timetz_izone(PG_FUNCTION_ARGS)
@@ -3210,7 +3198,7 @@ timetz_izone(PG_FUNCTION_ARGS)
 	result = (TimeTzADT *) palloc(sizeof(TimeTzADT));
 
 	result->time = time->time + (time->zone - tz) * USECS_PER_SEC;
-	/* C99 modulo has the wrong sign convention for negative input */
+	/* C99 的取模运算对负数输入的符合约定有误 */
 	while (result->time < INT64CONST(0))
 		result->time += USECS_PER_DAY;
 	if (result->time >= USECS_PER_DAY)
@@ -3223,8 +3211,8 @@ timetz_izone(PG_FUNCTION_ARGS)
 
 /* timetz_at_local()
  *
- * Unlike for timestamp[tz]_at_local, the type for timetz does not flip between
- * time with/without time zone, so we cannot just call the conversion function.
+ * 与 timestamp[tz]_at_local 不同，timetz 的类型不会在带/不带时区之间切换，
+ * 因此我们不能直接调用相应的转换函数。
  */
 Datum
 timetz_at_local(PG_FUNCTION_ARGS)

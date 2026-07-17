@@ -1,18 +1,18 @@
 /*-------------------------------------------------------------------------
  *
  * postgres.c
- *	  POSTGRES C Backend Interface
+ *	  POSTGRES C 后端接口
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
+ * 部分版权所有 (c) 1996-2025, PostgreSQL Global Development Group
+ * 部分版权所有 (c) 1994, Regents of the University of California
  *
  *
- * IDENTIFICATION
+ * 标识
  *	  src/backend/tcop/postgres.c
  *
- * NOTES
- *	  this is the "main" module of the postgres backend and
- *	  hence the main module of the "traffic cop".
+ * 说明
+ *	  这是 postgres 后端的“主”模块，
+ *	  因此也是“交通警察(traffic cop)”的主模块。
  *
  *-------------------------------------------------------------------------
  */
@@ -83,88 +83,86 @@
 #include "utils/varlena.h"
 
 /* ----------------
- *		global variables
+ *		全局变量
  * ----------------
  */
-const char *debug_query_string; /* client-supplied query string */
+const char *debug_query_string; /* 客户端提供的查询字符串 */
 
-/* Note: whereToSendOutput is initialized for the bootstrap/standalone case */
+/* 注意：whereToSendOutput 在 bootstrap/standalone 场景下被初始化 */
 CommandDest whereToSendOutput = DestDebug;
 
-/* flag for logging end of session */
+/* 标记是否在会话结束时记录日志 */
 bool		Log_disconnections = false;
 
 int			log_statement = LOGSTMT_NONE;
 
-/* wait N seconds to allow attach from a debugger */
+/* 等待 N 秒，以便调试器可附加到进程 */
 int			PostAuthDelay = 0;
 
-/* Time between checks that the client is still connected. */
+/* 检查客户端是否仍然连接的间隔时间。 */
 int			client_connection_check_interval = 0;
 
-/* flags for non-system relation kinds to restrict use */
+/* 用于限制非系统关系类型使用的标志位 */
 int			restrict_nonsystem_relation_kind;
 
 /* ----------------
- *		private typedefs etc
+ *		私有类型定义等
  * ----------------
  */
 
-/* type of argument for bind_param_error_callback */
+/* bind_param_error_callback 的参数类型 */
 typedef struct BindParamCbData
 {
 	const char *portalName;
-	int			paramno;		/* zero-based param number, or -1 initially */
-	const char *paramval;		/* textual input string, if available */
+	int			paramno;		/* 从 0 开始的参数编号，初始为 -1 */
+	const char *paramval;		/* 文本形式的输入字符串（若可用） */
 } BindParamCbData;
 
 /* ----------------
- *		private variables
+ *		私有变量
  * ----------------
  */
 
 /*
- * Flag to keep track of whether we have started a transaction.
- * For extended query protocol this has to be remembered across messages.
+ * 用于记录我们是否已经启动了事务的标志。
+ * 对于扩展查询协议，该标志需要在多条消息之间保持。
  */
 static bool xact_started = false;
 
 /*
- * Flag to indicate that we are doing the outer loop's read-from-client,
- * as opposed to any random read from client that might happen within
- * commands like COPY FROM STDIN.
+ * 该标志表示我们正在执行外层循环的从客户端读取操作，
+ * 而不是在诸如 COPY FROM STDIN 之类的命令内部发生的任意客户端读取。
  */
 static bool DoingCommandRead = false;
 
 /*
- * Flags to implement skip-till-Sync-after-error behavior for messages of
- * the extended query protocol.
+ * 用于实现扩展查询协议消息“出错后跳过直到 Sync”行为的标志。
  */
 static bool doing_extended_query_message = false;
 static bool ignore_till_sync = false;
 
 /*
- * If an unnamed prepared statement exists, it's stored here.
- * We keep it separate from the hashtable kept by commands/prepare.c
- * in order to reduce overhead for short-lived queries.
+ * 如果存在未命名的预备语句，则存储在此处。
+ * 我们将其与 commands/prepare.c 维护的哈希表分开保存，
+ * 以降低短生命周期查询的开销。
  */
 static CachedPlanSource *unnamed_stmt_psrc = NULL;
 
-/* assorted command-line switches */
-static const char *userDoption = NULL;	/* -D switch */
-static bool EchoQuery = false;	/* -E switch */
-static bool UseSemiNewlineNewline = false;	/* -j switch */
+/* 各种命令行开关 */
+static const char *userDoption = NULL;	/* -D 开关 */
+static bool EchoQuery = false;	/* -E 开关 */
+static bool UseSemiNewlineNewline = false;	/* -j 开关 */
 
-/* whether or not, and why, we were canceled by conflict with recovery */
+/* 是否因与恢复冲突而被取消，以及取消的原因 */
 static volatile sig_atomic_t RecoveryConflictPending = false;
 static volatile sig_atomic_t RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
 
-/* reused buffer to pass to SendRowDescriptionMessage() */
+/* 复用的缓冲区，用于传递给 SendRowDescriptionMessage() */
 static MemoryContext row_description_context = NULL;
 static StringInfoData row_description_buf;
 
 /* ----------------------------------------------------------------
- *		decls for routines only used in this file
+ *		仅在本文件中使用的例程声明
  * ----------------------------------------------------------------
  */
 static int	InteractiveBackend(StringInfo inBuf);
@@ -189,17 +187,16 @@ static void disable_statement_timeout(void);
 
 
 /* ----------------------------------------------------------------
- *		infrastructure for valgrind debugging
+ *		valgrind 调试基础设施
  * ----------------------------------------------------------------
  */
 #ifdef USE_VALGRIND
-/* This variable should be set at the top of the main loop. */
+/* 该变量应在主循环开始处设置。 */
 static unsigned int old_valgrind_error_count;
 
 /*
- * If Valgrind detected any errors since old_valgrind_error_count was updated,
- * report the current query as the cause.  This should be called at the end
- * of message processing.
+ * 如果自从 old_valgrind_error_count 被更新以来 Valgrind 检测到了任何错误，
+ * 则将当前查询作为原因报告。应在消息处理结束时调用。
  */
 static void
 valgrind_report_error_query(const char *query)
@@ -219,27 +216,27 @@ valgrind_report_error_query(const char *query)
 
 
 /* ----------------------------------------------------------------
- *		routines to obtain user input
+ *		获取用户输入的例程
  * ----------------------------------------------------------------
  */
 
 /* ----------------
- *	InteractiveBackend() is called for user interactive connections
+ *	InteractiveBackend() 用于用户交互式连接
  *
- *	the string entered by the user is placed in its parameter inBuf,
- *	and we act like a Q message was received.
+ *	用户输入的字符串会被放入其参数 inBuf 中，
+ *	我们会表现得像是收到了一条 Q 消息。
  *
- *	EOF is returned if end-of-file input is seen; time to shut down.
+ *	如果读到文件结束符（EOF），则返回 EOF，表示应当关闭。
  * ----------------
  */
 
 static int
 InteractiveBackend(StringInfo inBuf)
 {
-	int			c;				/* character read from getc() */
+	int			c;				/* 从 getc() 读取的字符 */
 
 	/*
-	 * display a prompt and obtain input from the user
+	 * 显示提示符并从用户处获取输入
 	 */
 	printf("backend> ");
 	fflush(stdout);
@@ -247,7 +244,7 @@ InteractiveBackend(StringInfo inBuf)
 	resetStringInfo(inBuf);
 
 	/*
-	 * Read characters until EOF or the appropriate delimiter is seen.
+	 * 一直读取字符，直到遇到 EOF 或相应的分隔符。
 	 */
 	while ((c = interactive_getc()) != EOF)
 	{
@@ -256,57 +253,56 @@ InteractiveBackend(StringInfo inBuf)
 			if (UseSemiNewlineNewline)
 			{
 				/*
-				 * In -j mode, semicolon followed by two newlines ends the
-				 * command; otherwise treat newline as regular character.
+				 * 在 -j 模式下，分号后紧跟两个换行符表示命令结束；
+				 * 否则将换行符视为普通字符。
 				 */
 				if (inBuf->len > 1 &&
 					inBuf->data[inBuf->len - 1] == '\n' &&
 					inBuf->data[inBuf->len - 2] == ';')
 				{
-					/* might as well drop the second newline */
+					/* 不妨直接丢弃第二个换行符 */
 					break;
 				}
 			}
 			else
 			{
 				/*
-				 * In plain mode, newline ends the command unless preceded by
-				 * backslash.
+				 * 在普通模式下，换行符表示命令结束，除非前面跟着反斜杠。
 				 */
 				if (inBuf->len > 0 &&
 					inBuf->data[inBuf->len - 1] == '\\')
 				{
-					/* discard backslash from inBuf */
+					/* 从 inBuf 中丢弃反斜杠 */
 					inBuf->data[--inBuf->len] = '\0';
-					/* discard newline too */
+					/* 同时丢弃换行符 */
 					continue;
 				}
 				else
 				{
-					/* keep the newline character, but end the command */
+					/* 保留换行符，但结束命令 */
 					appendStringInfoChar(inBuf, '\n');
 					break;
 				}
 			}
 		}
 
-		/* Not newline, or newline treated as regular character */
+		/* 不是换行符，或换行符被视为普通字符 */
 		appendStringInfoChar(inBuf, (char) c);
 	}
 
-	/* No input before EOF signal means time to quit. */
+	/* EOF 之前没有任何输入，意味着应当退出。 */
 	if (c == EOF && inBuf->len == 0)
 		return EOF;
 
 	/*
-	 * otherwise we have a user query so process it.
+	 * 否则我们拿到了一条用户查询，对其进行处理。
 	 */
 
-	/* Add '\0' to make it look the same as message case. */
+	/* 追加 '\0'，使其与消息场景表现一致。 */
 	appendStringInfoChar(inBuf, (char) '\0');
 
 	/*
-	 * if the query echo flag was given, print the query..
+	 * 如果指定了查询回显标志，则打印该查询。
 	 */
 	if (EchoQuery)
 		printf("statement: %s\n", inBuf->data);
@@ -316,10 +312,10 @@ InteractiveBackend(StringInfo inBuf)
 }
 
 /*
- * interactive_getc -- collect one character from stdin
+ * interactive_getc —— 从 stdin 读取一个字符
  *
- * Even though we are not reading from a "client" process, we still want to
- * respond to signals, particularly SIGTERM/SIGQUIT.
+ * 尽管我们不是从“客户端”进程读取，但仍希望响应信号，
+ * 尤其是 SIGTERM/SIGQUIT。
  */
 static int
 interactive_getc(void)
@@ -327,10 +323,9 @@ interactive_getc(void)
 	int			c;
 
 	/*
-	 * This will not process catchup interrupts or notifications while
-	 * reading. But those can't really be relevant for a standalone backend
-	 * anyway. To properly handle SIGTERM there's a hack in die() that
-	 * directly processes interrupts at this stage...
+	 * 在读取期间，这不会处理 catchup 中断或通知。但这些对于独立后端
+	 * 来说其实并不相关。为了正确处理 SIGTERM，die() 中有一个技巧，
+	 * 会在此阶段直接处理中断……
 	 */
 	CHECK_FOR_INTERRUPTS();
 
@@ -342,11 +337,11 @@ interactive_getc(void)
 }
 
 /* ----------------
- *	SocketBackend()		Is called for frontend-backend connections
+ *	SocketBackend()		用于前端-后端连接
  *
- *	Returns the message type code, and loads message body data into inBuf.
+ *	返回消息类型码，并将消息体数据载入 inBuf。
  *
- *	EOF is returned if the connection is lost.
+ *	如果连接丢失，则返回 EOF。
  * ----------------
  */
 static int
@@ -356,13 +351,13 @@ SocketBackend(StringInfo inBuf)
 	int			maxmsglen;
 
 	/*
-	 * Get message type code from the frontend.
+	 * 从前端获取消息类型码。
 	 */
 	HOLD_CANCEL_INTERRUPTS();
 	pq_startmsgread();
 	qtype = pq_getbyte();
 
-	if (qtype == EOF)			/* frontend disconnected */
+	if (qtype == EOF)			/* 前端断开连接 */
 	{
 		if (IsTransactionState())
 			ereport(COMMERROR,
@@ -371,9 +366,8 @@ SocketBackend(StringInfo inBuf)
 		else
 		{
 			/*
-			 * Can't send DEBUG log messages to client at this point. Since
-			 * we're disconnecting right away, we don't need to restore
-			 * whereToSendOutput.
+			 * 此时无法向客户端发送 DEBUG 日志消息。由于我们马上就要
+			 * 断开连接，因此无需恢复 whereToSendOutput。
 			 */
 			whereToSendOutput = DestNone;
 			ereport(DEBUG1,
@@ -384,14 +378,12 @@ SocketBackend(StringInfo inBuf)
 	}
 
 	/*
-	 * Validate message type code before trying to read body; if we have lost
-	 * sync, better to say "command unknown" than to run out of memory because
-	 * we used garbage as a length word.  We can also select a type-dependent
-	 * limit on what a sane length word could be.  (The limit could be chosen
-	 * more granularly, but it's not clear it's worth fussing over.)
+	 * 在尝试读取消息体之前先校验消息类型码；如果我们已丢失同步，
+	 * 那么说“未知命令”也比因为把垃圾数据当作长度字而耗尽内存要好。
+	 * 我们还可以根据类型选择一个合理的长度字上限。（上限也可以选得更
+	 * 精细一些，但这么做是否值得尚不清楚。）
 	 *
-	 * This also gives us a place to set the doing_extended_query_message flag
-	 * as soon as possible.
+	 * 这也给我们提供了一个尽早设置 doing_extended_query_message 标志的地方。
 	 */
 	switch (qtype)
 	{
@@ -427,9 +419,9 @@ SocketBackend(StringInfo inBuf)
 
 		case PqMsg_Sync:
 			maxmsglen = PQ_SMALL_MESSAGE_LIMIT;
-			/* stop any active skip-till-Sync */
+			/* 停止任何正在进行的“跳过直到 Sync” */
 			ignore_till_sync = false;
-			/* mark not-extended, so that a new error doesn't begin skip */
+			/* 标记为“非扩展”，从而避免新的错误再次开启跳过 */
 			doing_extended_query_message = false;
 			break;
 
@@ -447,34 +439,31 @@ SocketBackend(StringInfo inBuf)
 		default:
 
 			/*
-			 * Otherwise we got garbage from the frontend.  We treat this as
-			 * fatal because we have probably lost message boundary sync, and
-			 * there's no good way to recover.
+			 * 否则我们从前端收到了垃圾数据。我们将此视为致命错误，
+			 * 因为我们很可能已经丢失了消息边界同步，且没有好的办法恢复。
 			 */
 			ereport(FATAL,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
 					 errmsg("invalid frontend message type %d", qtype)));
-			maxmsglen = 0;		/* keep compiler quiet */
+			maxmsglen = 0;		/* 避免编译器告警 */
 			break;
 	}
 
 	/*
-	 * In protocol version 3, all frontend messages have a length word next
-	 * after the type code; we can read the message contents independently of
-	 * the type.
+	 * 在协议版本 3 中，所有前端消息在类型码之后都紧跟一个长度字；
+	 * 因此我们可以独立于类型读取消息内容。
 	 */
 	if (pq_getmessage(inBuf, maxmsglen))
-		return EOF;				/* suitable message already logged */
+		return EOF;				/* 相应的错误消息已经记录 */
 	RESUME_CANCEL_INTERRUPTS();
 
 	return qtype;
 }
 
 /* ----------------
- *		ReadCommand reads a command from either the frontend or
- *		standard input, places it in inBuf, and returns the
- *		message type code (first byte of the message).
- *		EOF is returned if end of file.
+ *		ReadCommand 从前端或标准输入读取一条命令，
+ *		将其放入 inBuf，并返回消息类型码（消息的首字节）。
+ *		如果读到文件结束符，则返回 EOF。
  * ----------------
  */
 static int
@@ -490,13 +479,13 @@ ReadCommand(StringInfo inBuf)
 }
 
 /*
- * ProcessClientReadInterrupt() - Process interrupts specific to client reads
+ * ProcessClientReadInterrupt() —— 处理特定于客户端读取的中断
  *
- * This is called just before and after low-level reads.
- * 'blocked' is true if no data was available to read and we plan to retry,
- * false if about to read or done reading.
+ * 在底层读取之前和之后调用。
+ * 若没有数据可读且我们计划重试，则 blocked 为 true；
+ * 若即将读取或已完成读取，则 blocked 为 false。
  *
- * Must preserve errno!
+ * 必须保留 errno！
  */
 void
 ProcessClientReadInterrupt(bool blocked)
@@ -505,26 +494,25 @@ ProcessClientReadInterrupt(bool blocked)
 
 	if (DoingCommandRead)
 	{
-		/* Check for general interrupts that arrived before/while reading */
+		/* 检查读取之前/期间到达的常规中断 */
 		CHECK_FOR_INTERRUPTS();
 
-		/* Process sinval catchup interrupts, if any */
+		/* 处理 sinval catchup 中断（如果有） */
 		if (catchupInterruptPending)
 			ProcessCatchupInterrupt();
 
-		/* Process notify interrupts, if any */
+		/* 处理通知中断（如果有） */
 		if (notifyInterruptPending)
 			ProcessNotifyInterrupt(true);
 	}
 	else if (ProcDiePending)
 	{
 		/*
-		 * We're dying.  If there is no data available to read, then it's safe
-		 * (and sane) to handle that now.  If we haven't tried to read yet,
-		 * make sure the process latch is set, so that if there is no data
-		 * then we'll come back here and die.  If we're done reading, also
-		 * make sure the process latch is set, as we might've undesirably
-		 * cleared it while reading.
+		 * 我们正在退出。如果没有可读的数据，那么现在处理它是安全的
+		 * （也是合理的）。如果我们尚未尝试读取，请确保已设置进程
+		 * latch，这样若没有数据，我们就会回到这里并退出。如果已完成
+		 * 读取，同样要确保进程 latch 已设置，因为我们在读取期间可能
+		 * 已不经意地清除了它。
 		 */
 		if (blocked)
 			CHECK_FOR_INTERRUPTS();
@@ -536,13 +524,13 @@ ProcessClientReadInterrupt(bool blocked)
 }
 
 /*
- * ProcessClientWriteInterrupt() - Process interrupts specific to client writes
+ * ProcessClientWriteInterrupt() —— 处理特定于客户端写入的中断
  *
- * This is called just before and after low-level writes.
- * 'blocked' is true if no data could be written and we plan to retry,
- * false if about to write or done writing.
+ * 在底层写入之前和之后调用。
+ * 若无法写入数据且我们计划重试，则 blocked 为 true；
+ * 若即将写入或已完成写入，则 blocked 为 false。
  *
- * Must preserve errno!
+ * 必须保留 errno！
  */
 void
 ProcessClientWriteInterrupt(bool blocked)
@@ -552,27 +540,24 @@ ProcessClientWriteInterrupt(bool blocked)
 	if (ProcDiePending)
 	{
 		/*
-		 * We're dying.  If it's not possible to write, then we should handle
-		 * that immediately, else a stuck client could indefinitely delay our
-		 * response to the signal.  If we haven't tried to write yet, make
-		 * sure the process latch is set, so that if the write would block
-		 * then we'll come back here and die.  If we're done writing, also
-		 * make sure the process latch is set, as we might've undesirably
-		 * cleared it while writing.
+		 * 我们正在退出。如果无法写入，那么我们应该立即处理它，
+		 * 否则一个卡住的客户端可能会无限期地拖延我们对信号的响应。
+		 * 如果我们尚未尝试写入，请确保已设置进程 latch，这样若写入会
+		 * 阻塞，我们就会回到这里并退出。如果已完成写入，同样要确保
+		 * 进程 latch 已设置，因为我们在写入期间可能已不经意地清除了它。
 		 */
 		if (blocked)
 		{
 			/*
-			 * Don't mess with whereToSendOutput if ProcessInterrupts wouldn't
-			 * service ProcDiePending.
+			 * 如果 ProcessInterrupts 不会处理 ProcDiePending，
+			 * 就不要去改动 whereToSendOutput。
 			 */
 			if (InterruptHoldoffCount == 0 && CritSectionCount == 0)
 			{
 				/*
-				 * We don't want to send the client the error message, as a)
-				 * that would possibly block again, and b) it would likely
-				 * lead to loss of protocol sync because we may have already
-				 * sent a partial protocol message.
+				 * 我们不希望向客户端发送错误消息，因为 a) 那样可能会再次
+				 * 阻塞，b) 由于我们可能已经发送了部分协议消息，它很可能会
+				 * 导致协议同步丢失。
 				 */
 				if (whereToSendOutput == DestRemote)
 					whereToSendOutput = DestNone;
@@ -588,17 +573,15 @@ ProcessClientWriteInterrupt(bool blocked)
 }
 
 /*
- * Do raw parsing (only).
+ * 仅执行原始解析（raw parsing）。
  *
- * A list of parsetrees (RawStmt nodes) is returned, since there might be
- * multiple commands in the given string.
+ * 返回一个解析树（RawStmt 节点）列表，因为给定字符串中可能存在
+ * 多条命令。
  *
- * NOTE: for interactive queries, it is important to keep this routine
- * separate from the analysis & rewrite stages.  Analysis and rewriting
- * cannot be done in an aborted transaction, since they require access to
- * database tables.  So, we rely on the raw parser to determine whether
- * we've seen a COMMIT or ABORT command; when we are in abort state, other
- * commands are not processed any further than the raw parse stage.
+ * 注意：对于交互式查询，将本例程与分析 & 重写阶段分开十分重要。
+ * 分析与重写无法在已中止的事务中进行，因为它们需要访问数据库表。
+ * 因此，我们依赖原始解析器来判断是否已经看到 COMMIT 或 ABORT 命令；
+ * 当我们处于中止状态时，其他命令不会在原始解析阶段之外被进一步处理。
  */
 List *
 pg_parse_query(const char *query_string)
@@ -617,31 +600,30 @@ pg_parse_query(const char *query_string)
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
-	/* Optional debugging check: pass raw parsetrees through copyObject() */
+	/* 可选的调试检查：将原始解析树通过 copyObject() 传递 */
 	if (Debug_copy_parse_plan_trees)
 	{
 		List	   *new_list = copyObject(raw_parsetree_list);
 
-		/* This checks both copyObject() and the equal() routines... */
+		/* 这会同时检查 copyObject() 和 equal() 例程…… */
 		if (!equal(new_list, raw_parsetree_list))
 			elog(WARNING, "copyObject() failed to produce an equal raw parse tree");
 		else
 			raw_parsetree_list = new_list;
 	}
 
-	/*
-	 * Optional debugging check: pass raw parsetrees through
-	 * outfuncs/readfuncs
-	 */
-	if (Debug_write_read_parse_plan_trees)
-	{
-		char	   *str = nodeToStringWithLocations(raw_parsetree_list);
-		List	   *new_list = stringToNodeWithLocations(str);
+		/*
+		 * 可选的调试检查：将原始解析树通过 outfuncs/readfuncs 传递
+		 */
+		if (Debug_write_read_parse_plan_trees)
+		{
+			char	   *str = nodeToStringWithLocations(raw_parsetree_list);
+			List	   *new_list = stringToNodeWithLocations(str);
 
-		pfree(str);
-		/* This checks both outfuncs/readfuncs and the equal() routines... */
-		if (!equal(new_list, raw_parsetree_list))
-			elog(WARNING, "outfuncs/readfuncs failed to produce an equal raw parse tree");
+			pfree(str);
+			/* 这会同时检查 outfuncs/readfuncs 和 equal() 例程…… */
+			if (!equal(new_list, raw_parsetree_list))
+				elog(WARNING, "outfuncs/readfuncs failed to produce an equal raw parse tree");
 		else
 			raw_parsetree_list = new_list;
 	}
@@ -654,13 +636,13 @@ pg_parse_query(const char *query_string)
 }
 
 /*
- * Given a raw parsetree (gram.y output), and optionally information about
- * types of parameter symbols ($n), perform parse analysis and rule rewriting.
+ * 给定一个原始解析树（gram.y 的输出），以及（可选的）关于参数符号
+ * ($n) 类型的信息，执行解析分析与规则重写。
  *
- * A list of Query nodes is returned, since either the analyzer or the
- * rewriter might expand one query to several.
+ * 返回一个 Query 节点列表，因为分析器或重写器都可能将一条查询扩展为
+ * 多条。
  *
- * NOTE: for reasons mentioned above, this must be separate from raw parsing.
+ * 注意：基于上述原因，本例程必须与原始解析分开。
  */
 List *
 pg_analyze_and_rewrite_fixedparams(RawStmt *parsetree,
@@ -675,7 +657,7 @@ pg_analyze_and_rewrite_fixedparams(RawStmt *parsetree,
 	TRACE_POSTGRESQL_QUERY_REWRITE_START(query_string);
 
 	/*
-	 * (1) Perform parse analysis.
+	 * (1) 执行解析分析。
 	 */
 	if (log_parser_stats)
 		ResetUsage();
@@ -687,7 +669,7 @@ pg_analyze_and_rewrite_fixedparams(RawStmt *parsetree,
 		ShowUsage("PARSE ANALYSIS STATISTICS");
 
 	/*
-	 * (2) Rewrite the queries, as necessary
+	 * (2) 根据需要重写查询
 	 */
 	querytree_list = pg_rewrite_query(query);
 
@@ -697,9 +679,8 @@ pg_analyze_and_rewrite_fixedparams(RawStmt *parsetree,
 }
 
 /*
- * Do parse analysis and rewriting.  This is the same as
- * pg_analyze_and_rewrite_fixedparams except that it's okay to deduce
- * information about $n symbol datatypes from context.
+ * 执行解析分析与重写。它与 pg_analyze_and_rewrite_fixedparams 相同，
+ * 不同之处在于可以从上下文中推导 $n 符号的数据类型信息。
  */
 List *
 pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
@@ -714,7 +695,7 @@ pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
 	TRACE_POSTGRESQL_QUERY_REWRITE_START(query_string);
 
 	/*
-	 * (1) Perform parse analysis.
+	 * (1) 执行解析分析。
 	 */
 	if (log_parser_stats)
 		ResetUsage();
@@ -723,7 +704,7 @@ pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
 									queryEnv);
 
 	/*
-	 * Check all parameter types got determined.
+	 * 检查所有参数类型是否都已确定。
 	 */
 	for (int i = 0; i < *numParams; i++)
 	{
@@ -740,7 +721,7 @@ pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
 		ShowUsage("PARSE ANALYSIS STATISTICS");
 
 	/*
-	 * (2) Rewrite the queries, as necessary
+	 * (2) 根据需要重写查询
 	 */
 	querytree_list = pg_rewrite_query(query);
 
@@ -750,10 +731,9 @@ pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
 }
 
 /*
- * Do parse analysis and rewriting.  This is the same as
- * pg_analyze_and_rewrite_fixedparams except that, instead of a fixed list of
- * parameter datatypes, a parser callback is supplied that can do
- * external-parameter resolution and possibly other things.
+ * 执行解析分析与重写。它与 pg_analyze_and_rewrite_fixedparams 相同，
+ * 不同之处在于：不采用固定的参数数据类型列表，而是提供一个解析器
+ * 回调，它可以进行外部参数解析，以及可能的其他操作。
  */
 List *
 pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
@@ -768,7 +748,7 @@ pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 	TRACE_POSTGRESQL_QUERY_REWRITE_START(query_string);
 
 	/*
-	 * (1) Perform parse analysis.
+	 * (1) 执行解析分析。
 	 */
 	if (log_parser_stats)
 		ResetUsage();
@@ -780,7 +760,7 @@ pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 		ShowUsage("PARSE ANALYSIS STATISTICS");
 
 	/*
-	 * (2) Rewrite the queries, as necessary
+	 * (2) 根据需要重写查询
 	 */
 	querytree_list = pg_rewrite_query(query);
 
@@ -790,10 +770,9 @@ pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 }
 
 /*
- * Perform rewriting of a query produced by parse analysis.
+ * 对解析分析产生的查询执行重写。
  *
- * Note: query must just have come from the parser, because we do not do
- * AcquireRewriteLocks() on it.
+ * 注意：查询必须刚刚来自解析器，因为我们不会对其执行 AcquireRewriteLocks()。
  */
 List *
 pg_rewrite_query(Query *query)
@@ -809,12 +788,12 @@ pg_rewrite_query(Query *query)
 
 	if (query->commandType == CMD_UTILITY)
 	{
-		/* don't rewrite utilities, just dump 'em into result list */
+		/* 不重写实用命令，直接将其放入结果列表 */
 		querytree_list = list_make1(query);
 	}
 	else
 	{
-		/* rewrite regular queries */
+		/* 重写常规查询 */
 		querytree_list = QueryRewrite(query);
 	}
 
@@ -823,20 +802,20 @@ pg_rewrite_query(Query *query)
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
-	/* Optional debugging check: pass querytree through copyObject() */
+	/* 可选的调试检查：将查询树通过 copyObject() 传递 */
 	if (Debug_copy_parse_plan_trees)
 	{
 		List	   *new_list;
 
 		new_list = copyObject(querytree_list);
-		/* This checks both copyObject() and the equal() routines... */
+		/* 这会同时检查 copyObject() 和 equal() 例程…… */
 		if (!equal(new_list, querytree_list))
 			elog(WARNING, "copyObject() failed to produce an equal rewritten parse tree");
 		else
 			querytree_list = new_list;
 	}
 
-	/* Optional debugging check: pass querytree through outfuncs/readfuncs */
+	/* 可选的调试检查：将查询树通过 outfuncs/readfuncs 传递 */
 	if (Debug_write_read_parse_plan_trees)
 	{
 		List	   *new_list = NIL;
@@ -849,8 +828,8 @@ pg_rewrite_query(Query *query)
 			Query	   *new_query = stringToNodeWithLocations(str);
 
 			/*
-			 * queryId is not saved in stored rules, but we must preserve it
-			 * here to avoid breaking pg_stat_statements.
+			 * queryId 不会被保存到存储的规则中，但我们必须在此处
+			 * 保留它，以避免破坏 pg_stat_statements。
 			 */
 			new_query->queryId = curr_query->queryId;
 
@@ -858,7 +837,7 @@ pg_rewrite_query(Query *query)
 			pfree(str);
 		}
 
-		/* This checks both outfuncs/readfuncs and the equal() routines... */
+		/* 这会同时检查 outfuncs/readfuncs 和 equal() 例程…… */
 		if (!equal(new_list, querytree_list))
 			elog(WARNING, "outfuncs/readfuncs failed to produce an equal rewritten parse tree");
 		else
@@ -876,8 +855,8 @@ pg_rewrite_query(Query *query)
 
 
 /*
- * Generate a plan for a single already-rewritten query.
- * This is a thin wrapper around planner() and takes the same parameters.
+ * 为单条已经过重写的查询生成执行计划。
+ * 这是对 planner() 的轻量封装，接受相同的参数。
  */
 PlannedStmt *
 pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
@@ -885,11 +864,11 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 {
 	PlannedStmt *plan;
 
-	/* Utility commands have no plans. */
+	/* 实用命令没有执行计划。 */
 	if (querytree->commandType == CMD_UTILITY)
 		return NULL;
 
-	/* Planner must have a snapshot in case it calls user-defined functions. */
+	/* 优化器可能会调用用户自定义函数，因此必须持有一个快照。 */
 	Assert(ActiveSnapshotSet());
 
 	TRACE_POSTGRESQL_QUERY_PLAN_START();
@@ -897,7 +876,7 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 	if (log_planner_stats)
 		ResetUsage();
 
-	/* call the optimizer */
+	/* 调用优化器 */
 	plan = planner(querytree, query_string, cursorOptions, boundParams);
 
 	if (log_planner_stats)
@@ -905,17 +884,17 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
-	/* Optional debugging check: pass plan tree through copyObject() */
+	/* 可选的调试检查：将计划树通过 copyObject() 传递 */
 	if (Debug_copy_parse_plan_trees)
 	{
 		PlannedStmt *new_plan = copyObject(plan);
 
 		/*
-		 * equal() currently does not have routines to compare Plan nodes, so
-		 * don't try to test equality here.  Perhaps fix someday?
+		 * equal() 目前没有用于比较 Plan 节点的例程，因此
+		 * 不要在此尝试进行相等性测试。也许将来会修复？
 		 */
 #ifdef NOT_USED
-		/* This checks both copyObject() and the equal() routines... */
+		/* 这会同时检查 copyObject() 和 equal() 例程…… */
 		if (!equal(new_plan, plan))
 			elog(WARNING, "copyObject() failed to produce an equal plan tree");
 		else
@@ -923,7 +902,7 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 			plan = new_plan;
 	}
 
-	/* Optional debugging check: pass plan tree through outfuncs/readfuncs */
+	/* 可选的调试检查：将计划树通过 outfuncs/readfuncs 传递 */
 	if (Debug_write_read_parse_plan_trees)
 	{
 		char	   *str;
@@ -934,11 +913,11 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 		pfree(str);
 
 		/*
-		 * equal() currently does not have routines to compare Plan nodes, so
-		 * don't try to test equality here.  Perhaps fix someday?
+		 * equal() 目前没有用于比较 Plan 节点的例程，因此
+		 * 不要在此尝试进行相等性测试。也许将来会修复？
 		 */
 #ifdef NOT_USED
-		/* This checks both outfuncs/readfuncs and the equal() routines... */
+		/* 这会同时检查 outfuncs/readfuncs 和 equal() 例程…… */
 		if (!equal(new_plan, plan))
 			elog(WARNING, "outfuncs/readfuncs failed to produce an equal plan tree");
 		else
@@ -949,7 +928,7 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 #endif							/* DEBUG_NODE_TESTS_ENABLED */
 
 	/*
-	 * Print plan if debugging.
+	 * 如果需要调试，则打印执行计划。
 	 */
 	if (Debug_print_plan)
 		elog_node_display(LOG, "plan", plan, Debug_pretty_print);
@@ -960,12 +939,12 @@ pg_plan_query(Query *querytree, const char *query_string, int cursorOptions,
 }
 
 /*
- * Generate plans for a list of already-rewritten queries.
+ * 为一组已经过重写的查询生成执行计划。
  *
- * For normal optimizable statements, invoke the planner.  For utility
- * statements, just make a wrapper PlannedStmt node.
+ * 对于普通的可优化语句，调用优化器。对于实用命令，
+ * 只需构造一个包装用的 PlannedStmt 节点。
  *
- * The result is a list of PlannedStmt nodes.
+ * 结果是一个 PlannedStmt 节点列表。
  */
 List *
 pg_plan_queries(List *querytrees, const char *query_string, int cursorOptions,
@@ -981,7 +960,7 @@ pg_plan_queries(List *querytrees, const char *query_string, int cursorOptions,
 
 		if (query->commandType == CMD_UTILITY)
 		{
-			/* Utility commands require no planning. */
+			/* 实用命令无需规划。 */
 			stmt = makeNode(PlannedStmt);
 			stmt->commandType = CMD_UTILITY;
 			stmt->canSetTag = query->canSetTag;
@@ -1006,7 +985,7 @@ pg_plan_queries(List *querytrees, const char *query_string, int cursorOptions,
 /*
  * exec_simple_query
  *
- * Execute a "simple Query" protocol message.
+ * 执行一条“simple Query”协议消息。
  */
 static void
 exec_simple_query(const char *query_string)
@@ -1021,7 +1000,7 @@ exec_simple_query(const char *query_string)
 	char		msec_str[32];
 
 	/*
-	 * Report query to various monitoring facilities.
+	 * 向各类监控设施报告查询。
 	 */
 	debug_query_string = query_string;
 
@@ -1030,41 +1009,38 @@ exec_simple_query(const char *query_string)
 	TRACE_POSTGRESQL_QUERY_START(query_string);
 
 	/*
-	 * We use save_log_statement_stats so ShowUsage doesn't report incorrect
-	 * results because ResetUsage wasn't called.
+	 * 我们使用 save_log_statement_stats，这样 ShowUsage 就不会因为
+	 * 没有调用 ResetUsage 而报告错误的结果。
 	 */
 	if (save_log_statement_stats)
 		ResetUsage();
 
 	/*
-	 * Start up a transaction command.  All queries generated by the
-	 * query_string will be in this same command block, *unless* we find a
-	 * BEGIN/COMMIT/ABORT statement; we have to force a new xact command after
-	 * one of those, else bad things will happen in xact.c. (Note that this
-	 * will normally change current memory context.)
+	 * 启动一个事务命令。query_string 生成的所有查询都将位于同一个
+	 * 命令块中，*除非*我们遇到了 BEGIN/COMMIT/ABORT 语句；遇到这类
+	 * 语句后我们必须强制开始一个新的事务命令，否则 xact.c 中会出现
+	 * 问题。（注意，这通常会改变当前的内存上下文。）
 	 */
 	start_xact_command();
 
 	/*
-	 * Zap any pre-existing unnamed statement.  (While not strictly necessary,
-	 * it seems best to define simple-Query mode as if it used the unnamed
-	 * statement and portal; this ensures we recover any storage used by prior
-	 * unnamed operations.)
+	 * 清除任何已存在的未命名语句。（虽然并非绝对必要，但最好将
+	 * simple-Query 模式定义为使用未命名的语句和 portal；这样可以确保
+	 * 我们回收之前未命名操作所使用的存储空间。）
 	 */
 	drop_unnamed_stmt();
 
 	/*
-	 * Switch to appropriate context for constructing parsetrees.
+	 * 切换到合适的上下文以构造解析树。
 	 */
 	oldcontext = MemoryContextSwitchTo(MessageContext);
 
 	/*
-	 * Do basic parsing of the query or queries (this should be safe even if
-	 * we are in aborted transaction state!)
+	 * 对查询进行基本的解析（即使我们处于已中止的事务状态，这也应是安全的！）
 	 */
 	parsetree_list = pg_parse_query(query_string);
 
-	/* Log immediately if dictated by log_statement */
+	/* 如果 log_statement 要求，则立即记录日志 */
 	if (check_log_statement(parsetree_list))
 	{
 		ereport(LOG,
@@ -1075,26 +1051,24 @@ exec_simple_query(const char *query_string)
 	}
 
 	/*
-	 * Switch back to transaction context to enter the loop.
+	 * 切换回事务上下文以进入循环。
 	 */
 	MemoryContextSwitchTo(oldcontext);
 
 	/*
-	 * For historical reasons, if multiple SQL statements are given in a
-	 * single "simple Query" message, we execute them as a single transaction,
-	 * unless explicit transaction control commands are included to make
-	 * portions of the list be separate transactions.  To represent this
-	 * behavior properly in the transaction machinery, we use an "implicit"
-	 * transaction block.
+	 * 出于历史原因，如果在单条“simple Query”消息中给出了多条 SQL 语句，
+	 * 我们会将它们作为单个事务执行，除非其中包含显式的事务控制命令，
+	 * 使列表中的某些部分成为独立的事务。为了在事务机制中恰当地表现
+	 * 这种行为，我们使用一个“隐式”事务块。
 	 */
 	use_implicit_block = (list_length(parsetree_list) > 1);
 
-	/*
-	 * Run through the raw parsetree(s) and process each one.
-	 */
-	foreach(parsetree_item, parsetree_list)
-	{
-		RawStmt    *parsetree = lfirst_node(RawStmt, parsetree_item);
+		/*
+		 * 遍历原始解析树，并逐一处理。
+		 */
+		foreach(parsetree_item, parsetree_list)
+		{
+			RawStmt    *parsetree = lfirst_node(RawStmt, parsetree_item);
 		bool		snapshot_set = false;
 		CommandTag	commandTag;
 		QueryCompletion qc;
@@ -1111,10 +1085,9 @@ exec_simple_query(const char *query_string)
 		pgstat_report_plan_id(0, true);
 
 		/*
-		 * Get the command name for use in status display (it also becomes the
-		 * default completion tag, down inside PortalRun).  Set ps_status and
-		 * do any special start-of-SQL-command processing needed by the
-		 * destination.
+		 * 获取用于状态显示的命令名（它也会成为 PortalRun 内部的
+		 * 默认完成标签）。设置 ps_status，并完成目标端需要的任何
+		 * SQL 命令起始阶段的特殊处理。
 		 */
 		commandTag = CreateCommandTag(parsetree->stmt);
 		cmdtagname = GetCommandTagNameAndLen(commandTag, &cmdtaglen);
@@ -1124,12 +1097,10 @@ exec_simple_query(const char *query_string)
 		BeginCommand(commandTag, dest);
 
 		/*
-		 * If we are in an aborted transaction, reject all commands except
-		 * COMMIT/ABORT.  It is important that this test occur before we try
-		 * to do parse analysis, rewrite, or planning, since all those phases
-		 * try to do database accesses, which may fail in abort state. (It
-		 * might be safe to allow some additional utility commands in this
-		 * state, but not many...)
+		 * 如果我们处于已中止的事务中，则拒绝除 COMMIT/ABORT 之外的所有
+		 * 命令。这个检测必须在我们尝试进行解析分析、重写或规划之前进行，
+		 * 因为所有这些阶段都会尝试访问数据库，而在中止状态下访问可能失败。
+		 * （在这种状态下，允许一些额外的实用命令也许是安全的，但数量不多……）
 		 */
 		if (IsAbortedTransactionBlockState() &&
 			!IsTransactionExitStmt(parsetree->stmt))
@@ -1139,24 +1110,23 @@ exec_simple_query(const char *query_string)
 							"commands ignored until end of transaction block"),
 					 errdetail_abort()));
 
-		/* Make sure we are in a transaction command */
+		/* 确保我们处于事务命令中 */
 		start_xact_command();
 
 		/*
-		 * If using an implicit transaction block, and we're not already in a
-		 * transaction block, start an implicit block to force this statement
-		 * to be grouped together with any following ones.  (We must do this
-		 * each time through the loop; otherwise, a COMMIT/ROLLBACK in the
-		 * list would cause later statements to not be grouped.)
+		 * 如果使用了隐式事务块，并且我们尚不处于某个事务块中，则启动一个
+		 * 隐式块，以强制本语句与后续语句归为一组。（我们必须在循环的每一
+		 * 轮都这样做；否则，列表中的 COMMIT/ROLLBACK 会导致后面的语句
+		 * 无法被归组。）
 		 */
 		if (use_implicit_block)
 			BeginImplicitTransactionBlock();
 
-		/* If we got a cancel signal in parsing or prior command, quit */
+		/* 如果在解析或前一条命令中收到取消信号，则退出 */
 		CHECK_FOR_INTERRUPTS();
 
 		/*
-		 * Set up a snapshot if parse analysis/planning will need one.
+		 * 如果解析分析/规划需要快照，则建立一个快照。
 		 */
 		if (analyze_requires_snapshot(parsetree))
 		{
@@ -1165,16 +1135,14 @@ exec_simple_query(const char *query_string)
 		}
 
 		/*
-		 * OK to analyze, rewrite, and plan this query.
+		 * 现在可以分析、重写并规划本查询了。
 		 *
-		 * Switch to appropriate context for constructing query and plan trees
-		 * (these can't be in the transaction context, as that will get reset
-		 * when the command is COMMIT/ROLLBACK).  If we have multiple
-		 * parsetrees, we use a separate context for each one, so that we can
-		 * free that memory before moving on to the next one.  But for the
-		 * last (or only) parsetree, just use MessageContext, which will be
-		 * reset shortly after completion anyway.  In event of an error, the
-		 * per_parsetree_context will be deleted when MessageContext is reset.
+		 * 切换到合适的上下文以构造查询树和计划树（它们不能位于事务上下文中，
+		 * 因为当事务执行 COMMIT/ROLLBACK 时该上下文会被重置）。如果我们有
+		 * 多个解析树，则为每个解析树使用一个独立的上下文，以便在处理下一个
+		 * 之前释放这块内存。而对于最后（或唯一）一个解析树，直接使用
+		 * MessageContext 即可，它会在完成后很快被重置。如果出错，
+		 * per_parsetree_context 会在 MessageContext 被重置时被删除。
 		 */
 		if (lnext(parsetree_list, parsetree_item) != NULL)
 		{
@@ -1194,33 +1162,31 @@ exec_simple_query(const char *query_string)
 										CURSOR_OPT_PARALLEL_OK, NULL);
 
 		/*
-		 * Done with the snapshot used for parsing/planning.
+		 * 解析/规划所用的快照已用完。
 		 *
-		 * While it looks promising to reuse the same snapshot for query
-		 * execution (at least for simple protocol), unfortunately it causes
-		 * execution to use a snapshot that has been acquired before locking
-		 * any of the tables mentioned in the query.  This creates user-
-		 * visible anomalies, so refrain.  Refer to
-		 * https://postgr.es/m/flat/5075D8DF.6050500@fuzzy.cz for details.
+		 * 虽然复用同一个快照来执行查询（至少对于简单协议）看似可行，
+		 * 但不幸的是，这会导致执行时使用的快照是在锁定查询中提到的任何
+		 * 表之前获取的。这会产生用户可见的异常，因此不要这样做。详情
+		 * 请参阅 https://postgr.es/m/flat/5075D8DF.6050500@fuzzy.cz。
 		 */
 		if (snapshot_set)
 			PopActiveSnapshot();
 
-		/* If we got a cancel signal in analysis or planning, quit */
+		/* 如果在分析或规划期间收到了取消信号，则退出 */
 		CHECK_FOR_INTERRUPTS();
 
 		/*
-		 * Create unnamed portal to run the query or queries in. If there
-		 * already is one, silently drop it.
+		 * 创建未命名的 portal 来运行查询（可能多条）。如果已经存在，
+		 * 则静默地将其丢弃。
 		 */
 		portal = CreatePortal("", true, true);
-		/* Don't display the portal in pg_cursors */
+		/* 不要在 pg_cursors 中显示该 portal */
 		portal->visible = false;
 
 		/*
-		 * We don't have to copy anything into the portal, because everything
-		 * we are passing here is in MessageContext or the
-		 * per_parsetree_context, and so will outlive the portal anyway.
+		 * 我们无需向 portal 中拷贝任何内容，因为这里传递的一切都位于
+		 * MessageContext 或 per_parsetree_context 中，因此无论如何都会
+		 * 比 portal 存活得更久。
 		 */
 		PortalDefineQuery(portal,
 						  NULL,
@@ -1230,17 +1196,16 @@ exec_simple_query(const char *query_string)
 						  NULL);
 
 		/*
-		 * Start the portal.  No parameters here.
+		 * 启动 portal。这里没有参数。
 		 */
 		PortalStart(portal, NULL, 0, InvalidSnapshot);
 
 		/*
-		 * Select the appropriate output format: text unless we are doing a
-		 * FETCH from a binary cursor.  (Pretty grotty to have to do this here
-		 * --- but it avoids grottiness in other places.  Ah, the joys of
-		 * backward compatibility...)
+		 * 选择合适的输出格式：除非是从二进制游标执行 FETCH，否则使用
+		 * 文本格式。（必须在这里做这件事实在有点别扭——但它避免了在
+		 * 其他地方出现更别扭的情况。啊，向后兼容的乐趣……）
 		 */
-		format = 0;				/* TEXT is default */
+		format = 0;				/* 默认为 TEXT */
 		if (IsA(parsetree->stmt, FetchStmt))
 		{
 			FetchStmt  *stmt = (FetchStmt *) parsetree->stmt;
@@ -1251,29 +1216,29 @@ exec_simple_query(const char *query_string)
 
 				if (PortalIsValid(fportal) &&
 					(fportal->cursorOptions & CURSOR_OPT_BINARY))
-					format = 1; /* BINARY */
+					format = 1; /* 二进制 */
 			}
 		}
 		PortalSetResultFormat(portal, 1, &format);
 
 		/*
-		 * Now we can create the destination receiver object.
+		 * 现在我们可以创建目标端接收器对象。
 		 */
 		receiver = CreateDestReceiver(dest);
 		if (dest == DestRemote)
 			SetRemoteDestReceiverParams(receiver, portal);
 
 		/*
-		 * Switch back to transaction context for execution.
+		 * 切换回事务上下文以执行。
 		 */
 		MemoryContextSwitchTo(oldcontext);
 
 		/*
-		 * Run the portal to completion, and then drop it (and the receiver).
+		 * 运行 portal 直至完成，然后将其丢弃（连同接收器一起）。
 		 */
 		(void) PortalRun(portal,
 						 FETCH_ALL,
-						 true,	/* always top level */
+						 true,	/* 始终为顶层 */
 						 receiver,
 						 receiver,
 						 &qc);
@@ -1285,13 +1250,11 @@ exec_simple_query(const char *query_string)
 		if (lnext(parsetree_list, parsetree_item) == NULL)
 		{
 			/*
-			 * If this is the last parsetree of the query string, close down
-			 * transaction statement before reporting command-complete.  This
-			 * is so that any end-of-transaction errors are reported before
-			 * the command-complete message is issued, to avoid confusing
-			 * clients who will expect either a command-complete message or an
-			 * error, not one and then the other.  Also, if we're using an
-			 * implicit transaction block, we must close that out first.
+			 * 如果这是查询字符串的最后一个解析树，则在报告命令完成之前
+			 * 关闭事务语句。这样做是为了让任何事务结束时的错误在命令完成
+			 * 消息发出之前就被报告，从而避免让客户端困惑——客户端期望的
+			 * 是命令完成消息或错误，而不是两者先后都收到。此外，如果我们
+			 * 正在使用隐式事务块，必须先将其关闭。
 			 */
 			if (use_implicit_block)
 				EndImplicitTransactionBlock();
@@ -1300,62 +1263,60 @@ exec_simple_query(const char *query_string)
 		else if (IsA(parsetree->stmt, TransactionStmt))
 		{
 			/*
-			 * If this was a transaction control statement, commit it. We will
-			 * start a new xact command for the next command.
+			 * 如果这是一条事务控制语句，则提交它。我们将为下一条命令
+			 * 启动一个新的事务命令。
 			 */
 			finish_xact_command();
 		}
 		else
 		{
 			/*
-			 * We had better not see XACT_FLAGS_NEEDIMMEDIATECOMMIT set if
-			 * we're not calling finish_xact_command().  (The implicit
-			 * transaction block should have prevented it from getting set.)
+			 * 如果我们没有调用 finish_xact_command()，那么最好不要看到
+			 * XACT_FLAGS_NEEDIMMEDIATECOMMIT 被设置。（隐式事务块本应
+			 * 阻止它被设置。）
 			 */
 			Assert(!(MyXactFlags & XACT_FLAGS_NEEDIMMEDIATECOMMIT));
 
 			/*
-			 * We need a CommandCounterIncrement after every query, except
-			 * those that start or end a transaction block.
+			 * 每条查询之后都需要一次 CommandCounterIncrement，除了那些
+			 * 开启或结束事务块的查询。
 			 */
 			CommandCounterIncrement();
 
 			/*
-			 * Disable statement timeout between queries of a multi-query
-			 * string, so that the timeout applies separately to each query.
-			 * (Our next loop iteration will start a fresh timeout.)
+			 * 在多查询字符串的查询之间禁用语句超时，这样超时会对每条
+			 * 查询分别生效。（我们下一轮循环迭代会启动一个新的超时。）
 			 */
 			disable_statement_timeout();
 		}
 
 		/*
-		 * Tell client that we're done with this query.  Note we emit exactly
-		 * one EndCommand report for each raw parsetree, thus one for each SQL
-		 * command the client sent, regardless of rewriting. (But a command
-		 * aborted by error will not send an EndCommand report at all.)
+		 * 通知客户端本查询已处理完毕。注意，我们对每个原始解析树恰好
+		 * 发送一份 EndCommand 报告，因此客户端发送的每条 SQL 命令都会
+		 * 收到一份（无论是否经过重写）。（但因错误而中止的命令则根本
+		 * 不会发送 EndCommand 报告。）
 		 */
 		EndCommand(&qc, dest, false);
 
-		/* Now we may drop the per-parsetree context, if one was created. */
+		/* 现在可以丢弃 per-parsetree 上下文（如果创建过的话）。 */
 		if (per_parsetree_context)
 			MemoryContextDelete(per_parsetree_context);
-	}							/* end loop over parsetrees */
+	}							/* 结束遍历解析树的循环 */
 
 	/*
-	 * Close down transaction statement, if one is open.  (This will only do
-	 * something if the parsetree list was empty; otherwise the last loop
-	 * iteration already did it.)
+	 * 关闭事务语句（如果有一个处于打开状态）。（这只在解析树列表为空时
+	 * 才会起作用；否则最后一轮循环迭代已经做过了。）
 	 */
 	finish_xact_command();
 
 	/*
-	 * If there were no parsetrees, return EmptyQueryResponse message.
+	 * 如果没有任何解析树，则返回 EmptyQueryResponse 消息。
 	 */
 	if (!parsetree_list)
 		NullCommand(dest);
 
 	/*
-	 * Emit duration logging if appropriate.
+	 * 如果合适，则记录耗时日志。
 	 */
 	switch (check_log_duration(msec_str, was_logged))
 	{
@@ -1384,13 +1345,13 @@ exec_simple_query(const char *query_string)
 /*
  * exec_parse_message
  *
- * Execute a "Parse" protocol message.
+ * 执行一条“Parse”协议消息。
  */
 static void
-exec_parse_message(const char *query_string,	/* string to execute */
-				   const char *stmt_name,	/* name for prepared stmt */
-				   Oid *paramTypes, /* parameter types */
-				   int numParams)	/* number of parameters */
+exec_parse_message(const char *query_string,	/* 要执行的字符串 */
+				   const char *stmt_name,	/* 预备语句的名称 */
+				   Oid *paramTypes, /* 参数类型 */
+				   int numParams)	/* 参数个数 */
 {
 	MemoryContext unnamed_stmt_context = NULL;
 	MemoryContext oldcontext;
@@ -1403,7 +1364,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	char		msec_str[32];
 
 	/*
-	 * Report query to various monitoring facilities.
+	 * 向各类监控设施报告查询。
 	 */
 	debug_query_string = query_string;
 
@@ -1420,37 +1381,34 @@ exec_parse_message(const char *query_string,	/* string to execute */
 							 query_string)));
 
 	/*
-	 * Start up a transaction command so we can run parse analysis etc. (Note
-	 * that this will normally change current memory context.) Nothing happens
-	 * if we are already in one.  This also arms the statement timeout if
-	 * necessary.
+	 * 启动一个事务命令，以便运行解析分析等。（注意，这通常会改变
+	 * 当前内存上下文。）如果已经处于事务命令中，则什么也不会发生。
+	 * 如有必要，这也会启动语句超时计时。
 	 */
 	start_xact_command();
 
 	/*
-	 * Switch to appropriate context for constructing parsetrees.
+	 * 切换到合适的上下文以构造解析树。
 	 *
-	 * We have two strategies depending on whether the prepared statement is
-	 * named or not.  For a named prepared statement, we do parsing in
-	 * MessageContext and copy the finished trees into the prepared
-	 * statement's plancache entry; then the reset of MessageContext releases
-	 * temporary space used by parsing and rewriting. For an unnamed prepared
-	 * statement, we assume the statement isn't going to hang around long, so
-	 * getting rid of temp space quickly is probably not worth the costs of
-	 * copying parse trees.  So in this case, we create the plancache entry's
-	 * query_context here, and do all the parsing work therein.
+	 * 根据预备语句是否命名，我们有两种策略。对于命名的预备语句，
+	 * 我们在 MessageContext 中进行解析，并将完成的解析树拷贝到预备
+	 * 语句的 plancache 条目中；随后 MessageContext 的重置会释放解析
+	 * 和重写使用的临时空间。对于未命名的预备语句，我们假设该语句
+	 * 不会长期存在，因此尽快释放临时空间可能不值得付出拷贝解析树的
+	 * 代价。所以在这种情况，我们在此处创建 plancache 条目的
+	 * query_context，并在其中完成所有解析工作。
 	 */
 	is_named = (stmt_name[0] != '\0');
 	if (is_named)
 	{
-		/* Named prepared statement --- parse in MessageContext */
+		/* 命名的预备语句 —— 在 MessageContext 中解析 */
 		oldcontext = MemoryContextSwitchTo(MessageContext);
 	}
 	else
 	{
-		/* Unnamed prepared statement --- release any prior unnamed stmt */
+		/* 未命名的预备语句 —— 释放任何先前的未命名语句 */
 		drop_unnamed_stmt();
-		/* Create context for parsing */
+		/* 创建用于解析的上下文 */
 		unnamed_stmt_context =
 			AllocSetContextCreate(MessageContext,
 								  "unnamed prepared statement",
@@ -1459,15 +1417,13 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	}
 
 	/*
-	 * Do basic parsing of the query or queries (this should be safe even if
-	 * we are in aborted transaction state!)
+	 * 对查询进行基本的解析（即使我们处于已中止的事务状态，这也应是安全的！）
 	 */
 	parsetree_list = pg_parse_query(query_string);
 
 	/*
-	 * We only allow a single user statement in a prepared statement. This is
-	 * mainly to keep the protocol simple --- otherwise we'd need to worry
-	 * about multiple result tupdescs and things like that.
+	 * 我们只允许预备语句中包含单条用户语句。这主要是为了保持协议简单——
+	 * 否则我们就需要操心多个结果元组描述符之类的事情了。
 	 */
 	if (list_length(parsetree_list) > 1)
 		ereport(ERROR,
@@ -1481,12 +1437,10 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		raw_parse_tree = linitial_node(RawStmt, parsetree_list);
 
 		/*
-		 * If we are in an aborted transaction, reject all commands except
-		 * COMMIT/ROLLBACK.  It is important that this test occur before we
-		 * try to do parse analysis, rewrite, or planning, since all those
-		 * phases try to do database accesses, which may fail in abort state.
-		 * (It might be safe to allow some additional utility commands in this
-		 * state, but not many...)
+		 * 如果我们处于已中止的事务中，则拒绝除 COMMIT/ROLLBACK 之外的所有
+		 * 命令。这个检测必须在我们尝试进行解析分析、重写或规划之前进行，
+		 * 因为所有这些阶段都会尝试访问数据库，而在中止状态下访问可能失败。
+		 * （在这种状态下，允许一些额外的实用命令也许是安全的，但数量不多……）
 		 */
 		if (IsAbortedTransactionBlockState() &&
 			!IsTransactionExitStmt(raw_parse_tree->stmt))
@@ -1497,14 +1451,14 @@ exec_parse_message(const char *query_string,	/* string to execute */
 					 errdetail_abort()));
 
 		/*
-		 * Create the CachedPlanSource before we do parse analysis, since it
-		 * needs to see the unmodified raw parse tree.
+		 * 在进行解析分析之前创建 CachedPlanSource，因为它需要看到
+		 * 未经修改的原始解析树。
 		 */
 		psrc = CreateCachedPlan(raw_parse_tree, query_string,
 								CreateCommandTag(raw_parse_tree->stmt));
 
 		/*
-		 * Set up a snapshot if parse analysis will need one.
+		 * 如果解析分析需要快照，则建立一个快照。
 		 */
 		if (analyze_requires_snapshot(raw_parse_tree))
 		{
@@ -1513,9 +1467,8 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		}
 
 		/*
-		 * Analyze and rewrite the query.  Note that the originally specified
-		 * parameter set is not required to be complete, so we have to use
-		 * pg_analyze_and_rewrite_varparams().
+		 * 分析和重写查询。注意，最初指定的参数集合不需要是完整的，
+		 * 因此我们必须使用 pg_analyze_and_rewrite_varparams()。
 		 */
 		querytree_list = pg_analyze_and_rewrite_varparams(raw_parse_tree,
 														  query_string,
@@ -1523,13 +1476,13 @@ exec_parse_message(const char *query_string,	/* string to execute */
 														  &numParams,
 														  NULL);
 
-		/* Done with the snapshot used for parsing */
+		/* 解析所用的快照已用完 */
 		if (snapshot_set)
 			PopActiveSnapshot();
 	}
 	else
 	{
-		/* Empty input string.  This is legal. */
+		/* 空输入字符串。这是合法的。 */
 		raw_parse_tree = NULL;
 		psrc = CreateCachedPlan(raw_parse_tree, query_string,
 								CMDTAG_UNKNOWN);
@@ -1537,15 +1490,14 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	}
 
 	/*
-	 * CachedPlanSource must be a direct child of MessageContext before we
-	 * reparent unnamed_stmt_context under it, else we have a disconnected
-	 * circular subgraph.  Klugy, but less so than flipping contexts even more
-	 * above.
+	 * CachedPlanSource 必须先是 MessageContext 的直接子节点，然后我们
+	 * 才能将 unnamed_stmt_context 重新挂接到它下面，否则我们会得到一个
+	 * 断开的环形子图。这有点 hack，但比在上面更多地切换上下文要好一些。
 	 */
 	if (unnamed_stmt_context)
 		MemoryContextSetParent(psrc->context, MessageContext);
 
-	/* Finish filling in the CachedPlanSource */
+	/* 完成 CachedPlanSource 的填充 */
 	CompleteCachedPlan(psrc,
 					   querytree_list,
 					   unnamed_stmt_context,
@@ -1553,23 +1505,23 @@ exec_parse_message(const char *query_string,	/* string to execute */
 					   numParams,
 					   NULL,
 					   NULL,
-					   CURSOR_OPT_PARALLEL_OK,	/* allow parallel mode */
-					   true);	/* fixed result */
+					   CURSOR_OPT_PARALLEL_OK,	/* 允许并行模式 */
+					   true);	/* 固定结果 */
 
-	/* If we got a cancel signal during analysis, quit */
+	/* 如果在分析期间收到取消信号，则退出 */
 	CHECK_FOR_INTERRUPTS();
 
 	if (is_named)
 	{
 		/*
-		 * Store the query as a prepared statement.
+		 * 将查询作为预备语句存储。
 		 */
 		StorePreparedStatement(stmt_name, psrc, false);
 	}
 	else
 	{
 		/*
-		 * We just save the CachedPlanSource into unnamed_stmt_psrc.
+		 * 我们只是将 CachedPlanSource 保存到 unnamed_stmt_psrc。
 		 */
 		SaveCachedPlan(psrc);
 		unnamed_stmt_psrc = psrc;
@@ -1578,20 +1530,20 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	MemoryContextSwitchTo(oldcontext);
 
 	/*
-	 * We do NOT close the open transaction command here; that only happens
-	 * when the client sends Sync.  Instead, do CommandCounterIncrement just
-	 * in case something happened during parse/plan.
+	 * 我们不会在此处关闭已打开的事务命令；那只在客户端发送 Sync 时
+	 * 才会发生。取而代之的是执行 CommandCounterIncrement，以防在
+	 * 解析/规划期间发生了什么。
 	 */
 	CommandCounterIncrement();
 
 	/*
-	 * Send ParseComplete.
+	 * 发送 ParseComplete。
 	 */
 	if (whereToSendOutput == DestRemote)
 		pq_putemptymessage(PqMsg_ParseComplete);
 
 	/*
-	 * Emit duration logging if appropriate.
+	 * 如果合适，则记录耗时日志。
 	 */
 	switch (check_log_duration(msec_str, false))
 	{
@@ -1619,7 +1571,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 /*
  * exec_bind_message
  *
- * Process a "Bind" message to create a portal from a prepared statement
+ * 处理一条“Bind”消息，从预备语句创建一个 portal
  */
 static void
 exec_bind_message(StringInfo input_message)
@@ -1645,7 +1597,7 @@ exec_bind_message(StringInfo input_message)
 	ErrorContextCallback params_errcxt;
 	ListCell   *lc;
 
-	/* Get the fixed part of the message */
+	/* 获取消息的固定部分 */
 	portal_name = pq_getmsgstring(input_message);
 	stmt_name = pq_getmsgstring(input_message);
 
@@ -1654,7 +1606,7 @@ exec_bind_message(StringInfo input_message)
 							 *portal_name ? portal_name : "<unnamed>",
 							 *stmt_name ? stmt_name : "<unnamed>")));
 
-	/* Find prepared statement */
+	/* 查找预备语句 */
 	if (stmt_name[0] != '\0')
 	{
 		PreparedStatement *pstmt;
@@ -1664,7 +1616,7 @@ exec_bind_message(StringInfo input_message)
 	}
 	else
 	{
-		/* special-case the unnamed statement */
+		/* 对未命名语句做特殊处理 */
 		psrc = unnamed_stmt_psrc;
 		if (!psrc)
 			ereport(ERROR,
@@ -1673,7 +1625,7 @@ exec_bind_message(StringInfo input_message)
 	}
 
 	/*
-	 * Report query to various monitoring facilities.
+	 * 向各类监控设施报告查询。
 	 */
 	debug_query_string = psrc->query_string;
 
@@ -1696,17 +1648,16 @@ exec_bind_message(StringInfo input_message)
 		ResetUsage();
 
 	/*
-	 * Start up a transaction command so we can call functions etc. (Note that
-	 * this will normally change current memory context.) Nothing happens if
-	 * we are already in one.  This also arms the statement timeout if
-	 * necessary.
+	 * 启动一个事务命令，以便调用函数等。（注意，这通常会改变当前
+	 * 内存上下文。）如果已经处于事务命令中，则什么也不会发生。
+	 * 如有必要，这也会启动语句超时计时。
 	 */
 	start_xact_command();
 
-	/* Switch back to message context */
+	/* 切换回消息上下文 */
 	MemoryContextSwitchTo(MessageContext);
 
-	/* Get the parameter format codes */
+	/* 获取参数格式码 */
 	numPFormats = pq_getmsgint(input_message, 2);
 	if (numPFormats > 0)
 	{
@@ -1715,7 +1666,7 @@ exec_bind_message(StringInfo input_message)
 			pformats[i] = pq_getmsgint(input_message, 2);
 	}
 
-	/* Get the parameter value count */
+	/* 获取参数值的个数 */
 	numParams = pq_getmsgint(input_message, 2);
 
 	if (numPFormats > 1 && numPFormats != numParams)
@@ -1731,12 +1682,10 @@ exec_bind_message(StringInfo input_message)
 						numParams, stmt_name, psrc->num_params)));
 
 	/*
-	 * If we are in aborted transaction state, the only portals we can
-	 * actually run are those containing COMMIT or ROLLBACK commands. We
-	 * disallow binding anything else to avoid problems with infrastructure
-	 * that expects to run inside a valid transaction.  We also disallow
-	 * binding any parameters, since we can't risk calling user-defined I/O
-	 * functions.
+	 * 如果我们处于已中止的事务状态，我们实际能运行的 portal 只有那些
+	 * 包含 COMMIT 或 ROLLBACK 命令的。我们禁止绑定其他任何内容，以避免
+	 * 与期望在有效事务内运行的基础设施发生冲突。我们也禁止绑定任何
+	 * 参数，因为我们不能冒险调用用户自定义的 I/O 函数。
 	 */
 	if (IsAbortedTransactionBlockState() &&
 		(!(psrc->raw_parse_tree &&
@@ -1749,8 +1698,8 @@ exec_bind_message(StringInfo input_message)
 				 errdetail_abort()));
 
 	/*
-	 * Create the portal.  Allow silent replacement of an existing portal only
-	 * if the unnamed portal is specified.
+	 * 创建 portal。只有在指定了未命名 portal 时，才允许静默替换
+	 * 一个已存在的 portal。
 	 */
 	if (portal_name[0] == '\0')
 		portal = CreatePortal(portal_name, true, true);
@@ -1758,28 +1707,27 @@ exec_bind_message(StringInfo input_message)
 		portal = CreatePortal(portal_name, false, false);
 
 	/*
-	 * Prepare to copy stuff into the portal's memory context.  We do all this
-	 * copying first, because it could possibly fail (out-of-memory) and we
-	 * don't want a failure to occur between GetCachedPlan and
-	 * PortalDefineQuery; that would result in leaking our plancache refcount.
+	 * 准备将内容拷贝到 portal 的内存上下文中。我们把所有这些拷贝
+	 * 放在最前面做，因为它有可能失败（内存不足），而我们不希望失败
+	 * 发生在 GetCachedPlan 与 PortalDefineQuery 之间；那样会导致我们的
+	 * plancache 引用计数泄漏。
 	 */
 	oldContext = MemoryContextSwitchTo(portal->portalContext);
 
-	/* Copy the plan's query string into the portal */
+	/* 将计划的查询字符串拷贝到 portal 中 */
 	query_string = pstrdup(psrc->query_string);
 
-	/* Likewise make a copy of the statement name, unless it's unnamed */
+	/* 同样拷贝语句名（除非是未命名的） */
 	if (stmt_name[0])
 		saved_stmt_name = pstrdup(stmt_name);
 	else
 		saved_stmt_name = NULL;
 
 	/*
-	 * Set a snapshot if we have parameters to fetch (since the input
-	 * functions might need it) or the query isn't a utility command (and
-	 * hence could require redoing parse analysis and planning).  We keep the
-	 * snapshot active till we're done, so that plancache.c doesn't have to
-	 * take new ones.
+	 * 如果我们有参数需要获取（因为输入函数可能需要它），或者查询不是
+	 * 实用命令（因此可能需要重新进行解析分析和规划），则建立一个快照。
+	 * 我们让该快照一直保持有效，直到完成，这样 plancache.c 就不必
+	 * 再获取新的快照。
 	 */
 	if (numParams > 0 ||
 		(psrc->raw_parse_tree &&
@@ -1790,16 +1738,16 @@ exec_bind_message(StringInfo input_message)
 	}
 
 	/*
-	 * Fetch parameters, if any, and store in the portal's memory context.
+	 * 获取参数（如果有），并存入 portal 的内存上下文。
 	 */
 	if (numParams > 0)
 	{
-		char	  **knownTextValues = NULL; /* allocate on first use */
+		char	  **knownTextValues = NULL; /* 首次使用时再分配 */
 		BindParamCbData one_param_data;
 
 		/*
-		 * Set up an error callback so that if there's an error in this phase,
-		 * we can report the specific parameter causing the problem.
+		 * 设置一个错误回调，这样如果本阶段发生错误，我们可以报告导致
+		 * 问题的具体参数。
 		 */
 		one_param_data.portalName = portal->name;
 		one_param_data.paramno = -1;
@@ -1832,11 +1780,9 @@ exec_bind_message(StringInfo input_message)
 				char	   *pvalue;
 
 				/*
-				 * Rather than copying data around, we just initialize a
-				 * StringInfo pointing to the correct portion of the message
-				 * buffer.  We assume we can scribble on the message buffer to
-				 * add a trailing NUL which is required for the input function
-				 * call.
+				 * 我们不是到处拷贝数据，而是直接初始化一个 StringInfo，
+				 * 令其指向消息缓冲区的正确部分。我们假设可以在消息缓冲区
+				 * 上随意改写，以追加输入函数调用所需的结尾 NUL。
 				 */
 				pvalue = unconstify(char *, pq_getmsgbytes(input_message, plength));
 				csave = pvalue[plength];
@@ -1845,7 +1791,7 @@ exec_bind_message(StringInfo input_message)
 			}
 			else
 			{
-				pbuf.data = NULL;	/* keep compiler quiet */
+				pbuf.data = NULL;	/* 避免未使用变量引起的编译器警告 */
 				csave = 0;
 			}
 
@@ -1854,9 +1800,9 @@ exec_bind_message(StringInfo input_message)
 			else if (numPFormats > 0)
 				pformat = pformats[0];
 			else
-				pformat = 0;	/* default = text */
+				pformat = 0;	/* 默认 = 文本 */
 
-			if (pformat == 0)	/* text mode */
+			if (pformat == 0)	/* 文本模式 */
 			{
 				Oid			typinput;
 				Oid			typioparam;
@@ -1865,15 +1811,14 @@ exec_bind_message(StringInfo input_message)
 				getTypeInputInfo(ptype, &typinput, &typioparam);
 
 				/*
-				 * We have to do encoding conversion before calling the
-				 * typinput routine.
+				 * 在调用 typinput 例程之前，我们必须进行编码转换。
 				 */
 				if (isNull)
 					pstring = NULL;
 				else
 					pstring = pg_client_to_server(pbuf.data, plength);
 
-				/* Now we can log the input string in case of error */
+				/* 现在可以记录输入字符串，以便出错时查看 */
 				one_param_data.paramval = pstring;
 
 				pval = OidInputFunctionCall(typinput, pstring, typioparam, -1);
@@ -1881,9 +1826,9 @@ exec_bind_message(StringInfo input_message)
 				one_param_data.paramval = NULL;
 
 				/*
-				 * If we might need to log parameters later, save a copy of
-				 * the converted string in MessageContext; then free the
-				 * result of encoding conversion, if any was done.
+				 * 如果之后可能需要记录参数，则在 MessageContext 中保存
+				 * 一份转换后字符串的拷贝；然后释放编码转换的结果（如果
+				 * 做过转换的话）。
 				 */
 				if (pstring)
 				{
@@ -1901,11 +1846,10 @@ exec_bind_message(StringInfo input_message)
 						else
 						{
 							/*
-							 * We can trim the saved string, knowing that we
-							 * won't print all of it.  But we must copy at
-							 * least two more full characters than
-							 * BuildParamLogString wants to use; otherwise it
-							 * might fail to include the trailing ellipsis.
+							 * 我们可以截断已保存的字符串，因为知道不会把
+							 * 它全部打印出来。但我们必须多拷贝至少两个完整
+							 * 字符，超出 BuildParamLogString 想要使用的长度；
+							 * 否则它可能无法包含结尾的省略号。
 							 */
 							knownTextValues[paramno] =
 								pnstrdup(pstring,
@@ -1919,14 +1863,14 @@ exec_bind_message(StringInfo input_message)
 						pfree(pstring);
 				}
 			}
-			else if (pformat == 1)	/* binary mode */
+			else if (pformat == 1)	/* 二进制模式 */
 			{
 				Oid			typreceive;
 				Oid			typioparam;
 				StringInfo	bufptr;
 
 				/*
-				 * Call the parameter type's binary input converter
+				 * 调用参数类型的二进制输入转换器
 				 */
 				getTypeBinaryInputInfo(ptype, &typreceive, &typioparam);
 
@@ -1937,7 +1881,7 @@ exec_bind_message(StringInfo input_message)
 
 				pval = OidReceiveFunctionCall(typreceive, bufptr, typioparam, -1);
 
-				/* Trouble if it didn't eat the whole buffer */
+				/* 如果它没有消费整个缓冲区，则出问题了 */
 				if (!isNull && pbuf.cursor != pbuf.len)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
@@ -1950,31 +1894,31 @@ exec_bind_message(StringInfo input_message)
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("unsupported format code: %d",
 								pformat)));
-				pval = 0;		/* keep compiler quiet */
+				pval = 0;		/* 避免编译器告警 */
 			}
 
-			/* Restore message buffer contents */
-			if (!isNull)
-				pbuf.data[plength] = csave;
+		/* 恢复消息缓冲区内容 */
+		if (!isNull)
+			pbuf.data[plength] = csave;
 
 			params->params[paramno].value = pval;
 			params->params[paramno].isnull = isNull;
 
 			/*
-			 * We mark the params as CONST.  This ensures that any custom plan
-			 * makes full use of the parameter values.
+			 * 我们将参数标记为 CONST。这确保了任何自定义计划都能
+			 * 充分利用参数值。
 			 */
 			params->params[paramno].pflags = PARAM_FLAG_CONST;
 			params->params[paramno].ptype = ptype;
 		}
 
-		/* Pop the per-parameter error callback */
+		/* 弹出每个参数的错误回调 */
 		error_context_stack = error_context_stack->previous;
 
 		/*
-		 * Once all parameters have been received, prepare for printing them
-		 * in future errors, if configured to do so.  (This is saved in the
-		 * portal, so that they'll appear when the query is executed later.)
+		 * 一旦所有参数都已收到，如果配置如此，就为将来出错时打印它们
+		 * 做好准备。（这保存在 portal 中，因此它们会在稍后查询执行时
+		 * 出现。）
 		 */
 		if (log_parameter_max_length_on_error != 0)
 			params->paramValuesStr =
@@ -1985,12 +1929,12 @@ exec_bind_message(StringInfo input_message)
 	else
 		params = NULL;
 
-	/* Done storing stuff in portal's context */
+	/* 完成在 portal 上下文中存储内容 */
 	MemoryContextSwitchTo(oldContext);
 
 	/*
-	 * Set up another error callback so that all the parameters are logged if
-	 * we get an error during the rest of the BIND processing.
+	 * 设置另一个错误回调，这样如果在 BIND 处理的其余部分出错，
+	 * 所有参数都会被记录。
 	 */
 	params_data.portalName = portal->name;
 	params_data.params = params;
@@ -1999,7 +1943,7 @@ exec_bind_message(StringInfo input_message)
 	params_errcxt.arg = &params_data;
 	error_context_stack = &params_errcxt;
 
-	/* Get the result format codes */
+	/* 获取结果格式码 */
 	numRFormats = pq_getmsgint(input_message, 2);
 	if (numRFormats > 0)
 	{
@@ -2011,17 +1955,17 @@ exec_bind_message(StringInfo input_message)
 	pq_getmsgend(input_message);
 
 	/*
-	 * Obtain a plan from the CachedPlanSource.  Any cruft from (re)planning
-	 * will be generated in MessageContext.  The plan refcount will be
-	 * assigned to the Portal, so it will be released at portal destruction.
+	 * 从 CachedPlanSource 获取一个计划。(重新)规划产生的任何垃圾都会
+	 * 在 MessageContext 中生成。计划的引用计数会被赋给 Portal，因此它
+	 * 会在 portal 销毁时被释放。
 	 */
 	cplan = GetCachedPlan(psrc, params, NULL, NULL);
 
 	/*
-	 * Now we can define the portal.
+	 * 现在我们可以定义 portal 了。
 	 *
-	 * DO NOT put any code that could possibly throw an error between the
-	 * above GetCachedPlan call and here.
+	 * 不要在上面的 GetCachedPlan 调用与此处之间放置任何可能抛出错误的
+	 * 代码。
 	 */
 	PortalDefineQuery(portal,
 					  saved_stmt_name,
@@ -2030,7 +1974,7 @@ exec_bind_message(StringInfo input_message)
 					  cplan->stmt_list,
 					  cplan);
 
-	/* Portal is defined, set the plan ID based on its contents. */
+	/* portal 已定义，根据其内容设置计划 ID。 */
 	foreach(lc, portal->stmts)
 	{
 		PlannedStmt *plan = lfirst_node(PlannedStmt, lc);
@@ -2042,34 +1986,34 @@ exec_bind_message(StringInfo input_message)
 		}
 	}
 
-	/* Done with the snapshot used for parameter I/O and parsing/planning */
+	/* 参数 I/O 及解析/规划所用的快照已用完 */
 	if (snapshot_set)
 		PopActiveSnapshot();
 
 	/*
-	 * And we're ready to start portal execution.
+	 * 现在我们可以启动 portal 执行了。
 	 */
 	PortalStart(portal, params, 0, InvalidSnapshot);
 
 	/*
-	 * Apply the result format requests to the portal.
+	 * 将结果格式请求应用到 portal。
 	 */
 	PortalSetResultFormat(portal, numRFormats, rformats);
 
 	/*
-	 * Done binding; remove the parameters error callback.  Entries emitted
-	 * later determine independently whether to log the parameters or not.
+	 * 绑定完成；移除参数错误回调。之后发出的条目会自行决定是否
+	 * 记录参数。
 	 */
 	error_context_stack = error_context_stack->previous;
 
 	/*
-	 * Send BindComplete.
+	 * 发送 BindComplete。
 	 */
 	if (whereToSendOutput == DestRemote)
 		pq_putemptymessage(PqMsg_BindComplete);
 
 	/*
-	 * Emit duration logging if appropriate.
+	 * 如果合适，则记录耗时日志。
 	 */
 	switch (check_log_duration(msec_str, false))
 	{
@@ -2102,7 +2046,7 @@ exec_bind_message(StringInfo input_message)
 /*
  * exec_execute_message
  *
- * Process an "Execute" message for a portal
+ * 处理一个 portal 的“Execute”消息
  */
 static void
 exec_execute_message(const char *portal_name, long max_rows)
@@ -2126,7 +2070,7 @@ exec_execute_message(const char *portal_name, long max_rows)
 	size_t		cmdtaglen;
 	ListCell   *lc;
 
-	/* Adjust destination to tell printtup.c what to do */
+	/* 调整目标端，以告知 printtup.c 该做什么 */
 	dest = whereToSendOutput;
 	if (dest == DestRemote)
 		dest = DestRemoteExecute;
@@ -2138,8 +2082,7 @@ exec_execute_message(const char *portal_name, long max_rows)
 				 errmsg("portal \"%s\" does not exist", portal_name)));
 
 	/*
-	 * If the original query was a null string, just return
-	 * EmptyQueryResponse.
+	 * 如果原始查询是空字符串，则直接返回 EmptyQueryResponse。
 	 */
 	if (portal->commandTag == CMDTAG_UNKNOWN)
 	{
@@ -2148,14 +2091,13 @@ exec_execute_message(const char *portal_name, long max_rows)
 		return;
 	}
 
-	/* Does the portal contain a transaction command? */
+	/* portal 是否包含事务命令？ */
 	is_xact_command = IsTransactionStmtList(portal->stmts);
 
 	/*
-	 * We must copy the sourceText and prepStmtName into MessageContext in
-	 * case the portal is destroyed during finish_xact_command.  We do not
-	 * make a copy of the portalParams though, preferring to just not print
-	 * them in that case.
+	 * 我们必须将 sourceText 和 prepStmtName 拷贝到 MessageContext 中，
+	 * 以防 portal 在 finish_xact_command 期间被销毁。不过我们不会
+	 * 拷贝 portalParams，而是倾向于在那种情况下干脆不打印它们。
 	 */
 	sourceText = pstrdup(portal->sourceText);
 	if (portal->prepStmtName)
@@ -2165,7 +2107,7 @@ exec_execute_message(const char *portal_name, long max_rows)
 	portalParams = portal->portalParams;
 
 	/*
-	 * Report query to various monitoring facilities.
+	 * 向各类监控设施报告查询。
 	 */
 	debug_query_string = sourceText;
 
@@ -2203,28 +2145,26 @@ exec_execute_message(const char *portal_name, long max_rows)
 	BeginCommand(portal->commandTag, dest);
 
 	/*
-	 * Create dest receiver in MessageContext (we don't want it in transaction
-	 * context, because that may get deleted if portal contains VACUUM).
+	 * 在 MessageContext 中创建目标端接收器（我们不希望它在事务上下文中，
+	 * 因为如果 portal 包含 VACUUM，事务上下文可能会被删除）。
 	 */
 	receiver = CreateDestReceiver(dest);
 	if (dest == DestRemoteExecute)
 		SetRemoteDestReceiverParams(receiver, portal);
 
 	/*
-	 * Ensure we are in a transaction command (this should normally be the
-	 * case already due to prior BIND).
+	 * 确保我们处于事务命令中（由于之前的 BIND，通常已经如此）。
 	 */
 	start_xact_command();
 
 	/*
-	 * If we re-issue an Execute protocol request against an existing portal,
-	 * then we are only fetching more rows rather than completely re-executing
-	 * the query from the start. atStart is never reset for a v3 portal, so we
-	 * are safe to use this check.
+	 * 如果我们针对一个已存在的 portal 重新发出 Execute 协议请求，那么
+	 * 我们只是在获取更多行，而不是从头完全重新执行查询。对于 v3 portal，
+	 * atStart 永远不会被重置，因此我们使用这个检查是安全的。
 	 */
 	execute_is_fetch = !portal->atStart;
 
-	/* Log immediately if dictated by log_statement */
+	/* 如果 log_statement 要求，则立即记录日志 */
 	if (check_log_statement(portal->stmts))
 	{
 		ereport(LOG,
@@ -2242,8 +2182,8 @@ exec_execute_message(const char *portal_name, long max_rows)
 	}
 
 	/*
-	 * If we are in aborted transaction state, the only portals we can
-	 * actually run are those containing COMMIT or ROLLBACK commands.
+	 * 如果我们处于已中止的事务状态，我们实际能运行的 portal 只有那些
+	 * 包含 COMMIT 或 ROLLBACK 命令的。
 	 */
 	if (IsAbortedTransactionBlockState() &&
 		!IsTransactionExitStmtList(portal->stmts))
@@ -2253,12 +2193,12 @@ exec_execute_message(const char *portal_name, long max_rows)
 						"commands ignored until end of transaction block"),
 				 errdetail_abort()));
 
-	/* Check for cancel signal before we start execution */
+	/* 在开始执行前检查取消信号 */
 	CHECK_FOR_INTERRUPTS();
 
 	/*
-	 * Okay to run the portal.  Set the error callback so that parameters are
-	 * logged.  The parameters must have been saved during the bind phase.
+	 * 现在可以运行 portal 了。设置错误回调以便记录参数。参数必须
+	 * 已经在绑定阶段被保存。
 	 */
 	params_data.portalName = portal->name;
 	params_data.params = portalParams;
@@ -2272,14 +2212,14 @@ exec_execute_message(const char *portal_name, long max_rows)
 
 	completed = PortalRun(portal,
 						  max_rows,
-						  true, /* always top level */
+						  true, /* 始终为顶层 */
 						  receiver,
 						  receiver,
 						  &qc);
 
 	receiver->rDestroy(receiver);
 
-	/* Done executing; remove the params error callback */
+	/* 执行完成；移除参数错误回调 */
 	error_context_stack = error_context_stack->previous;
 
 	if (completed)
@@ -2287,61 +2227,60 @@ exec_execute_message(const char *portal_name, long max_rows)
 		if (is_xact_command || (MyXactFlags & XACT_FLAGS_NEEDIMMEDIATECOMMIT))
 		{
 			/*
-			 * If this was a transaction control statement, commit it.  We
-			 * will start a new xact command for the next command (if any).
-			 * Likewise if the statement required immediate commit.  Without
-			 * this provision, we wouldn't force commit until Sync is
-			 * received, which creates a hazard if the client tries to
-			 * pipeline immediate-commit statements.
+			 * 如果这是一条事务控制语句，则提交它。我们将为下一条命令
+			 * （如果有）启动一个新的事务命令。如果语句要求立即提交，
+			 * 同样如此。如果没有这个规定，我们要到收到 Sync 时才会
+			 * 强制提交，如果客户端试图流水线化立即提交的语句，这会造成
+			 * 危险。
 			 */
 			finish_xact_command();
 
 			/*
-			 * These commands typically don't have any parameters, and even if
-			 * one did we couldn't print them now because the storage went
-			 * away during finish_xact_command.  So pretend there were none.
+			 * 这些命令通常没有任何参数，而且即便有，我们现在也无法打印
+			 * 它们，因为存储在 finish_xact_command 期间已经消失了。所以
+			 * 假装它们不存在。
 			 */
 			portalParams = NULL;
 		}
 		else
 		{
 			/*
-			 * We need a CommandCounterIncrement after every query, except
-			 * those that start or end a transaction block.
+			 * 每条查询之后都需要一次 CommandCounterIncrement，除了那些
+			 * 开启或结束事务块的查询。
 			 */
 			CommandCounterIncrement();
 
 			/*
-			 * Set XACT_FLAGS_PIPELINING whenever we complete an Execute
-			 * message without immediately committing the transaction.
+			 * 每当我们完成一条 Execute 消息而没有立即提交事务时，
+			 * 设置 XACT_FLAGS_PIPELINING。
 			 */
 			MyXactFlags |= XACT_FLAGS_PIPELINING;
 
 			/*
-			 * Disable statement timeout whenever we complete an Execute
-			 * message.  The next protocol message will start a fresh timeout.
+			 * 每当我们完成一条 Execute 消息时，禁用语句超时。下一条
+			 * 协议消息会启动一个新的超时。
 			 */
 			disable_statement_timeout();
 		}
 
-		/* Send appropriate CommandComplete to client */
+		/* 向客户端发送相应的 CommandComplete */
 		EndCommand(&qc, dest, false);
 	}
 	else
 	{
-		/* Portal run not complete, so send PortalSuspended */
+		/* portal 运行未完成，因此发送 PortalSuspended */
 		if (whereToSendOutput == DestRemote)
 			pq_putemptymessage(PqMsg_PortalSuspended);
 
 		/*
-		 * Set XACT_FLAGS_PIPELINING whenever we suspend an Execute message,
-		 * too.
+		 * 每当我们挂起一条 Execute 消息时，同样设置
+		 * XACT_FLAGS_PIPELINING。
 		 */
 		MyXactFlags |= XACT_FLAGS_PIPELINING;
 	}
 
 	/*
-	 * Emit duration logging if appropriate.
+	 * 如果合适，则记录耗时日志。
 	 */
 	switch (check_log_duration(msec_str, was_logged))
 	{
@@ -2376,10 +2315,9 @@ exec_execute_message(const char *portal_name, long max_rows)
 
 /*
  * check_log_statement
- *		Determine whether command should be logged because of log_statement
+ *		根据 log_statement 判断命令是否应当被记录
  *
- * stmt_list can be either raw grammar output or a list of planned
- * statements
+ * stmt_list 既可以是原始语法分析的输出，也可以是一个已规划语句列表
  */
 static bool
 check_log_statement(List *stmt_list)
@@ -2391,7 +2329,7 @@ check_log_statement(List *stmt_list)
 	if (log_statement == LOGSTMT_ALL)
 		return true;
 
-	/* Else we have to inspect the statement(s) to see whether to log */
+	/* 否则我们必须检查语句，看是否应当记录 */
 	foreach(stmt_item, stmt_list)
 	{
 		Node	   *stmt = (Node *) lfirst(stmt_item);
@@ -2405,20 +2343,20 @@ check_log_statement(List *stmt_list)
 
 /*
  * check_log_duration
- *		Determine whether current command's duration should be logged
- *		We also check if this statement in this transaction must be logged
- *		(regardless of its duration).
+ *		判断当前命令的耗时是否应当被记录
+ *		我们还会检查本事务中的这条语句是否必须被记录
+ *		（无论其耗时多少）。
  *
- * Returns:
- *		0 if no logging is needed
- *		1 if just the duration should be logged
- *		2 if duration and query details should be logged
+ * 返回值：
+ *		0 表示无需记录
+ *		1 表示只记录耗时
+ *		2 表示同时记录耗时与查询详情
  *
- * If logging is needed, the duration in msec is formatted into msec_str[],
- * which must be a 32-byte buffer.
+ * 如果需要记录，耗时（毫秒）会被格式化为字符串填入 msec_str[]，
+ * 该缓冲区必须至少有 32 字节。
  *
- * was_logged should be true if caller already logged query details (this
- * essentially prevents 2 from being returned).
+ * 如果调用者已经记录过查询详情，was_logged 应为 true（这会实质上
+ * 阻止返回 2）。
  */
 int
 check_log_duration(char *msec_str, bool was_logged)
@@ -2439,9 +2377,9 @@ check_log_duration(char *msec_str, bool was_logged)
 		msecs = usecs / 1000;
 
 		/*
-		 * This odd-looking test for log_min_duration_* being exceeded is
-		 * designed to avoid integer overflow with very long durations: don't
-		 * compute secs * 1000 until we've verified it will fit in int.
+		 * 这个看似奇怪的、用于判断 log_min_duration_* 是否超标的测试，
+		 * 是为了避免超长耗时下的整数溢出：在确认 secs * 1000 能放入
+		 * int 之前，不要去计算它。
 		 */
 		exceeded_duration = (log_min_duration_statement == 0 ||
 							 (log_min_duration_statement > 0 &&
@@ -2454,9 +2392,9 @@ check_log_duration(char *msec_str, bool was_logged)
 									  secs * 1000 + msecs >= log_min_duration_sample)));
 
 		/*
-		 * Do not log if log_statement_sample_rate = 0. Log a sample if
-		 * log_statement_sample_rate <= 1 and avoid unnecessary PRNG call if
-		 * log_statement_sample_rate = 1.
+		 * 如果 log_statement_sample_rate = 0 则不记录。如果
+		 * log_statement_sample_rate <= 1 则记录一个样本；如果
+		 * log_statement_sample_rate = 1 则避免不必要的 PRNG 调用。
 		 */
 		if (exceeded_sample_duration)
 			in_sample = log_statement_sample_rate != 0 &&
@@ -2480,8 +2418,8 @@ check_log_duration(char *msec_str, bool was_logged)
 /*
  * errdetail_execute
  *
- * Add an errdetail() line showing the query referenced by an EXECUTE, if any.
- * The argument is the raw parsetree list.
+ * 如果存在，追加一行 errdetail() 以显示 EXECUTE 所引用的查询。
+ * 参数是一个原始解析树列表。
  */
 static int
 errdetail_execute(List *raw_parsetree_list)
@@ -2512,9 +2450,9 @@ errdetail_execute(List *raw_parsetree_list)
 /*
  * errdetail_params
  *
- * Add an errdetail() line showing bind-parameter data, if available.
- * Note that this is only used for statement logging, so it is controlled
- * by log_parameter_max_length not log_parameter_max_length_on_error.
+ * 如果存在，追加一行 errdetail() 以显示绑定参数数据。
+ * 注意，这只用于语句日志记录，因此它由 log_parameter_max_length
+ * 控制，而不是 log_parameter_max_length_on_error。
  */
 static int
 errdetail_params(ParamListInfo params)
@@ -2534,7 +2472,7 @@ errdetail_params(ParamListInfo params)
 /*
  * errdetail_abort
  *
- * Add an errdetail() line showing abort reason, if any.
+ * 如果存在，追加一行 errdetail() 以显示中止原因。
  */
 static int
 errdetail_abort(void)
@@ -2548,7 +2486,7 @@ errdetail_abort(void)
 /*
  * errdetail_recovery_conflict
  *
- * Add an errdetail() line showing conflict source.
+ * 追加一行 errdetail() 以显示冲突来源。
  */
 static int
 errdetail_recovery_conflict(ProcSignalReason reason)
@@ -2578,7 +2516,7 @@ errdetail_recovery_conflict(ProcSignalReason reason)
 			break;
 		default:
 			break;
-			/* no errdetail */
+			/* 无 errdetail */
 	}
 
 	return 0;
@@ -2587,7 +2525,7 @@ errdetail_recovery_conflict(ProcSignalReason reason)
 /*
  * bind_param_error_callback
  *
- * Error context callback used while parsing parameters in a Bind message
+ * 在 Bind 消息中解析参数时使用的错误上下文回调
  */
 static void
 bind_param_error_callback(void *arg)
@@ -2599,7 +2537,7 @@ bind_param_error_callback(void *arg)
 	if (data->paramno < 0)
 		return;
 
-	/* If we have a textual value, quote it, and trim if necessary */
+	/* 如果有一个文本值，则将其加引号，并在必要时截断 */
 	if (data->paramval)
 	{
 		initStringInfo(&buf);
@@ -2636,7 +2574,7 @@ bind_param_error_callback(void *arg)
 /*
  * exec_describe_statement_message
  *
- * Process a "Describe" message for a prepared statement
+ * 处理一个预备语句的“Describe”消息
  */
 static void
 exec_describe_statement_message(const char *stmt_name)
@@ -2644,15 +2582,15 @@ exec_describe_statement_message(const char *stmt_name)
 	CachedPlanSource *psrc;
 
 	/*
-	 * Start up a transaction command. (Note that this will normally change
-	 * current memory context.) Nothing happens if we are already in one.
+	 * 启动一个事务命令。（注意，这通常会改变当前内存上下文。）
+	 * 如果已经处于事务命令中，则什么也不会发生。
 	 */
 	start_xact_command();
 
-	/* Switch back to message context */
+	/* 切换回消息上下文 */
 	MemoryContextSwitchTo(MessageContext);
 
-	/* Find prepared statement */
+	/* 查找预备语句 */
 	if (stmt_name[0] != '\0')
 	{
 		PreparedStatement *pstmt;
@@ -2662,7 +2600,7 @@ exec_describe_statement_message(const char *stmt_name)
 	}
 	else
 	{
-		/* special-case the unnamed statement */
+		/* 对未命名语句做特殊处理 */
 		psrc = unnamed_stmt_psrc;
 		if (!psrc)
 			ereport(ERROR,
@@ -2670,17 +2608,16 @@ exec_describe_statement_message(const char *stmt_name)
 					 errmsg("unnamed prepared statement does not exist")));
 	}
 
-	/* Prepared statements shouldn't have changeable result descs */
+	/* 预备语句不应具有可变的 result descs */
 	Assert(psrc->fixed_result);
 
 	/*
-	 * If we are in aborted transaction state, we can't run
-	 * SendRowDescriptionMessage(), because that needs catalog accesses.
-	 * Hence, refuse to Describe statements that return data.  (We shouldn't
-	 * just refuse all Describes, since that might break the ability of some
-	 * clients to issue COMMIT or ROLLBACK commands, if they use code that
-	 * blindly Describes whatever it does.)  We can Describe parameters
-	 * without doing anything dangerous, so we don't restrict that.
+	 * 如果我们处于已中止的事务状态，则无法运行
+	 * SendRowDescriptionMessage()，因为它需要访问系统表。因此，拒绝
+	 * 描述那些会返回数据的语句。（我们不应简单地拒绝所有的 Describe，
+	 * 因为那可能会破坏某些客户端发出 COMMIT 或 ROLLBACK 命令的能力，
+	 * 如果它们使用盲目 Describe 任何内容的代码。）而描述参数是安全的，
+	 * 不会做危险的事情，因此我们不对它做限制。
 	 */
 	if (IsAbortedTransactionBlockState() &&
 		psrc->resultDesc)
@@ -2691,10 +2628,10 @@ exec_describe_statement_message(const char *stmt_name)
 				 errdetail_abort()));
 
 	if (whereToSendOutput != DestRemote)
-		return;					/* can't actually do anything... */
+		return;					/* 实际上什么也做不了…… */
 
 	/*
-	 * First describe the parameters...
+	 * 首先描述参数……
 	 */
 	pq_beginmessage_reuse(&row_description_buf, PqMsg_ParameterDescription);
 	pq_sendint16(&row_description_buf, psrc->num_params);
@@ -2708,13 +2645,13 @@ exec_describe_statement_message(const char *stmt_name)
 	pq_endmessage_reuse(&row_description_buf);
 
 	/*
-	 * Next send RowDescription or NoData to describe the result...
+	 * 接下来发送 RowDescription 或 NoData 以描述结果……
 	 */
 	if (psrc->resultDesc)
 	{
 		List	   *tlist;
 
-		/* Get the plan's primary targetlist */
+		/* 获取计划的主目标列表 */
 		tlist = CachedPlanGetTargetList(psrc, NULL);
 
 		SendRowDescriptionMessage(&row_description_buf,
@@ -2729,7 +2666,7 @@ exec_describe_statement_message(const char *stmt_name)
 /*
  * exec_describe_portal_message
  *
- * Process a "Describe" message for a portal
+ * 处理一个 portal 的“Describe”消息
  */
 static void
 exec_describe_portal_message(const char *portal_name)
@@ -2737,12 +2674,12 @@ exec_describe_portal_message(const char *portal_name)
 	Portal		portal;
 
 	/*
-	 * Start up a transaction command. (Note that this will normally change
-	 * current memory context.) Nothing happens if we are already in one.
+	 * 启动一个事务命令。（注意，这通常会改变当前内存上下文。）
+	 * 如果已经处于事务命令中，则什么也不会发生。
 	 */
 	start_xact_command();
 
-	/* Switch back to message context */
+	/* 切换回消息上下文 */
 	MemoryContextSwitchTo(MessageContext);
 
 	portal = GetPortalByName(portal_name);
@@ -2752,12 +2689,11 @@ exec_describe_portal_message(const char *portal_name)
 				 errmsg("portal \"%s\" does not exist", portal_name)));
 
 	/*
-	 * If we are in aborted transaction state, we can't run
-	 * SendRowDescriptionMessage(), because that needs catalog accesses.
-	 * Hence, refuse to Describe portals that return data.  (We shouldn't just
-	 * refuse all Describes, since that might break the ability of some
-	 * clients to issue COMMIT or ROLLBACK commands, if they use code that
-	 * blindly Describes whatever it does.)
+	 * 如果我们处于已中止的事务状态，则无法运行
+	 * SendRowDescriptionMessage()，因为它需要访问系统表。因此，拒绝
+	 * 描述那些会返回数据的 portal。（我们不应简单地拒绝所有的
+	 * Describe，因为那可能会破坏某些客户端发出 COMMIT 或 ROLLBACK
+	 * 命令的能力，如果它们使用盲目 Describe 任何内容的代码。）
 	 */
 	if (IsAbortedTransactionBlockState() &&
 		portal->tupDesc)
@@ -2768,7 +2704,7 @@ exec_describe_portal_message(const char *portal_name)
 				 errdetail_abort()));
 
 	if (whereToSendOutput != DestRemote)
-		return;					/* can't actually do anything... */
+		return;					/* 实际上什么也做不了…… */
 
 	if (portal->tupDesc)
 		SendRowDescriptionMessage(&row_description_buf,
@@ -2781,7 +2717,7 @@ exec_describe_portal_message(const char *portal_name)
 
 
 /*
- * Convenience routines for starting/committing a single command.
+ * 启动/提交单条命令的便捷例程。
  */
 static void
 start_xact_command(void)
@@ -2795,25 +2731,22 @@ start_xact_command(void)
 	else if (MyXactFlags & XACT_FLAGS_PIPELINING)
 	{
 		/*
-		 * When the first Execute message is completed, following commands
-		 * will be done in an implicit transaction block created via
-		 * pipelining. The transaction state needs to be updated to an
-		 * implicit block if we're not already in a transaction block (like
-		 * one started by an explicit BEGIN).
+		 * 当第一条 Execute 消息完成时，后续的命令将在一个通过流水线化
+		 * 创建的隐式事务块中执行。如果我们尚未处于某个事务块中（例如
+		 * 由显式 BEGIN 启动的），则需要将事务状态更新为一个隐式块。
 		 */
 		BeginImplicitTransactionBlock();
 	}
 
 	/*
-	 * Start statement timeout if necessary.  Note that this'll intentionally
-	 * not reset the clock on an already started timeout, to avoid the timing
-	 * overhead when start_xact_command() is invoked repeatedly, without an
-	 * interceding finish_xact_command() (e.g. parse/bind/execute).  If that's
-	 * not desired, the timeout has to be disabled explicitly.
+	 * 必要时启动语句超时。注意，这会有意地不去重置已经启动的超时计时，
+	 * 以避免在 start_xact_command() 被反复调用（其间没有 finish_xact_command()
+	 * 介入，例如 parse/bind/execute）时的计时开销。如果不希望这样，必须
+	 * 显式地禁用超时。
 	 */
 	enable_statement_timeout();
 
-	/* Start timeout for checking if the client has gone away if necessary. */
+	/* 必要时启动用于检查客户端是否已断开的超时。 */
 	if (client_connection_check_interval > 0 &&
 		IsUnderPostmaster &&
 		MyProcPort &&
@@ -2825,7 +2758,7 @@ start_xact_command(void)
 static void
 finish_xact_command(void)
 {
-	/* cancel active statement timeout after each command */
+	/* 每条命令之后取消活跃的语句超时 */
 	disable_statement_timeout();
 
 	if (xact_started)
@@ -2833,13 +2766,13 @@ finish_xact_command(void)
 		CommitTransactionCommand();
 
 #ifdef MEMORY_CONTEXT_CHECKING
-		/* Check all memory contexts that weren't freed during commit */
-		/* (those that were, were checked before being deleted) */
+		/* 检查所有在提交期间未被释放的内存上下文 */
+		/* （那些已被释放的，在删除前已经被检查过了） */
 		MemoryContextCheck(TopMemoryContext);
 #endif
 
 #ifdef SHOW_MEMORY_STATS
-		/* Print mem stats after each commit for leak tracking */
+		/* 每次提交后打印内存统计，用于泄漏追踪 */
 		MemoryContextStats(TopMemoryContext);
 #endif
 
@@ -2849,11 +2782,11 @@ finish_xact_command(void)
 
 
 /*
- * Convenience routines for checking whether a statement is one of the
- * ones that we allow in transaction-aborted state.
+ * 用于检查某条语句是否属于我们在事务中止状态下所允许执行的语句的
+ * 便捷例程。
  */
 
-/* Test a bare parsetree */
+/* 测试一个裸的解析树 */
 static bool
 IsTransactionExitStmt(Node *parsetree)
 {
@@ -2870,7 +2803,7 @@ IsTransactionExitStmt(Node *parsetree)
 	return false;
 }
 
-/* Test a list that contains PlannedStmt nodes */
+/* 测试一个包含 PlannedStmt 节点的列表 */
 static bool
 IsTransactionExitStmtList(List *pstmts)
 {
@@ -2885,7 +2818,7 @@ IsTransactionExitStmtList(List *pstmts)
 	return false;
 }
 
-/* Test a list that contains PlannedStmt nodes */
+/* 测试一个包含 PlannedStmt 节点的列表 */
 static bool
 IsTransactionStmtList(List *pstmts)
 {
@@ -2900,11 +2833,11 @@ IsTransactionStmtList(List *pstmts)
 	return false;
 }
 
-/* Release any existing unnamed prepared statement */
+/* 释放任何已存在的未命名预备语句 */
 static void
 drop_unnamed_stmt(void)
 {
-	/* paranoia to avoid a dangling pointer in case of error */
+	/* 出于谨慎，避免出错时出现悬空指针 */
 	if (unnamed_stmt_psrc)
 	{
 		CachedPlanSource *psrc = unnamed_stmt_psrc;
@@ -2916,74 +2849,71 @@ drop_unnamed_stmt(void)
 
 
 /* --------------------------------
- *		signal handler routines used in PostgresMain()
+ *		PostgresMain() 中使用的信号处理例程
  * --------------------------------
  */
 
 /*
- * quickdie() occurs when signaled SIGQUIT by the postmaster.
+ * quickdie() 在收到 postmaster 发来的 SIGQUIT 信号时被调用。
  *
- * Either some backend has bought the farm, or we've been told to shut down
- * "immediately"; so we need to stop what we're doing and exit.
+ * 要么某个后端进程已经“完蛋”，要么我们被要求“立即”关闭；
+ * 因此我们需要停下正在做的事情并退出。
  */
 void
 quickdie(SIGNAL_ARGS)
 {
-	sigaddset(&BlockSig, SIGQUIT);	/* prevent nested calls */
+	sigaddset(&BlockSig, SIGQUIT);	/* 防止嵌套调用 */
 	sigprocmask(SIG_SETMASK, &BlockSig, NULL);
 
 	/*
-	 * Prevent interrupts while exiting; though we just blocked signals that
-	 * would queue new interrupts, one may have been pending.  We don't want a
-	 * quickdie() downgraded to a mere query cancel.
+	 * 在退出期间阻止中断；尽管我们刚刚阻塞了那些会排队新中断的信号，
+	 * 但可能仍有一个处于挂起状态。我们不希望将一个 quickdie() 降级为
+	 * 一次普通的查询取消。
 	 */
 	HOLD_INTERRUPTS();
 
 	/*
-	 * If we're aborting out of client auth, don't risk trying to send
-	 * anything to the client; we will likely violate the protocol, not to
-	 * mention that we may have interrupted the guts of OpenSSL or some
-	 * authentication library.
+	 * 如果我们正在中止客户端认证过程，不要冒险尝试向客户端发送任何
+	 * 内容；我们很可能会违反协议，更不用说我们可能已经打断了 OpenSSL
+	 * 或某些认证库的内部逻辑。
 	 */
 	if (ClientAuthInProgress && whereToSendOutput == DestRemote)
 		whereToSendOutput = DestNone;
 
 	/*
-	 * Notify the client before exiting, to give a clue on what happened.
+	 * 在退出前通知客户端，以便对发生了什么给出线索。
 	 *
-	 * It's dubious to call ereport() from a signal handler.  It is certainly
-	 * not async-signal safe.  But it seems better to try, than to disconnect
-	 * abruptly and leave the client wondering what happened.  It's remotely
-	 * possible that we crash or hang while trying to send the message, but
-	 * receiving a SIGQUIT is a sign that something has already gone badly
-	 * wrong, so there's not much to lose.  Assuming the postmaster is still
-	 * running, it will SIGKILL us soon if we get stuck for some reason.
+	 * 在信号处理函数中调用 ereport() 是值得怀疑的。它当然不是
+	 * 异步信号安全的。但尝试一下似乎比突然断开连接、让客户端疑惑
+	 * 到底发生了什么要好。我们在尝试发送消息时崩溃或挂起的可能性
+	 * 微乎其微，而且收到 SIGQUIT 本身就表明已经有地方出了严重问题，
+	 * 因此没什么可损失的。假设 postmaster 仍在运行，如果我们因某种
+	 * 原因卡住，它很快就会用 SIGKILL 结束我们。
 	 *
-	 * One thing we can do to make this a tad safer is to clear the error
-	 * context stack, so that context callbacks are not called.  That's a lot
-	 * less code that could be reached here, and the context info is unlikely
-	 * to be very relevant to a SIGQUIT report anyway.
+	 * 我们能做的一件让这稍微安全一点的事是清空错误上下文栈，这样
+	 * 上下文回调就不会被调用。这里能触及的代码会少很多，而且上下文
+	 * 信息对 SIGQUIT 报告而言也不太可能非常相关。
 	 */
 	error_context_stack = NULL;
 
 	/*
-	 * When responding to a postmaster-issued signal, we send the message only
-	 * to the client; sending to the server log just creates log spam, plus
-	 * it's more code that we need to hope will work in a signal handler.
+	 * 当响应 postmaster 发出的信号时，我们仅将消息发送给客户端；
+	 * 发送到服务器日志只会产生日志垃圾，而且还需要更多我们希望
+	 * 能在信号处理函数中正常工作的代码。
 	 *
-	 * Ideally these should be ereport(FATAL), but then we'd not get control
-	 * back to force the correct type of process exit.
+	 * 理想情况下这些应该是 ereport(FATAL)，但那样我们就无法取回控制权
+	 * 来强制进行正确类型的进程退出。
 	 */
 	switch (GetQuitSignalReason())
 	{
 		case PMQUIT_NOT_SENT:
-			/* Hmm, SIGQUIT arrived out of the blue */
+			/* 嗯，SIGQUIT 凭空而来 */
 			ereport(WARNING,
 					(errcode(ERRCODE_ADMIN_SHUTDOWN),
 					 errmsg("terminating connection because of unexpected SIGQUIT signal")));
 			break;
 		case PMQUIT_FOR_CRASH:
-			/* A crash-and-restart cycle is in progress */
+			/* 正在进行崩溃并重启的循环 */
 			ereport(WARNING_CLIENT_ONLY,
 					(errcode(ERRCODE_CRASH_SHUTDOWN),
 					 errmsg("terminating connection because of crash of another server process"),
@@ -2995,7 +2925,7 @@ quickdie(SIGNAL_ARGS)
 							 " database and repeat your command.")));
 			break;
 		case PMQUIT_FOR_STOP:
-			/* Immediate-mode stop */
+			/* 立即模式停止 */
 			ereport(WARNING_CLIENT_ONLY,
 					(errcode(ERRCODE_ADMIN_SHUTDOWN),
 					 errmsg("terminating connection due to immediate shutdown command")));
@@ -3003,61 +2933,56 @@ quickdie(SIGNAL_ARGS)
 	}
 
 	/*
-	 * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here
-	 * because shared memory may be corrupted, so we don't want to try to
-	 * clean up our transaction.  Just nail the windows shut and get out of
-	 * town.  The callbacks wouldn't be safe to run from a signal handler,
-	 * anyway.
+	 * 我们不想运行 proc_exit() 或 atexit() 回调——我们之所以在这里，
+	 * 是因为共享内存可能已损坏，所以我们不想尝试清理自己的事务。
+	 * 把窗户钉死，然后离开小镇就好了。无论如何，这些回调在信号处理
+	 * 函数中运行也是不安全的。
 	 *
-	 * Note we do _exit(2) not _exit(0).  This is to force the postmaster into
-	 * a system reset cycle if someone sends a manual SIGQUIT to a random
-	 * backend.  This is necessary precisely because we don't clean up our
-	 * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
-	 * should ensure the postmaster sees this as a crash, too, but no harm in
-	 * being doubly sure.)
+	 * 注意我们用的是 _exit(2) 而不是 _exit(0)。这是为了在有人向一个
+	 * 随机后端手动发送 SIGQUIT 时，强制 postmaster 进入系统复位循环。
+	 * 这之所以必要，正是因为我们没有清理自己的共享内存状态。
+	 * （pmsignal.c 中的“死人开关”机制应该也能确保 postmaster 将此视为
+	 * 一次崩溃，但双重保险没有坏处。）
 	 */
 	_exit(2);
 }
 
 /*
- * Shutdown signal from postmaster: abort transaction and exit
- * at soonest convenient time
+ * 来自 postmaster 的关闭信号：中止事务并在最方便的时机退出
  */
 void
 die(SIGNAL_ARGS)
 {
-	/* Don't joggle the elbow of proc_exit */
+	/* 不要打扰 proc_exit 的执行 */
 	if (!proc_exit_inprogress)
 	{
 		InterruptPending = true;
 		ProcDiePending = true;
 	}
 
-	/* for the cumulative stats system */
+	/* 用于累计统计系统 */
 	pgStatSessionEndCause = DISCONNECT_KILLED;
 
-	/* If we're still here, waken anything waiting on the process latch */
+	/* 如果我们还在这里，唤醒所有等待进程 latch 的对象 */
 	SetLatch(MyLatch);
 
 	/*
-	 * If we're in single user mode, we want to quit immediately - we can't
-	 * rely on latches as they wouldn't work when stdin/stdout is a file.
-	 * Rather ugly, but it's unlikely to be worthwhile to invest much more
-	 * effort just for the benefit of single user mode.
+	 * 如果我们处于单用户模式，我们希望立即退出——我们无法依赖 latch，
+	 * 因为当 stdin/stdout 是文件时它们不会工作。这有点丑陋，但为了
+	 * 单用户模式的好处而投入更多精力不太值得。
 	 */
 	if (DoingCommandRead && whereToSendOutput != DestRemote)
 		ProcessInterrupts();
 }
 
 /*
- * Query-cancel signal from postmaster: abort current transaction
- * at soonest convenient time
+ * 来自 postmaster 的查询取消信号：在最早方便的时机中止当前事务
  */
 void
 StatementCancelHandler(SIGNAL_ARGS)
 {
 	/*
-	 * Don't joggle the elbow of proc_exit
+	 * 不要干扰 proc_exit 的工作。
 	 */
 	if (!proc_exit_inprogress)
 	{
@@ -3065,15 +2990,15 @@ StatementCancelHandler(SIGNAL_ARGS)
 		QueryCancelPending = true;
 	}
 
-	/* If we're still here, waken anything waiting on the process latch */
+	/* 如果我们仍然在这里，则唤醒任何等待在该进程闩锁上的对象 */
 	SetLatch(MyLatch);
 }
 
-/* signal handler for floating point exception */
+/* 浮点异常的信号处理函数 */
 void
 FloatExceptionHandler(SIGNAL_ARGS)
 {
-	/* We're not returning, so no need to save errno */
+	/* 我们不会返回，因此无需保存 errno */
 	ereport(ERROR,
 			(errcode(ERRCODE_FLOATING_POINT_EXCEPTION),
 			 errmsg("floating-point exception"),
@@ -3083,8 +3008,8 @@ FloatExceptionHandler(SIGNAL_ARGS)
 }
 
 /*
- * Tell the next CHECK_FOR_INTERRUPTS() to check for a particular type of
- * recovery conflict.  Runs in a SIGUSR1 handler.
+ * 通知下一次 CHECK_FOR_INTERRUPTS() 检查特定类型的恢复冲突。
+ * 运行在 SIGUSR1 信号处理函数中。
  */
 void
 HandleRecoveryConflictInterrupt(ProcSignalReason reason)
@@ -3092,11 +3017,11 @@ HandleRecoveryConflictInterrupt(ProcSignalReason reason)
 	RecoveryConflictPendingReasons[reason] = true;
 	RecoveryConflictPending = true;
 	InterruptPending = true;
-	/* latch will be set by procsignal_sigusr1_handler */
+	/* latch 将由 procsignal_sigusr1_handler 设置 */
 }
 
 /*
- * Check one individual conflict reason.
+ * 检查单个具体的冲突原因。
  */
 static void
 ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
@@ -3106,25 +3031,24 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 		case PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK:
 
 			/*
-			 * If we aren't waiting for a lock we can never deadlock.
+			 * 如果我们没有在等待某个锁，就永远不会发生死锁。
 			 */
 			if (GetAwaitedLock() == NULL)
 				return;
 
-			/* Intentional fall through to check wait for pin */
+			/* 故意 fall through 以检查对 pin 的等待 */
 			/* FALLTHROUGH */
 
 		case PROCSIG_RECOVERY_CONFLICT_BUFFERPIN:
 
 			/*
-			 * If PROCSIG_RECOVERY_CONFLICT_BUFFERPIN is requested but we
-			 * aren't blocking the Startup process there is nothing more to
-			 * do.
+			 * 如果请求的是 PROCSIG_RECOVERY_CONFLICT_BUFFERPIN，但我们
+			 * 并没有阻塞 Startup 进程，那就没什么可做的了。
 			 *
-			 * When PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK is requested,
-			 * if we're waiting for locks and the startup process is not
-			 * waiting for buffer pin (i.e., also waiting for locks), we set
-			 * the flag so that ProcSleep() will check for deadlocks.
+			 * 当请求的是 PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK 时，
+			 * 如果我们正在等待锁，且启动进程并没有在等待 buffer pin
+			 * （即它也在等待锁），我们就设置该标志，以便 ProcSleep()
+			 * 会检查死锁。
 			 */
 			if (!HoldingBufferPinThatDelaysRecovery())
 			{
@@ -3136,7 +3060,7 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 
 			MyProc->recoveryConflictPending = true;
 
-			/* Intentional fall through to error handling */
+			/* 故意 fall through 到错误处理 */
 			/* FALLTHROUGH */
 
 		case PROCSIG_RECOVERY_CONFLICT_LOCK:
@@ -3144,7 +3068,7 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 		case PROCSIG_RECOVERY_CONFLICT_SNAPSHOT:
 
 			/*
-			 * If we aren't in a transaction any longer then ignore.
+			 * 如果我们已不再处于任何事务中，则忽略。
 			 */
 			if (!IsTransactionOrTransactionBlock())
 				return;
@@ -3154,56 +3078,48 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 		case PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT:
 
 			/*
-			 * If we're not in a subtransaction then we are OK to throw an
-			 * ERROR to resolve the conflict.  Otherwise drop through to the
-			 * FATAL case.
-			 *
-			 * PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT is a special case that
-			 * always throws an ERROR (ie never promotes to FATAL), though it
-			 * still has to respect QueryCancelHoldoffCount, so it shares this
-			 * code path.  Logical decoding slots are only acquired while
-			 * performing logical decoding.  During logical decoding no user
-			 * controlled code is run.  During [sub]transaction abort, the
-			 * slot is released.  Therefore user controlled code cannot
-			 * intercept an error before the replication slot is released.
-			 *
-			 * XXX other times that we can throw just an ERROR *may* be
-			 * PROCSIG_RECOVERY_CONFLICT_LOCK if no locks are held in parent
-			 * transactions
-			 *
-			 * PROCSIG_RECOVERY_CONFLICT_SNAPSHOT if no snapshots are held by
-			 * parent transactions and the transaction is not
-			 * transaction-snapshot mode
-			 *
-			 * PROCSIG_RECOVERY_CONFLICT_TABLESPACE if no temp files or
-			 * cursors open in parent transactions
+			 * 如果我们不处于子事务中，那么抛出 ERROR 来解决冲突是可以的。
+			 * 否则 fall through 到 FATAL 分支。
+			 * 
+			 * PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT 是一个特例，它总是抛出
+			 * ERROR（即永远不会升级为 FATAL），不过它仍必须遵循
+			 * QueryCancelHoldoffCount，因此复用了这条代码路径。逻辑解码
+			 * slot 只在执行逻辑解码时才会被获取。在逻辑解码过程中不会
+			 * 运行任何用户控制的代码。在 [子]事务中止时，slot 会被释放。
+			 * 因此用户控制的代码无法在复制 slot 被释放之前拦截错误。
+			 * 
+			 * XXX 其他我们可以只抛出 ERROR 的时机*可能*包括：
+			 * 如果父事务中没有持有锁时的 PROCSIG_RECOVERY_CONFLICT_LOCK
+			 * 
+			 * 如果父事务没有持有快照且事务不是 transaction-snapshot 模式时的
+			 * PROCSIG_RECOVERY_CONFLICT_SNAPSHOT
+			 * 
+			 * 如果父事务中没有打开临时文件或游标时的
+			 * PROCSIG_RECOVERY_CONFLICT_TABLESPACE
 			 */
 			if (reason == PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT ||
 				!IsSubTransaction())
 			{
 				/*
-				 * If we already aborted then we no longer need to cancel.  We
-				 * do this here since we do not wish to ignore aborted
-				 * subtransactions, which must cause FATAL, currently.
+				 * 如果已经中止，我们就不再需要取消。之所以在这里处理，是因为
+				 * 我们不希望忽略已中止的子事务，当前这类子事务必须导致 FATAL。
 				 */
 				if (IsAbortedTransactionBlockState())
 					return;
 
 				/*
-				 * If a recovery conflict happens while we are waiting for
-				 * input from the client, the client is presumably just
-				 * sitting idle in a transaction, preventing recovery from
-				 * making progress.  We'll drop through to the FATAL case
-				 * below to dislodge it, in that case.
+				 * 如果在等待客户端输入时发生恢复冲突，客户端大概只是空闲地
+				 * 处于某个事务中，阻碍了恢复向前推进。这种情况下我们会
+				 * fall through 到下面的 FATAL 分支将其“拔”出来。
 				 */
 				if (!DoingCommandRead)
 				{
-					/* Avoid losing sync in the FE/BE protocol. */
+					/* 避免在前端/后端（FE/BE）协议中丢失同步。 */
 					if (QueryCancelHoldoffCount != 0)
 					{
 						/*
-						 * Re-arm and defer this interrupt until later.  See
-						 * similar code in ProcessInterrupts().
+						 * 重新置位并延迟该中断到稍后处理。参见
+						 * ProcessInterrupts() 中的类似代码。
 						 */
 						RecoveryConflictPendingReasons[reason] = true;
 						RecoveryConflictPending = true;
@@ -3212,10 +3128,8 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 					}
 
 					/*
-					 * We are cleared to throw an ERROR.  Either it's the
-					 * logical slot case, or we have a top-level transaction
-					 * that we can abort and a conflict that isn't inherently
-					 * non-retryable.
+					 * 我们已获准抛出 ERROR。要么是逻辑 slot 的情况，要么我们
+					 * 有一个可以中止的顶层事务，且冲突本身并非不可重试。
 					 */
 					LockErrorCleanup();
 					pgstat_report_recovery_conflict(reason);
@@ -3227,15 +3141,14 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 				}
 			}
 
-			/* Intentional fall through to session cancel */
+			/* 故意 fall through 到会话取消 */
 			/* FALLTHROUGH */
 
 		case PROCSIG_RECOVERY_CONFLICT_DATABASE:
 
 			/*
-			 * Retrying is not possible because the database is dropped, or we
-			 * decided above that we couldn't resolve the conflict with an
-			 * ERROR and fell through.  Terminate the session.
+			 * 无法重试，因为数据库已被删除，或者我们之前判定无法用 ERROR
+			 * 解决冲突而 fall through 了下来。终止该会话。
 			 */
 			pgstat_report_recovery_conflict(reason);
 			ereport(FATAL,
@@ -3254,15 +3167,14 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 }
 
 /*
- * Check each possible recovery conflict reason.
+ * 检查每一种可能的恢复冲突原因。
  */
 static void
 ProcessRecoveryConflictInterrupts(void)
 {
 	/*
-	 * We don't need to worry about joggling the elbow of proc_exit, because
-	 * proc_exit_prepare() holds interrupts, so ProcessInterrupts() won't call
-	 * us.
+	 * 我们无需担心会打扰 proc_exit 的工作，因为 proc_exit_prepare()
+	 * 会持有中断，因此 ProcessInterrupts() 不会调用我们。
 	 */
 	Assert(!proc_exit_inprogress);
 	Assert(InterruptHoldoffCount == 0);
@@ -3283,22 +3195,20 @@ ProcessRecoveryConflictInterrupts(void)
 }
 
 /*
- * ProcessInterrupts: out-of-line portion of CHECK_FOR_INTERRUPTS() macro
- *
- * If an interrupt condition is pending, and it's safe to service it,
- * then clear the flag and accept the interrupt.  Called only when
- * InterruptPending is true.
- *
- * Note: if INTERRUPTS_CAN_BE_PROCESSED() is true, then ProcessInterrupts
- * is guaranteed to clear the InterruptPending flag before returning.
- * (This is not the same as guaranteeing that it's still clear when we
- * return; another interrupt could have arrived.  But we promise that
- * any pre-existing one will have been serviced.)
+ * ProcessInterrupts：CHECK_FOR_INTERRUPTS() 宏的内联之外部分
+ * 
+ * 如果有中断条件待处理，且处理它是安全的，那么清除标志并接受
+ * 该中断。仅当 InterruptPending 为 true 时才会被调用。
+ * 
+ * 注意：如果 INTERRUPTS_CAN_BE_PROCESSED() 为 true，那么
+ * ProcessInterrupts 保证在返回前清除 InterruptPending 标志。
+ * （这并不等同于保证返回时它仍被清除；可能又来了另一个中断。
+ * 但我们保证任何既有的中断都会被处理。）
  */
 void
 ProcessInterrupts(void)
 {
-	/* OK to accept any interrupts now? */
+	/* 现在可以接受任何中断了吗？ */
 	if (InterruptHoldoffCount != 0 || CritSectionCount != 0)
 		return;
 	InterruptPending = false;
@@ -3306,9 +3216,9 @@ ProcessInterrupts(void)
 	if (ProcDiePending)
 	{
 		ProcDiePending = false;
-		QueryCancelPending = false; /* ProcDie trumps QueryCancel */
+		QueryCancelPending = false; /* ProcDie 优先于 QueryCancel */
 		LockErrorCleanup();
-		/* As in quickdie, don't risk sending to client during auth */
+		/* 与 quickdie 中一样，认证期间不要冒险向客户端发送。 */
 		if (ClientAuthInProgress && whereToSendOutput == DestRemote)
 			whereToSendOutput = DestNone;
 		if (ClientAuthInProgress)
@@ -3329,8 +3239,8 @@ ProcessInterrupts(void)
 					(errmsg_internal("logical replication launcher shutting down")));
 
 			/*
-			 * The logical replication launcher can be stopped at any time.
-			 * Use exit status 1 so the background worker is restarted.
+			 * 逻辑复制启动器（launcher）可以随时被停止。
+			 * 使用退出状态 1，以便后台工作进程会被重新启动。
 			 */
 			proc_exit(1);
 		}
@@ -3361,10 +3271,9 @@ ProcessInterrupts(void)
 		CheckClientConnectionPending = false;
 
 		/*
-		 * Check for lost connection and re-arm, if still configured, but not
-		 * if we've arrived back at DoingCommandRead state.  We don't want to
-		 * wake up idle sessions, and they already know how to detect lost
-		 * connections.
+		 * 检查连接是否丢失，并在仍配置的情况下重新置位；但如果已经
+		 * 回到 DoingCommandRead 状态则不再检查。我们不想唤醒空闲
+		 * 会话，而它们已经知道如何检测到丢失的连接。
 		 */
 		if (!DoingCommandRead && client_connection_check_interval > 0)
 		{
@@ -3378,9 +3287,9 @@ ProcessInterrupts(void)
 
 	if (ClientConnectionLost)
 	{
-		QueryCancelPending = false; /* lost connection trumps QueryCancel */
+		QueryCancelPending = false; /* 丢失连接优先于 QueryCancel */
 		LockErrorCleanup();
-		/* don't send to client, we already know the connection to be dead. */
+		/* 不要发送给客户端，我们已经确定该连接已断开。 */
 		whereToSendOutput = DestNone;
 		ereport(FATAL,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
@@ -3388,22 +3297,19 @@ ProcessInterrupts(void)
 	}
 
 	/*
-	 * Don't allow query cancel interrupts while reading input from the
-	 * client, because we might lose sync in the FE/BE protocol.  (Die
-	 * interrupts are OK, because we won't read any further messages from the
-	 * client in that case.)
-	 *
-	 * See similar logic in ProcessRecoveryConflictInterrupts().
+	 * 在从客户端读取输入时，不允许查询取消中断，因为那样我们
+	 * 可能会在前端/后端（FE/BE）协议中丢失同步。（Die 中断
+	 * 是可以的，因为那种情况下我们不会再读取客户端的任何消息。）
+	 * 
+	 * 参见 ProcessRecoveryConflictInterrupts() 中的类似逻辑。
 	 */
 	if (QueryCancelPending && QueryCancelHoldoffCount != 0)
 	{
 		/*
-		 * Re-arm InterruptPending so that we process the cancel request as
-		 * soon as we're done reading the message.  (XXX this is seriously
-		 * ugly: it complicates INTERRUPTS_CAN_BE_PROCESSED(), and it means we
-		 * can't use that macro directly as the initial test in this function,
-		 * meaning that this code also creates opportunities for other bugs to
-		 * appear.)
+		 * 重新置位 InterruptPending，以便我们在读完消息后立即处理
+		 * 取消请求。（XXX 这相当丑陋：它让 INTERRUPTS_CAN_BE_PROCESSED()
+		 * 变得复杂，也意味着我们不能在该函数中直接以该宏作为最初的
+		 * 判断，因而这段代码也创造了让其他 bug 出现的可能。）
 		 */
 		InterruptPending = true;
 	}
@@ -3415,21 +3321,20 @@ ProcessInterrupts(void)
 		QueryCancelPending = false;
 
 		/*
-		 * If LOCK_TIMEOUT and STATEMENT_TIMEOUT indicators are both set, we
-		 * need to clear both, so always fetch both.
+		 * 如果 LOCK_TIMEOUT 与 STATEMENT_TIMEOUT 两个指示都被置位，
+		 * 我们需要同时清除两者，因此总是把两者都取出来。
 		 */
 		lock_timeout_occurred = get_timeout_indicator(LOCK_TIMEOUT, true);
 		stmt_timeout_occurred = get_timeout_indicator(STATEMENT_TIMEOUT, true);
 
 		/*
-		 * If both were set, we want to report whichever timeout completed
-		 * earlier; this ensures consistent behavior if the machine is slow
-		 * enough that the second timeout triggers before we get here.  A tie
-		 * is arbitrarily broken in favor of reporting a lock timeout.
+		 * 如果两者都被置位，我们要报告先完成的那个超时；这样可确保
+		 * 在机器足够慢、第二个超时在我们到达这里之前就触发时行为一致。
+		 * 平局时武断地优先报告锁超时。
 		 */
 		if (lock_timeout_occurred && stmt_timeout_occurred &&
 			get_timeout_finish_time(STATEMENT_TIMEOUT) < get_timeout_finish_time(LOCK_TIMEOUT))
-			lock_timeout_occurred = false;	/* report stmt timeout */
+			lock_timeout_occurred = false;	/* 上报语句超时 */
 
 		if (lock_timeout_occurred)
 		{
@@ -3454,9 +3359,8 @@ ProcessInterrupts(void)
 		}
 
 		/*
-		 * If we are reading a command from the client, just ignore the cancel
-		 * request --- sending an extra error message won't accomplish
-		 * anything.  Otherwise, go ahead and throw the error.
+		 * 如果正在从客户端读取命令，就忽略取消请求——再发送一条
+		 * 额外的错误消息没有任何作用。否则，直接抛出该错误。
 		 */
 		if (!DoingCommandRead)
 		{
@@ -3473,10 +3377,9 @@ ProcessInterrupts(void)
 	if (IdleInTransactionSessionTimeoutPending)
 	{
 		/*
-		 * If the GUC has been reset to zero, ignore the signal.  This is
-		 * important because the GUC update itself won't disable any pending
-		 * interrupt.  We need to unset the flag before the injection point,
-		 * otherwise we could loop in interrupts checking.
+		 * 如果 GUC 已被重置为 0，就忽略该信号。这一点很重要，因为
+		 * GUC 更新本身不会禁用任何待处理的中断。我们需要在注入点
+		 * 之前清除该标志，否则可能会在中断检查中循环。
 		 */
 		IdleInTransactionSessionTimeoutPending = false;
 		if (IdleInTransactionSessionTimeout > 0)
@@ -3490,7 +3393,7 @@ ProcessInterrupts(void)
 
 	if (TransactionTimeoutPending)
 	{
-		/* As above, ignore the signal if the GUC has been reset to zero. */
+		/* 同上，如果 GUC 已被重置为 0 则忽略该信号。 */
 		TransactionTimeoutPending = false;
 		if (TransactionTimeout > 0)
 		{
@@ -3503,7 +3406,7 @@ ProcessInterrupts(void)
 
 	if (IdleSessionTimeoutPending)
 	{
-		/* As above, ignore the signal if the GUC has been reset to zero. */
+		/* 同上，如果 GUC 已被重置为 0 则忽略该信号。 */
 		IdleSessionTimeoutPending = false;
 		if (IdleSessionTimeout > 0)
 		{
@@ -3515,8 +3418,8 @@ ProcessInterrupts(void)
 	}
 
 	/*
-	 * If there are pending stats updates and we currently are truly idle
-	 * (matching the conditions in PostgresMain(), report stats now.
+	 * 如果有待处理的统计更新，且我们当前确实处于空闲状态
+	 * （满足 PostgresMain() 中的条件），则现在上报统计信息。
 	 */
 	if (IdleStatsUpdateTimeoutPending &&
 		DoingCommandRead && !IsTransactionOrTransactionBlock())
@@ -3541,9 +3444,7 @@ ProcessInterrupts(void)
 		ProcessSlotSyncMessage();
 }
 
-/*
- * GUC check_hook for client_connection_check_interval
- */
+/* client_connection_check_interval 的 GUC 检查钩子 */
 bool
 check_client_connection_check_interval(int *newval, void **extra, GucSource source)
 {
@@ -3556,14 +3457,12 @@ check_client_connection_check_interval(int *newval, void **extra, GucSource sour
 }
 
 /*
- * GUC check_hook for log_parser_stats, log_planner_stats, log_executor_stats
- *
- * This function and check_log_stats interact to prevent their variables from
- * being set in a disallowed combination.  This is a hack that doesn't really
- * work right; for example it might fail while applying pg_db_role_setting
- * values even though the final state would have been acceptable.  However,
- * since these variables are legacy settings with little production usage,
- * we tolerate that.
+ * log_parser_stats、log_planner_stats、log_executor_stats 的 GUC 检查钩子
+ * 
+ * 本函数与 check_log_stats 互相配合，防止这些变量被设置成不允许的组合。
+ * 这是一个并不真正奏效的 hack；例如，在应用 pg_db_role_setting 的值时
+ * 它可能会失败，即使最终状态本应是可以接受的。不过，由于这些变量属于
+ * 生产环境中很少使用的遗留设置，我们对此予以容忍。
  */
 bool
 check_stage_log_stats(bool *newval, void **extra, GucSource source)
@@ -3576,9 +3475,7 @@ check_stage_log_stats(bool *newval, void **extra, GucSource source)
 	return true;
 }
 
-/*
- * GUC check_hook for log_statement_stats
- */
+/* log_statement_stats 的 GUC 检查钩子 */
 bool
 check_log_stats(bool *newval, void **extra, GucSource source)
 {
@@ -3593,15 +3490,15 @@ check_log_stats(bool *newval, void **extra, GucSource source)
 	return true;
 }
 
-/* GUC assign hook for transaction_timeout */
+/* transaction_timeout 的 GUC 赋值钩子 */
 void
 assign_transaction_timeout(int newval, void *extra)
 {
 	if (IsTransactionState())
 	{
 		/*
-		 * If transaction_timeout GUC has changed within the transaction block
-		 * enable or disable the timer correspondingly.
+		 * 如果 transaction_timeout GUC 在事务块内部发生了改变，
+		 * 就相应地启用或禁用定时器。
 		 */
 		if (newval > 0 && !get_timeout_active(TRANSACTION_TIMEOUT))
 			enable_timeout_after(TRANSACTION_TIMEOUT, newval);
@@ -3611,7 +3508,7 @@ assign_transaction_timeout(int newval, void *extra)
 }
 
 /*
- * GUC check_hook for restrict_nonsystem_relation_kind
+ * restrict_nonsystem_relation_kind 的 GUC 检查钩子
  */
 bool
 check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource source)
@@ -3621,12 +3518,12 @@ check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource so
 	ListCell   *l;
 	int			flags = 0;
 
-	/* Need a modifiable copy of string */
+	/* 需要一份可修改的字符串副本 */
 	rawstring = pstrdup(*newval);
 
 	if (!SplitIdentifierString(rawstring, ',', &elemlist))
 	{
-		/* syntax error in list */
+		/* 列表中存在语法错误 */
 		GUC_check_errdetail("List syntax is invalid.");
 		pfree(rawstring);
 		list_free(elemlist);
@@ -3653,7 +3550,7 @@ check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource so
 	pfree(rawstring);
 	list_free(elemlist);
 
-	/* Save the flags in *extra, for use by the assign function */
+	/* 将标志保存到 *extra 中，供赋值函数使用 */
 	*extra = guc_malloc(LOG, sizeof(int));
 	if (!*extra)
 		return false;
@@ -3662,9 +3559,7 @@ check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource so
 	return true;
 }
 
-/*
- * GUC assign_hook for restrict_nonsystem_relation_kind
- */
+/* restrict_nonsystem_relation_kind 的 GUC 赋值钩子 */
 void
 assign_restrict_nonsystem_relation_kind(const char *newval, void *extra)
 {
@@ -3674,10 +3569,9 @@ assign_restrict_nonsystem_relation_kind(const char *newval, void *extra)
 }
 
 /*
- * set_debug_options --- apply "-d N" command line option
- *
- * -d is not quite the same as setting log_min_messages because it enables
- * other output options.
+ * set_debug_options --- 应用 “-d N” 命令行选项
+ * 
+ * -d 与设置 log_min_messages 并不完全相同，因为它还会启用其他输出选项。
  */
 void
 set_debug_options(int debug_flag, GucContext context, GucSource source)
@@ -3715,28 +3609,28 @@ set_plan_disabling_options(const char *arg, GucContext context, GucSource source
 
 	switch (arg[0])
 	{
-		case 's':				/* seqscan */
+		case 's':				/* 顺序扫描 */
 			tmp = "enable_seqscan";
 			break;
-		case 'i':				/* indexscan */
+		case 'i':				/* 索引扫描 */
 			tmp = "enable_indexscan";
 			break;
-		case 'o':				/* indexonlyscan */
+		case 'o':				/* 仅索引扫描 */
 			tmp = "enable_indexonlyscan";
 			break;
-		case 'b':				/* bitmapscan */
+		case 'b':				/* 位图扫描 */
 			tmp = "enable_bitmapscan";
 			break;
-		case 't':				/* tidscan */
+		case 't':				/* TID 扫描 */
 			tmp = "enable_tidscan";
 			break;
-		case 'n':				/* nestloop */
+		case 'n':				/* 嵌套循环 */
 			tmp = "enable_nestloop";
 			break;
-		case 'm':				/* mergejoin */
+		case 'm':				/* 归并连接 */
 			tmp = "enable_mergejoin";
 			break;
-		case 'h':				/* hashjoin */
+		case 'h':				/* 哈希连接 */
 			tmp = "enable_hashjoin";
 			break;
 	}
@@ -3771,24 +3665,21 @@ get_stats_option_name(const char *arg)
 }
 
 
-/* ----------------------------------------------------------------
+/*
  * process_postgres_switches
- *	   Parse command line arguments for backends
- *
- * This is called twice, once for the "secure" options coming from the
- * postmaster or command line, and once for the "insecure" options coming
- * from the client's startup packet.  The latter have the same syntax but
- * may be restricted in what they can do.
- *
- * argv[0] is ignored in either case (it's assumed to be the program name).
- *
- * ctx is PGC_POSTMASTER for secure options, PGC_BACKEND for insecure options
- * coming from the client, or PGC_SU_BACKEND for insecure options coming from
- * a superuser client.
- *
- * If a database name is present in the command line arguments, it's
- * returned into *dbname (this is allowed only if *dbname is initially NULL).
- * ----------------------------------------------------------------
+ * 	  解析后端进程的命令行参数
+ * 
+ * 本函数会被调用两次：一次解析来自 postmaster 或命令行的安全选项，
+ * 另一次解析来自客户端启动包的不安全选项。后者语法相同，但其作用
+ * 可能受到限制。
+ * 
+ * 上述两种情况都会忽略 argv[0]（假定它是程序名）。
+ * 
+ * ctx 对于安全选项为 PGC_POSTMASTER；对于来自客户端的不安全选项为
+ * PGC_BACKEND；对于来自超级用户客户端的不安全选项为 PGC_SU_BACKEND。
+ * 
+ * 如果命令行参数中给出了数据库名，则通过 *dbname 返回（仅当 *dbname
+ * 初始为 NULL 时才允许）。
  */
 void
 process_postgres_switches(int argc, char *argv[], GucContext ctx,
@@ -3801,9 +3692,11 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 
 	if (secure)
 	{
-		gucsource = PGC_S_ARGV; /* switches came from command line */
+		gucsource = PGC_S_ARGV; /* 这些开关来自命令行 */
 
-		/* Ignore the initial --single argument, if present */
+		/*
+		 * 忽略初始的 --single 参数（如果存在的话）
+		 */
 		if (argc > 1 && strcmp(argv[1], "--single") == 0)
 		{
 			argv++;
@@ -3812,23 +3705,22 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 	}
 	else
 	{
-		gucsource = PGC_S_CLIENT;	/* switches came from client */
+		gucsource = PGC_S_CLIENT;	/* 这些开关来自客户端 */
 	}
 
 #ifdef HAVE_INT_OPTERR
 
 	/*
-	 * Turn this off because it's either printed to stderr and not the log
-	 * where we'd want it, or argv[0] is now "--single", which would make for
-	 * a weird error message.  We print our own error message below.
+	 * 将其关闭，因为它要么被打印到 stderr 而非日志（那并非我们想要的位置），
+	 * 要么此时 argv[0] 是 “--single”，那样会产生一条奇怪的错误消息。
+	 * 我们会在下面打印自己的错误消息。
 	 */
 	opterr = 0;
 #endif
 
 	/*
-	 * Parse command-line options.  CAUTION: keep this in sync with
-	 * postmaster/postmaster.c (the option sets should not conflict) and with
-	 * the common help() function in main/main.c.
+	 * 解析命令行选项。注意：请与 postmaster/postmaster.c（选项集合不应
+	 * 相互冲突）以及 main/main.c 中通用的 help() 函数保持同步。
 	 */
 	while ((flag = getopt(argc, argv, "B:bC:c:D:d:EeFf:h:ijk:lN:nOPp:r:S:sTt:v:W:-:")) != -1)
 	{
@@ -3839,22 +3731,21 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 				break;
 
 			case 'b':
-				/* Undocumented flag used for binary upgrades */
+				/* 用于二进制升级的未公开标志 */
 				if (secure)
 					IsBinaryUpgrade = true;
 				break;
 
 			case 'C':
-				/* ignored for consistency with the postmaster */
+				/* 为与 postmaster 保持一致而忽略 */
 				break;
 
 			case '-':
 
 				/*
-				 * Error if the user misplaced a special must-be-first option
-				 * for dispatching to a subprogram.  parse_dispatch_option()
-				 * returns DISPATCH_POSTMASTER if it doesn't find a match, so
-				 * error for anything else.
+				 * 如果用户放错了必须排在最前面的特殊选项（用于分派到子程序），则报错。
+				 * parse_dispatch_option() 如果没找到匹配项会返回 DISPATCH_POSTMASTER，
+				 * 因此对于其他任何情况都报错。
 				 */
 				if (parse_dispatch_option(optarg) != DISPATCH_POSTMASTER)
 					ereport(ERROR,
@@ -3940,7 +3831,7 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 				break;
 
 			case 'n':
-				/* ignored for consistency with postmaster */
+				/* 为与 postmaster 保持一致而忽略 */
 				break;
 
 			case 'O':
@@ -3956,7 +3847,7 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 				break;
 
 			case 'r':
-				/* send output (stdout and stderr) to the given file */
+				/* 将输出（stdout 与 stderr）发送到给定文件 */
 				if (secure)
 					strlcpy(OutputFileName, optarg, MAXPGPATH);
 				break;
@@ -3970,7 +3861,7 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 				break;
 
 			case 'T':
-				/* ignored for consistency with the postmaster */
+				/* 为与 postmaster 保持一致而忽略 */
 				break;
 
 			case 't':
@@ -3987,11 +3878,9 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 			case 'v':
 
 				/*
-				 * -v is no longer used in normal operation, since
-				 * FrontendProtocol is already set before we get here. We keep
-				 * the switch only for possible use in standalone operation,
-				 * in case we ever support using normal FE/BE protocol with a
-				 * standalone backend.
+				 * -v 在正常操作中已不再使用，因为在我们到达这里之前 FrontendProtocol
+				 * 就已经被设置好了。我们保留这个开关只是可能用于独立（standalone）
+				 * 模式，以防将来支持在独立后端中使用普通的 FE/BE 协议。
 				 */
 				if (secure)
 					FrontendProtocol = (ProtocolVersion) atoi(optarg);
@@ -4010,18 +3899,16 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 			break;
 	}
 
-	/*
-	 * Optional database name should be there only if *dbname is NULL.
-	 */
+	/* 可选的数据库名只有当 *dbname 为 NULL 时才应该存在。 */
 	if (!errs && dbname && *dbname == NULL && argc - optind >= 1)
 		*dbname = strdup(argv[optind++]);
 
 	if (errs || argc != optind)
 	{
 		if (errs)
-			optind--;			/* complain about the previous argument */
+			optind--;			/* 针对前一个参数报错 */
 
-		/* spell the error message a bit differently depending on context */
+		/* 根据上下文以略有不同的措辞书写错误消息 */
 		if (IsUnderPostmaster)
 			ereport(FATAL,
 					errcode(ERRCODE_SYNTAX_ERROR),
@@ -4036,24 +3923,23 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 	}
 
 	/*
-	 * Reset getopt(3) library so that it will work correctly in subprocesses
-	 * or when this function is called a second time with another array.
+	 * 重置 getopt(3) 库，使其在子进程中被再次调用或在本函数以另一个
+	 * 数组第二次被调用时能正常工作。
 	 */
 	optind = 1;
 #ifdef HAVE_INT_OPTRESET
-	optreset = 1;				/* some systems need this too */
+	optreset = 1;				/* 某些系统也需要这个 */
 #endif
 }
 
 
 /*
  * PostgresSingleUserMain
- *     Entry point for single user mode. argc/argv are the command line
- *     arguments to be used.
- *
- * Performs single user specific setup then calls PostgresMain() to actually
- * process queries. Single user mode specific setup should go here, rather
- * than PostgresMain() or InitPostgres() when reasonably possible.
+ * 	  单用户模式的入口点。argc/argv 为要使用的命令行参数。
+ * 
+ * 执行单用户特有的初始化设置，然后调用 PostgresMain() 实际处理查询。
+ * 在合理的情况下，单用户模式特有的初始化设置应放在这里，而不是放在
+ * PostgresMain() 或 InitPostgres() 中。
  */
 void
 PostgresSingleUserMain(int argc, char *argv[],
@@ -4063,11 +3949,11 @@ PostgresSingleUserMain(int argc, char *argv[],
 
 	Assert(!IsUnderPostmaster);
 
-	/* Initialize startup process environment. */
+	/* 初始化启动进程环境。 */
 	InitStandaloneProcess(argv[0]);
 
 	/*
-	 * Set default values for command-line options.
+	 * 为命令行选项设置默认值。
 	 */
 	InitializeGUCOptions();
 
@@ -4076,7 +3962,7 @@ PostgresSingleUserMain(int argc, char *argv[],
 	 */
 	process_postgres_switches(argc, argv, PGC_POSTMASTER, &dbname);
 
-	/* Must have gotten a database name, or have a default (the username) */
+	/* 必须已经得到一个数据库名，或者有一个默认值（即用户名） */
 	if (dbname == NULL)
 	{
 		dbname = username;
@@ -4087,87 +3973,85 @@ PostgresSingleUserMain(int argc, char *argv[],
 							progname)));
 	}
 
-	/* Acquire configuration parameters */
+	/* 获取配置参数 */
 	if (!SelectConfigFiles(userDoption, progname))
 		proc_exit(1);
 
 	/*
-	 * Validate we have been given a reasonable-looking DataDir and change
-	 * into it.
+	 * 验证我们得到的 DataDir 看起来合理，并切换到该目录。
 	 */
 	checkDataDir();
 	ChangeToDataDir();
 
 	/*
-	 * Create lockfile for data directory.
+	 * 为数据目录创建锁文件。
 	 */
 	CreateDataDirLockFile(false);
 
-	/* read control file (error checking and contains config ) */
+	/* 读取控制文件（包含错误检查与配置） */
 	LocalProcessControlFile(false);
 
 	/*
-	 * process any libraries that should be preloaded at postmaster start
+	 * 处理那些应在 postmaster 启动时预加载的库。
 	 */
 	process_shared_preload_libraries();
 
-	/* Initialize MaxBackends */
+	/* 初始化 MaxBackends */
 	InitializeMaxBackends();
 
 	/*
-	 * We don't need postmaster child slots in single-user mode, but
-	 * initialize them anyway to avoid having special handling.
+	 * 在单用户模式下我们不需要 postmaster 子进程槽，但为了不写特殊
+	 * 处理逻辑，仍然对它们进行初始化。
 	 */
 	InitPostmasterChildSlots();
 
-	/* Initialize size of fast-path lock cache. */
+	/* 初始化快速路径锁缓存的大小。 */
 	InitializeFastPathLocks();
 
 	/*
-	 * Give preloaded libraries a chance to request additional shared memory.
+	 * 给预加载的库一个机会，让它们请求额外的共享内存。
 	 */
 	process_shmem_requests();
 
 	/*
-	 * Now that loadable modules have had their chance to request additional
-	 * shared memory, determine the value of any runtime-computed GUCs that
-	 * depend on the amount of shared memory required.
+	 * 既然可加载模块已经请求过额外的共享内存，现在来确定那些依赖于
+	 * 所需共享内存量的、运行时计算的 GUC 的值。
 	 */
 	InitializeShmemGUCs();
 
 	/*
-	 * Now that modules have been loaded, we can process any custom resource
-	 * managers specified in the wal_consistency_checking GUC.
+	 * 既然模块已经加载，我们就可以处理 wal_consistency_checking GUC
+	 * 中指定的任何自定义资源管理器。
 	 */
 	InitializeWalConsistencyChecking();
 
 	/*
-	 * Create shared memory etc.  (Nothing's really "shared" in single-user
-	 * mode, but we must have these data structures anyway.)
+	 * 创建共享内存等。（在单用户模式下其实并没有什么“共享”的东西，
+	 * 但我们仍然必须拥有这些数据结构。）
 	 */
 	CreateSharedMemoryAndSemaphores();
 
 	/*
-	 * Estimate number of openable files.  This must happen after setting up
-	 * semaphores, because on some platforms semaphores count as open files.
+	 * 估算可打开文件的数量。这必须在设置完信号量之后进行，因为在某些
+	 * 平台上信号量也算作打开的文件。
 	 */
 	set_max_safe_fds();
 
 	/*
-	 * Remember stand-alone backend startup time,roughly at the same point
-	 * during startup that postmaster does so.
+	 * 记录独立后端的启动时间，大致位于 postmaster 在启动过程中记录该
+	 * 时间的同一位置。
 	 */
 	PgStartTime = GetCurrentTimestamp();
 
 	/*
-	 * Create a per-backend PGPROC struct in shared memory. We must do this
-	 * before we can use LWLocks.
+	 * 在共享内存中创建一个每后端（per-backend）的 PGPROC 结构。我们
+	 * 必须在使用 LWLocks 之前完成这一步。
 	 */
 	InitProcess();
 
 	/*
-	 * Now that sufficient infrastructure has been initialized, PostgresMain()
-	 * can do the rest.
+	 * 既然已经初始化了足够的基础设施，剩下的工作可由 PostgresMain()
+	 * 来完成。
 	 */
 	PostgresMain(dbname, username);
 }
@@ -4175,13 +4059,13 @@ PostgresSingleUserMain(int argc, char *argv[],
 
 /* ----------------------------------------------------------------
  * PostgresMain
- *	   postgres main loop -- all backends, interactive or otherwise loop here
+ *	   postgres 主循环 —— 所有后端（无论是交互式还是其他）都在这里循环
  *
- * dbname is the name of the database to connect to, username is the
- * PostgreSQL user name to be used for the session.
+ * dbname 为要连接的数据库名，username 为该会话所用的 PostgreSQL
+ * 用户名。
  *
- * NB: Single user mode specific setup should go to PostgresSingleUserMain()
- * if reasonably possible.
+ * 注意：单用户模式特有的初始化设置应尽可能放到
+ * PostgresSingleUserMain() 中。
  * ----------------------------------------------------------------
  */
 void
@@ -4189,7 +4073,7 @@ PostgresMain(const char *dbname, const char *username)
 {
 	sigjmp_buf	local_sigjmp_buf;
 
-	/* these must be volatile to ensure state is preserved across longjmp: */
+	/* 这些变量必须是 volatile 的，以确保状态在 longjmp 之后仍被保留： */
 	volatile bool send_ready_for_query = true;
 	volatile bool idle_in_transaction_timeout_enabled = false;
 	volatile bool idle_session_timeout_enabled = false;
@@ -4200,47 +4084,43 @@ PostgresMain(const char *dbname, const char *username)
 	Assert(GetProcessingMode() == InitProcessing);
 
 	/*
-	 * Set up signal handlers.  (InitPostmasterChild or InitStandaloneProcess
-	 * has already set up BlockSig and made that the active signal mask.)
-	 *
-	 * Note that postmaster blocked all signals before forking child process,
-	 * so there is no race condition whereby we might receive a signal before
-	 * we have set up the handler.
-	 *
-	 * Also note: it's best not to use any signals that are SIG_IGNored in the
-	 * postmaster.  If such a signal arrives before we are able to change the
-	 * handler to non-SIG_IGN, it'll get dropped.  Instead, make a dummy
-	 * handler in the postmaster to reserve the signal. (Of course, this isn't
-	 * an issue for signals that are locally generated, such as SIGALRM and
-	 * SIGPIPE.)
+	 * 设置信号处理函数。（InitPostmasterChild 或 InitStandaloneProcess
+	 * 已经设置好 BlockSig 并将其设为当前的信号掩码。）
+	 * 
+	 * 注意：postmaster 在 fork 子进程之前阻塞了所有信号，因此我们
+	 * 不会存在这样的竞态：在设置好处理函数之前就收到信号。
+	 * 
+	 * 另请注意：最好不要使用任何在 postmaster 中被设为 SIG_IGN 的
+	 * 信号。如果这样一个信号在我们能够把处理函数改为非 SIG_IGN 之前
+	 * 到达，它会被丢弃。因此，应在 postmaster 中设置一个哑处理函数
+	 * 来保留该信号。（当然，对于本地生成的信号，如 SIGALRM 和
+	 * SIGPIPE，这不成问题。）
 	 */
 	if (am_walsender)
 		WalSndSignals();
 	else
 	{
 		pqsignal(SIGHUP, SignalHandlerForConfigReload);
-		pqsignal(SIGINT, StatementCancelHandler);	/* cancel current query */
-		pqsignal(SIGTERM, die); /* cancel current query and exit */
+		pqsignal(SIGINT, StatementCancelHandler);	/* 取消当前查询 */
+		pqsignal(SIGTERM, die); /* 取消当前查询并退出 */
 
 		/*
-		 * In a postmaster child backend, replace SignalHandlerForCrashExit
-		 * with quickdie, so we can tell the client we're dying.
-		 *
-		 * In a standalone backend, SIGQUIT can be generated from the keyboard
-		 * easily, while SIGTERM cannot, so we make both signals do die()
-		 * rather than quickdie().
+		 * 在 postmaster 的子后端中，用 quickdie 替换 SignalHandlerForCrashExit，
+		 * 这样我们就能告诉客户端我们正在退出。
+		 * 
+		 * 在独立后端中，SIGQUIT 可以很容易地从键盘产生，而 SIGTERM 不能，
+		 * 因此我们让这两个信号都执行 die() 而不是 quickdie()。
 		 */
 		if (IsUnderPostmaster)
-			pqsignal(SIGQUIT, quickdie);	/* hard crash time */
+			pqsignal(SIGQUIT, quickdie);	/* 硬崩溃时 */
 		else
-			pqsignal(SIGQUIT, die); /* cancel current query and exit */
-		InitializeTimeouts();	/* establishes SIGALRM handler */
+			pqsignal(SIGQUIT, die); /* 取消当前查询并退出 */
+		InitializeTimeouts();	/* 建立 SIGALRM 处理函数 */
 
 		/*
-		 * Ignore failure to write to frontend. Note: if frontend closes
-		 * connection, we will notice it and exit cleanly when control next
-		 * returns to outer loop.  This seems safer than forcing exit in the
-		 * midst of output during who-knows-what operation...
+		 * 忽略向前端写入失败的情况。注意：如果前端关闭连接，我们会在控制
+		 * 权下次返回到外层循环时注意到并干净地退出。这似乎比在谁也不知道
+		 * 正在进行何种操作的输出过程中强行退出更安全……
 		 */
 		pqsignal(SIGPIPE, SIG_IGN);
 		pqsignal(SIGUSR1, procsignal_sigusr1_handler);
@@ -4248,22 +4128,22 @@ PostgresMain(const char *dbname, const char *username)
 		pqsignal(SIGFPE, FloatExceptionHandler);
 
 		/*
-		 * Reset some signals that are accepted by postmaster but not by
-		 * backend
+		 * 重置一些 postmaster 接受但后端不接受的信号
 		 */
-		pqsignal(SIGCHLD, SIG_DFL); /* system() requires this on some
-									 * platforms */
+		pqsignal(SIGCHLD, SIG_DFL); /*
+		 * 在某些平台上，system() 需要这个（平台相关）。
+		 */
 	}
 
-	/* Early initialization */
+	/* 早期初始化 */
 	BaseInit();
 
-	/* We need to allow SIGINT, etc during the initial transaction */
+	/* 在初始事务期间，我们需要允许 SIGINT 等信号 */
 	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
 
 	/*
-	 * Generate a random cancel key, if this is a backend serving a
-	 * connection. InitPostgres() will advertise it in shared memory.
+	 * 生成一个随机的取消键（cancel key），如果这是一个为连接
+	 * 提供服务的后端。InitPostgres() 会把它发布到共享内存中。
 	 */
 	Assert(MyCancelKeyLength == 0);
 	if (whereToSendOutput == DestRemote)
@@ -4282,22 +4162,21 @@ PostgresMain(const char *dbname, const char *username)
 	}
 
 	/*
-	 * General initialization.
-	 *
-	 * NOTE: if you are tempted to add code in this vicinity, consider putting
-	 * it inside InitPostgres() instead.  In particular, anything that
-	 * involves database access should be there, not here.
-	 *
-	 * Honor session_preload_libraries if not dealing with a WAL sender.
+	 * 常规初始化。
+	 * 
+	 * 注意：如果你想在这一带添加代码，请考虑把它放进 InitPostgres()
+	 * 里面。特别是，任何涉及数据库访问的操作都应该放在那里，而不是这里。
+	 * 
+	 * 如果不是 WAL sender，则遵循 session_preload_libraries。
 	 */
-	InitPostgres(dbname, InvalidOid,	/* database to connect to */
-				 username, InvalidOid,	/* role to connect as */
+	InitPostgres(dbname, InvalidOid,	/* 要连接的数据库 */
+				 username, InvalidOid,	/* 要作为的角色 */
 				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
-				 NULL);			/* no out_dbname */
+				 NULL);			/* 无 out_dbname */
 
 	/*
-	 * If the PostmasterContext is still around, recycle the space; we don't
-	 * need it anymore after InitPostgres completes.
+	 * 如果 PostmasterContext 还存在，回收其空间；在 InitPostgres()
+	 * 完成之后我们就不再需要它了。
 	 */
 	if (PostmasterContext)
 	{
@@ -4308,26 +4187,25 @@ PostgresMain(const char *dbname, const char *username)
 	SetProcessingMode(NormalProcessing);
 
 	/*
-	 * Now all GUC states are fully set up.  Report them to client if
-	 * appropriate.
+	 * 现在所有 GUC 状态都已完全设置好。如果合适，就将其报告给客户端。
 	 */
 	BeginReportingGUCOptions();
 
 	/*
-	 * Also set up handler to log session end; we have to wait till now to be
-	 * sure Log_disconnections has its final value.
+	 * 同时设置用于记录会话结束的处理函数；我们必须等到现在，才能
+	 * 确保 Log_disconnections 已经具有最终值。
 	 */
 	if (IsUnderPostmaster && Log_disconnections)
 		on_proc_exit(log_disconnections, 0);
 
 	pgstat_report_connect(MyDatabaseId);
 
-	/* Perform initialization specific to a WAL sender process. */
+	/* 执行特定于 WAL sender 进程的初始化。 */
 	if (am_walsender)
 		InitWalSender();
 
 	/*
-	 * Send this backend's cancellation info to the frontend.
+	 * 将该后端的取消信息发送给前端。
 	 */
 	if (whereToSendOutput == DestRemote)
 	{
@@ -4339,28 +4217,27 @@ PostgresMain(const char *dbname, const char *username)
 
 		pq_sendbytes(&buf, MyCancelKey, MyCancelKeyLength);
 		pq_endmessage(&buf);
-		/* Need not flush since ReadyForQuery will do it. */
+		/* 无需刷新，因为 ReadyForQuery 会做这件事。 */
 	}
 
-	/* Welcome banner for standalone case */
+	/* 独立运行情况下的欢迎横幅 */
 	if (whereToSendOutput == DestDebug)
 		printf("\nPostgreSQL stand-alone backend %s\n", PG_VERSION);
 
 	/*
-	 * Create the memory context we will use in the main loop.
-	 *
-	 * MessageContext is reset once per iteration of the main loop, ie, upon
-	 * completion of processing of each command message from the client.
+	 * 创建我们将在主循环中使用的内存上下文。
+	 * 
+	 * MessageContext 在主循环的每次迭代（即完成处理来自客户端的每个
+	 * 命令消息）时都会被重置一次。
 	 */
 	MessageContext = AllocSetContextCreate(TopMemoryContext,
 										   "MessageContext",
 										   ALLOCSET_DEFAULT_SIZES);
 
 	/*
-	 * Create memory context and buffer used for RowDescription messages. As
-	 * SendRowDescriptionMessage(), via exec_describe_statement_message(), is
-	 * frequently executed for ever single statement, we don't want to
-	 * allocate a separate buffer every time.
+	 * 创建用于 RowDescription 消息的内存上下文和缓冲区。由于
+	 * exec_describe_statement_message() 会对几乎每条语句频繁执行，
+	 * 我们不想每次都分配单独的缓冲区。
 	 */
 	row_description_context = AllocSetContextCreate(TopMemoryContext,
 													"RowDescriptionContext",
@@ -4369,86 +4246,77 @@ PostgresMain(const char *dbname, const char *username)
 	initStringInfo(&row_description_buf);
 	MemoryContextSwitchTo(TopMemoryContext);
 
-	/* Fire any defined login event triggers, if appropriate */
+	/* 如果合适，触发任何已定义的登录事件触发器 */
 	EventTriggerOnLogin();
 
 	/*
-	 * POSTGRES main processing loop begins here
-	 *
-	 * If an exception is encountered, processing resumes here so we abort the
-	 * current transaction and start a new one.
-	 *
-	 * You might wonder why this isn't coded as an infinite loop around a
-	 * PG_TRY construct.  The reason is that this is the bottom of the
-	 * exception stack, and so with PG_TRY there would be no exception handler
-	 * in force at all during the CATCH part.  By leaving the outermost setjmp
-	 * always active, we have at least some chance of recovering from an error
-	 * during error recovery.  (If we get into an infinite loop thereby, it
-	 * will soon be stopped by overflow of elog.c's internal state stack.)
-	 *
-	 * Note that we use sigsetjmp(..., 1), so that this function's signal mask
-	 * (to wit, UnBlockSig) will be restored when longjmp'ing to here.  This
-	 * is essential in case we longjmp'd out of a signal handler on a platform
-	 * where that leaves the signal blocked.  It's not redundant with the
-	 * unblock in AbortTransaction() because the latter is only called if we
-	 * were inside a transaction.
+	 * POSTGRES 主处理循环从此处开始
+	 * 
+	 * 如果遇到异常，处理会在这里恢复，以便我们中止当前事务并启动一个新事务。
+	 * 
+	 * 你可能会奇怪为什么这里没有写成围绕 PG_TRY 构造的无限循环。原因是
+	 * 这里是异常栈的最底端，因此如果使用 PG_TRY，在 CATCH 部分就完全
+	 * 不会有生效的异常处理器。通过让最外层的 setjmp 始终处于活动状态，
+	 * 我们至少有机会从错误恢复期间的错误中恢复过来。（如果因此陷入
+	 * 无限循环，elog.c 内部状态栈溢出会很快将其停止。）
+	 * 
+	 * 注意：我们使用 sigsetjmp(..., 1)，因此本函数的信号掩码（即
+	 * UnBlockSig）在 longjmp 回到此处时会被恢复。这一点很重要，以防
+	 * 我们是 longjmp 出了某个信号处理函数（在某些平台上这会导致信号
+	 * 保持阻塞）。它并非多余于 AbortTransaction() 中的解除阻塞，因为
+	 * 后者仅在我们处于事务内部时才会被调用。
 	 */
 
 	if (sigsetjmp(local_sigjmp_buf, 1) != 0)
 	{
 		/*
-		 * NOTE: if you are tempted to add more code in this if-block,
-		 * consider the high probability that it should be in
-		 * AbortTransaction() instead.  The only stuff done directly here
-		 * should be stuff that is guaranteed to apply *only* for outer-level
-		 * error recovery, such as adjusting the FE/BE protocol status.
+		 * 注意：如果你想在这个 if 块中添加更多代码，请考虑它极有可能
+		 * 应该放在 AbortTransaction() 中。这里直接处理的只应是那些保证
+		 * *仅*适用于最外层错误恢复的事情，例如调整 FE/BE 协议状态。
 		 */
 
-		/* Since not using PG_TRY, must reset error stack by hand */
+		/* 由于没有使用 PG_TRY，必须手动重置错误栈 */
 		error_context_stack = NULL;
 
-		/* Prevent interrupts while cleaning up */
+		/* 清理期间阻止中断 */
 		HOLD_INTERRUPTS();
 
 		/*
-		 * Forget any pending QueryCancel request, since we're returning to
-		 * the idle loop anyway, and cancel any active timeout requests.  (In
-		 * future we might want to allow some timeout requests to survive, but
-		 * at minimum it'd be necessary to do reschedule_timeouts(), in case
-		 * we got here because of a query cancel interrupting the SIGALRM
-		 * interrupt handler.)	Note in particular that we must clear the
-		 * statement and lock timeout indicators, to prevent any future plain
-		 * query cancels from being misreported as timeouts in case we're
-		 * forgetting a timeout cancel.
+		 * 忘记任何待处理的 QueryCancel 请求，反正我们也要回到空闲循环了，
+		 * 并取消任何活跃的超时请求。（将来我们或许希望允许某些超时请求
+		 * 存活下来，但至少需要调用 reschedule_timeouts()，以防我们是因为
+		 * 查询取消打断了 SIGALRM 中断处理函数而到达这里的。）特别要注意：
+		 * 我们必须清除语句超时和锁超时的指示标志，以防我们忘记的是一次
+		 * 超时取消，从而导致将来任何普通的查询取消被误报为超时。
 		 */
-		disable_all_timeouts(false);	/* do first to avoid race condition */
+		disable_all_timeouts(false);	/* 先做，以避免竞态条件 */
 		QueryCancelPending = false;
 		idle_in_transaction_timeout_enabled = false;
 		idle_session_timeout_enabled = false;
 
-		/* Not reading from the client anymore. */
+		/* 不再从客户端读取了。 */
 		DoingCommandRead = false;
 
-		/* Make sure libpq is in a good state */
+		/* 确保 libpq 处于良好状态 */
 		pq_comm_reset();
 
-		/* Report the error to the client and/or server log */
+		/* 将错误报告给客户端和/或服务器日志 */
 		EmitErrorReport();
 
 		/*
-		 * If Valgrind noticed something during the erroneous query, print the
-		 * query string, assuming we have one.
+		 * 如果 Valgrind 在出错查询期间发现了问题，就打印该查询字符串
+		 * （假设我们有它的话）。
 		 */
 		valgrind_report_error_query(debug_query_string);
 
 		/*
-		 * Make sure debug_query_string gets reset before we possibly clobber
-		 * the storage it points at.
+		 * 确保在我们可能覆盖 debug_query_string 所指向的存储之前，
+		 * 先把它重置。
 		 */
 		debug_query_string = NULL;
 
 		/*
-		 * Abort the current transaction in order to recover.
+		 * 中止当前事务以进行恢复。
 		 */
 		AbortCurrentTransaction();
 
@@ -4458,63 +4326,58 @@ PostgresMain(const char *dbname, const char *username)
 		PortalErrorCleanup();
 
 		/*
-		 * We can't release replication slots inside AbortTransaction() as we
-		 * need to be able to start and abort transactions while having a slot
-		 * acquired. But we never need to hold them across top level errors,
-		 * so releasing here is fine. There also is a before_shmem_exit()
-		 * callback ensuring correct cleanup on FATAL errors.
+		 * 我们无法在 AbortTransaction() 内部释放复制 slot，因为我们需要在
+		 * 持有 slot 的同时启动和中止事务。但我们绝不需要在顶层错误之间
+		 * 持有它们，因此在这里释放是没问题的。另外还有一个 before_shmem_exit()
+		 * 回调，用于在 FATAL 错误时确保正确的清理。
 		 */
 		if (MyReplicationSlot != NULL)
 			ReplicationSlotRelease();
 
-		/* We also want to cleanup temporary slots on error. */
+		/* 我们也希望在出错时清理临时 slot。 */
 		ReplicationSlotCleanup(false);
 
 		jit_reset_after_error();
 
 		/*
-		 * Now return to normal top-level context and clear ErrorContext for
-		 * next time.
+		 * 现在返回到正常的顶层上下文，并为下次清空 ErrorContext。
 		 */
 		MemoryContextSwitchTo(MessageContext);
 		FlushErrorState();
 
 		/*
-		 * If we were handling an extended-query-protocol message, initiate
-		 * skip till next Sync.  This also causes us not to issue
-		 * ReadyForQuery (until we get Sync).
+		 * 如果我们正在处理扩展查询协议消息，则发起跳转到下一个
+		 * Sync。这还会导致我们不再发出 ReadyForQuery（直到收到 Sync）。
 		 */
 		if (doing_extended_query_message)
 			ignore_till_sync = true;
 
-		/* We don't have a transaction command open anymore */
+		/* 我们不再持有打开的事务命令了 */
 		xact_started = false;
 
 		/*
-		 * If an error occurred while we were reading a message from the
-		 * client, we have potentially lost track of where the previous
-		 * message ends and the next one begins.  Even though we have
-		 * otherwise recovered from the error, we cannot safely read any more
-		 * messages from the client, so there isn't much we can do with the
-		 * connection anymore.
+		 * 如果在从客户端读取消息时发生错误，我们可能已经搞不清上一条
+		 * 消息在哪里结束、下一条从哪里开始。即使我们已经从错误中恢复，
+		 * 也无法安全地再从客户端读取任何消息，因此这个连接也没什么
+		 * 可做的了。
 		 */
 		if (pq_is_reading_msg())
 			ereport(FATAL,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
 					 errmsg("terminating connection because protocol synchronization was lost")));
 
-		/* Now we can allow interrupts again */
+		/* 现在可以再次允许中断了 */
 		RESUME_INTERRUPTS();
 	}
 
-	/* We can now handle ereport(ERROR) */
+	/* 我们现在可以处理 ereport(ERROR) 了 */
 	PG_exception_stack = &local_sigjmp_buf;
 
 	if (!ignore_till_sync)
-		send_ready_for_query = true;	/* initially, or after error */
+		send_ready_for_query = true;	/* 最初，或出错之后 */
 
 	/*
-	 * Non-error queries loop here.
+	 * 非错误查询在此处循环。
 	 */
 
 	for (;;)
@@ -4523,21 +4386,21 @@ PostgresMain(const char *dbname, const char *username)
 		StringInfoData input_message;
 
 		/*
-		 * At top of loop, reset extended-query-message flag, so that any
-		 * errors encountered in "idle" state don't provoke skip.
+		 * 在循环顶部，重置扩展查询消息标志，以免在“空闲”状态下
+		 * 遇到的任何错误引发跳过。
 		 */
 		doing_extended_query_message = false;
 
 		/*
-		 * For valgrind reporting purposes, the "current query" begins here.
+		 * 出于 Valgrind 报告的目的，“当前查询”从这里开始。
 		 */
 #ifdef USE_VALGRIND
 		old_valgrind_error_count = VALGRIND_COUNT_ERRORS;
 #endif
 
 		/*
-		 * Release storage left over from prior query cycle, and create a new
-		 * query input buffer in the cleared MessageContext.
+		 * 释放上一轮查询周期遗留的存储，并在已清空的 MessageContext
+		 * 中创建一个新的查询输入缓冲区。
 		 */
 		MemoryContextSwitchTo(MessageContext);
 		MemoryContextReset(MessageContext);
@@ -4545,26 +4408,24 @@ PostgresMain(const char *dbname, const char *username)
 		initStringInfo(&input_message);
 
 		/*
-		 * Also consider releasing our catalog snapshot if any, so that it's
-		 * not preventing advance of global xmin while we wait for the client.
+		 * 同时考虑在可能的情况下释放我们的目录快照，以免它在我们等待
+		 * 客户端期间阻碍全局 xmin 的推进。
 		 */
 		InvalidateCatalogSnapshotConditionally();
 
 		/*
-		 * (1) If we've reached idle state, tell the frontend we're ready for
-		 * a new query.
-		 *
-		 * Note: this includes fflush()'ing the last of the prior output.
-		 *
-		 * This is also a good time to flush out collected statistics to the
-		 * cumulative stats system, and to update the PS stats display.  We
-		 * avoid doing those every time through the message loop because it'd
-		 * slow down processing of batched messages, and because we don't want
-		 * to report uncommitted updates (that confuses autovacuum).  The
-		 * notification processor wants a call too, if we are not in a
-		 * transaction block.
-		 *
-		 * Also, if an idle timeout is enabled, start the timer for that.
+		 * (1) 如果我们已进入空闲状态，就告诉前端我们已经准备好接收
+		 * 新的查询。
+		 * 
+		 * 注意：这包括 fflush() 刷新之前的输出。
+		 * 
+		 * 这也是将收集到的统计信息刷入累积统计系统、并更新 PS 统计
+		 * 显示的好时机。我们避免每次都通过消息循环来做这些事，因为那
+		 * 会拖慢批量消息的处理，也因为我们不想上报未提交的更新（那会
+		 * 让 autovacuum 感到困惑）。如果我们不处于事务块中，通知处理器
+		 * 也想要一次调用。
+		 * 
+		 * 此外，如果启用了空闲超时，就为它启动定时器。
 		 */
 		if (send_ready_for_query)
 		{
@@ -4573,7 +4434,7 @@ PostgresMain(const char *dbname, const char *username)
 				set_ps_display("idle in transaction (aborted)");
 				pgstat_report_activity(STATE_IDLEINTRANSACTION_ABORTED, NULL);
 
-				/* Start the idle-in-transaction timer */
+				/* 启动 idle-in-transaction 定时器 */
 				if (IdleInTransactionSessionTimeout > 0
 					&& (IdleInTransactionSessionTimeout < TransactionTimeout || TransactionTimeout == 0))
 				{
@@ -4587,7 +4448,7 @@ PostgresMain(const char *dbname, const char *username)
 				set_ps_display("idle in transaction");
 				pgstat_report_activity(STATE_IDLEINTRANSACTION, NULL);
 
-				/* Start the idle-in-transaction timer */
+				/* 启动 idle-in-transaction 定时器 */
 				if (IdleInTransactionSessionTimeout > 0
 					&& (IdleInTransactionSessionTimeout < TransactionTimeout || TransactionTimeout == 0))
 				{
@@ -4601,27 +4462,21 @@ PostgresMain(const char *dbname, const char *username)
 				long		stats_timeout;
 
 				/*
-				 * Process incoming notifies (including self-notifies), if
-				 * any, and send relevant messages to the client.  Doing it
-				 * here helps ensure stable behavior in tests: if any notifies
-				 * were received during the just-finished transaction, they'll
-				 * be seen by the client before ReadyForQuery is.
+				 * 处理收到的通知（包括自通知），如果有的话，并向客户端发送
+				 * 相关消息。在这里做有助于在测试中确保行为稳定：如果在刚结束的
+				 * 事务期间收到了任何通知，它们会在 ReadyForQuery 之前被客户端看到。
 				 */
 				if (notifyInterruptPending)
 					ProcessNotifyInterrupt(false);
 
 				/*
-				 * Check if we need to report stats. If pgstat_report_stat()
-				 * decides it's too soon to flush out pending stats / lock
-				 * contention prevented reporting, it'll tell us when we
-				 * should try to report stats again (so that stats updates
-				 * aren't unduly delayed if the connection goes idle for a
-				 * long time). We only enable the timeout if we don't already
-				 * have a timeout in progress, because we don't disable the
-				 * timeout below. enable_timeout_after() needs to determine
-				 * the current timestamp, which can have a negative
-				 * performance impact. That's OK because pgstat_report_stat()
-				 * won't have us wake up sooner than a prior call.
+				 * 检查是否需要上报统计信息。如果 pgstat_report_stat() 认为现在
+				 * 上报待处理统计信息还为时过早，或者锁竞争阻止了上报，它会告诉
+				 * 我们何时应该再次尝试上报统计信息（这样在连接长时间空闲时，
+				 * 统计更新就不会被不当地延迟）。只有当还没有正在进行的超时时我们
+				 * 才启用该超时，因为我们在下面并不会禁用该超时。enable_timeout_after()
+				 * 需要确定当前时间戳，这可能带来负面的性能影响。这没关系，因为
+				 * pgstat_report_stat() 不会让我们比上一次调用更早被唤醒。
 				 */
 				stats_timeout = pgstat_report_stat(false);
 				if (stats_timeout > 0)
@@ -4632,7 +4487,7 @@ PostgresMain(const char *dbname, const char *username)
 				}
 				else
 				{
-					/* all stats flushed, no need for the timeout */
+					/* 所有统计信息都已刷新，无需该超时 */
 					if (get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
 						disable_timeout(IDLE_STATS_UPDATE_TIMEOUT, false);
 				}
@@ -4640,7 +4495,7 @@ PostgresMain(const char *dbname, const char *username)
 				set_ps_display("idle");
 				pgstat_report_activity(STATE_IDLE, NULL);
 
-				/* Start the idle-session timer */
+				/* 启动 idle-session 定时器 */
 				if (IdleSessionTimeout > 0)
 				{
 					idle_session_timeout_enabled = true;
@@ -4649,13 +4504,12 @@ PostgresMain(const char *dbname, const char *username)
 				}
 			}
 
-			/* Report any recently-changed GUC options */
+			/* 上报任何最近变更的 GUC 选项 */
 			ReportChangedGUCOptions();
 
 			/*
-			 * The first time this backend is ready for query, log the
-			 * durations of the different components of connection
-			 * establishment and setup.
+			 * 当这个后端第一次准备好查询时，记录连接建立与设置各组成部分
+			 * 所耗的时长。
 			 */
 			if (conn_timing.ready_for_use == TIMESTAMP_MINUS_INFINITY &&
 				(log_connections & LOG_CONNECTION_SETUP_DURATIONS) &&
@@ -4689,25 +4543,24 @@ PostgresMain(const char *dbname, const char *username)
 		}
 
 		/*
-		 * (2) Allow asynchronous signals to be executed immediately if they
-		 * come in while we are waiting for client input. (This must be
-		 * conditional since we don't want, say, reads on behalf of COPY FROM
-		 * STDIN doing the same thing.)
+		 * (2) 允许异步信号在我们等待客户端输入时立即执行。（这必须是
+		 * 有条件的，因为我们不希望例如代表 COPY FROM STDIN 的读取
+		 * 做同样的事情。）
 		 */
 		DoingCommandRead = true;
 
 		/*
-		 * (3) read a command (loop blocks here)
+		 * (3) 读取一条命令（循环在此阻塞）
 		 */
 		firstchar = ReadCommand(&input_message);
 
 		/*
-		 * (4) turn off the idle-in-transaction and idle-session timeouts if
-		 * active.  We do this before step (5) so that any last-moment timeout
-		 * is certain to be detected in step (5).
-		 *
-		 * At most one of these timeouts will be active, so there's no need to
-		 * worry about combining the timeout.c calls into one.
+		 * (4) 如果空闲事务内（idle-in-transaction）和空闲会话（idle-session）
+		 * 超时处于活动状态，就关闭它们。我们在步骤 (5) 之前做这件事，以便
+		 * 任何最后一刻的超时都能被步骤 (5) 确定地检测到。
+		 * 
+		 * 这些超时中最多只有一个会处于活动状态，因此无需把对 timeout.c
+		 * 的调用合并为一个。
 		 */
 		if (idle_in_transaction_timeout_enabled)
 		{
@@ -4721,20 +4574,18 @@ PostgresMain(const char *dbname, const char *username)
 		}
 
 		/*
-		 * (5) disable async signal conditions again.
-		 *
-		 * Query cancel is supposed to be a no-op when there is no query in
-		 * progress, so if a query cancel arrived while we were idle, just
-		 * reset QueryCancelPending. ProcessInterrupts() has that effect when
-		 * it's called when DoingCommandRead is set, so check for interrupts
-		 * before resetting DoingCommandRead.
+		 * (5) 再次禁用异步信号条件。
+		 * 
+		 * 查询取消在没有进行中的查询时应当是一个空操作，因此如果在我们
+		 * 空闲时来了查询取消，只需重置 QueryCancelPending 即可。
+		 * ProcessInterrupts() 在设置了 DoingCommandRead 时被调用会产生
+		 * 这样的效果，因此在重置 DoingCommandRead 之前先检查中断。
 		 */
 		CHECK_FOR_INTERRUPTS();
 		DoingCommandRead = false;
 
 		/*
-		 * (6) check for any other interesting events that happened while we
-		 * slept.
+		 * (6) 检查在我们睡眠期间发生的任何其他有趣事件。
 		 */
 		if (ConfigReloadPending)
 		{
@@ -4743,8 +4594,7 @@ PostgresMain(const char *dbname, const char *username)
 		}
 
 		/*
-		 * (7) process the command.  But ignore it if we're skipping till
-		 * Sync.
+		 * (7) 处理命令。但如果我们正在跳到 Sync，则忽略它。
 		 */
 		if (ignore_till_sync && firstchar != EOF)
 			continue;
@@ -4755,7 +4605,7 @@ PostgresMain(const char *dbname, const char *username)
 				{
 					const char *query_string;
 
-					/* Set statement_timestamp() */
+					/* 设置 statement_timestamp() */
 					SetCurrentStatementStartTimestamp();
 
 					query_string = pq_getmsgstring(&input_message);
@@ -4784,7 +4634,7 @@ PostgresMain(const char *dbname, const char *username)
 
 					forbidden_in_wal_sender(firstchar);
 
-					/* Set statement_timestamp() */
+					/* 设置 statement_timestamp() */
 					SetCurrentStatementStartTimestamp();
 
 					stmt_name = pq_getmsgstring(&input_message);
@@ -4808,16 +4658,16 @@ PostgresMain(const char *dbname, const char *username)
 			case PqMsg_Bind:
 				forbidden_in_wal_sender(firstchar);
 
-				/* Set statement_timestamp() */
+				/* 设置 statement_timestamp() */
 				SetCurrentStatementStartTimestamp();
 
 				/*
-				 * this message is complex enough that it seems best to put
-				 * the field extraction out-of-line
+				 * 这条消息足够复杂，因此最好把字段提取放到行外（out-of-line）
+				 * 去做。
 				 */
 				exec_bind_message(&input_message);
 
-				/* exec_bind_message does valgrind_report_error_query */
+				/* exec_bind_message 会执行 valgrind_report_error_query */
 				break;
 
 			case PqMsg_Execute:
@@ -4827,7 +4677,7 @@ PostgresMain(const char *dbname, const char *username)
 
 					forbidden_in_wal_sender(firstchar);
 
-					/* Set statement_timestamp() */
+					/* 设置 statement_timestamp() */
 					SetCurrentStatementStartTimestamp();
 
 					portal_name = pq_getmsgstring(&input_message);
@@ -4836,38 +4686,36 @@ PostgresMain(const char *dbname, const char *username)
 
 					exec_execute_message(portal_name, max_rows);
 
-					/* exec_execute_message does valgrind_report_error_query */
+					/* exec_execute_message 会执行 valgrind_report_error_query */
 				}
 				break;
 
 			case PqMsg_FunctionCall:
 				forbidden_in_wal_sender(firstchar);
 
-				/* Set statement_timestamp() */
+				/* 设置 statement_timestamp() */
 				SetCurrentStatementStartTimestamp();
 
-				/* Report query to various monitoring facilities. */
+				/* 向各种监控设施报告查询。 */
 				pgstat_report_activity(STATE_FASTPATH, NULL);
 				set_ps_display("<FASTPATH>");
 
-				/* start an xact for this function invocation */
+				/* 为该函数的调用启动一个事务 */
 				start_xact_command();
 
 				/*
-				 * Note: we may at this point be inside an aborted
-				 * transaction.  We can't throw error for that until we've
-				 * finished reading the function-call message, so
-				 * HandleFunctionRequest() must check for it after doing so.
-				 * Be careful not to do anything that assumes we're inside a
-				 * valid transaction here.
+				 * 注意：此时我们可能处于一个已中止的事务内部。在读完
+				 * 函数调用消息之前，我们不能为此抛出错误，因此
+				 * HandleFunctionRequest() 必须在读完之后检查这一点。注意不要
+				 * 做任何假设我们处于有效事务内部的操作。
 				 */
 
-				/* switch back to message context */
+				/* 切换回消息上下文 */
 				MemoryContextSwitchTo(MessageContext);
 
 				HandleFunctionRequest(&input_message);
 
-				/* commit the function-invocation transaction */
+				/* 提交该函数调用的事务 */
 				finish_xact_command();
 
 				valgrind_report_error_query("fastpath function call");
@@ -4893,7 +4741,7 @@ PostgresMain(const char *dbname, const char *username)
 								DropPreparedStatement(close_target, false);
 							else
 							{
-								/* special-case the unnamed statement */
+								/* 对未命名语句做特殊处理 */
 								drop_unnamed_stmt();
 							}
 							break;
@@ -4928,7 +4776,7 @@ PostgresMain(const char *dbname, const char *username)
 
 					forbidden_in_wal_sender(firstchar);
 
-					/* Set statement_timestamp() (needed for xact) */
+					/* 设置 statement_timestamp()（事务所需） */
 					SetCurrentStatementStartTimestamp();
 
 					describe_type = pq_getmsgbyte(&input_message);
@@ -4965,9 +4813,8 @@ PostgresMain(const char *dbname, const char *username)
 				pq_getmsgend(&input_message);
 
 				/*
-				 * If pipelining was used, we may be in an implicit
-				 * transaction block. Close it before calling
-				 * finish_xact_command.
+				 * 如果使用了流水线（pipelining），我们可能处于一个隐式
+				 * 事务块中。在调用 finish_xact_command 之前先将其关闭。
 				 */
 				EndImplicitTransactionBlock();
 				finish_xact_command();
@@ -4976,13 +4823,12 @@ PostgresMain(const char *dbname, const char *username)
 				break;
 
 				/*
-				 * PqMsg_Terminate means that the frontend is closing down the
-				 * socket. EOF means unexpected loss of frontend connection.
-				 * Either way, perform normal shutdown.
+				 * PqMsg_Terminate 表示前端正在关闭套接字。EOF 表示前端
+				 * 连接意外丢失。无论哪种情况，都执行正常的关闭。
 				 */
 			case EOF:
 
-				/* for the cumulative statistics system */
+				/* 用于累积统计系统 */
 				pgStatSessionEndCause = DISCONNECT_CLIENT_EOF;
 
 				/* FALLTHROUGH */
@@ -4990,18 +4836,16 @@ PostgresMain(const char *dbname, const char *username)
 			case PqMsg_Terminate:
 
 				/*
-				 * Reset whereToSendOutput to prevent ereport from attempting
-				 * to send any more messages to client.
+				 * 重置 whereToSendOutput，以防 ereport 试图向客户端发送
+				 * 更多消息。
 				 */
 				if (whereToSendOutput == DestRemote)
 					whereToSendOutput = DestNone;
 
 				/*
-				 * NOTE: if you are tempted to add more code here, DON'T!
-				 * Whatever you had in mind to do should be set up as an
-				 * on_proc_exit or on_shmem_exit callback, instead. Otherwise
-				 * it will fail to be called during other backend-shutdown
-				 * scenarios.
+				 * 注意：如果你想在这里添加更多代码，千万别！你想做的任何事情
+				 * 都应该设置为 on_proc_exit 或 on_shmem_exit 回调，而不是放在这里。
+				 * 否则在其他后端关闭场景中它将不会被调用。
 				 */
 				proc_exit(0);
 
@@ -5010,9 +4854,8 @@ PostgresMain(const char *dbname, const char *username)
 			case PqMsg_CopyFail:
 
 				/*
-				 * Accept but ignore these messages, per protocol spec; we
-				 * probably got here because a COPY failed, and the frontend
-				 * is still sending data.
+				 * 按照协议规范，接受但忽略这些消息；我们大概是因为某个 COPY
+				 * 失败而到达这里，前端仍在发送数据。
 				 */
 				break;
 
@@ -5022,15 +4865,15 @@ PostgresMain(const char *dbname, const char *username)
 						 errmsg("invalid frontend message type %d",
 								firstchar)));
 		}
-	}							/* end of input-reading loop */
+	}							/* 输入读取循环结束 */
 }
 
 /*
- * Throw an error if we're a WAL sender process.
- *
- * This is used to forbid anything else than simple query protocol messages
- * in a WAL sender process.  'firstchar' specifies what kind of a forbidden
- * message was received, and is used to construct the error message.
+ * 如果我们是 WAL sender 进程，则抛出错误。
+ * 
+ * 这用于禁止在 WAL sender 进程中使用简单查询协议之外的任何其他
+ * 消息。'firstchar' 指定收到的是哪种被禁止的消息，并用于构造
+ * 错误消息。
  */
 static void
 forbidden_in_wal_sender(char firstchar)
@@ -5089,8 +4932,8 @@ ShowUsage(const char *title)
 	}
 
 	/*
-	 * The only stats we don't show here are ixrss, idrss, isrss.  It takes
-	 * some work to interpret them, and most platforms don't fill them in.
+	 * 我们在这里不展示的唯一统计信息是 ixrss、idrss、isrss。要解释
+	 * 它们需要一些工作，而且大多数平台不会填写它们。
 	 */
 	initStringInfo(&str);
 
@@ -5112,25 +4955,25 @@ ShowUsage(const char *title)
 #ifndef WIN32
 
 	/*
-	 * The following rusage fields are not defined by POSIX, but they're
-	 * present on all current Unix-like systems so we use them without any
-	 * special checks.  Some of these could be provided in our Windows
-	 * emulation in src/port/win32getrusage.c with more work.
+	 * 以下 rusage 字段并非由 POSIX 定义，但它们出现在当前所有
+	 * 类 Unix 系统上，因此我们不加任何特殊检查就使用它们。其中
+	 * 某些字段可以通过我们在 src/port/win32getrusage.c 中的 Windows
+	 * 模拟以更多工作来提供。
 	 */
 	appendStringInfo(&str,
 					 "!\t%ld kB max resident size\n",
 #if defined(__darwin__)
-	/* in bytes on macOS */
+	/* 在 macOS 上以字节为单位 */
 					 r.ru_maxrss / 1024
 #else
-	/* in kilobytes on most other platforms */
+	/* 在大多数其他平台上以千字节为单位 */
 					 r.ru_maxrss
 #endif
 		);
 	appendStringInfo(&str,
 					 "!\t%ld/%ld [%ld/%ld] filesystem blocks in/out\n",
 					 r.ru_inblock - Save_r.ru_inblock,
-	/* they only drink coffee at dec */
+	/* 他们只在 dec 喝咖啡 */
 					 r.ru_oublock - Save_r.ru_oublock,
 					 r.ru_inblock, r.ru_oublock);
 	appendStringInfo(&str,
@@ -5152,9 +4995,9 @@ ShowUsage(const char *title)
 					 r.ru_nvcsw - Save_r.ru_nvcsw,
 					 r.ru_nivcsw - Save_r.ru_nivcsw,
 					 r.ru_nvcsw, r.ru_nivcsw);
-#endif							/* !WIN32 */
+#endif							/* 非 WIN32 */
 
-	/* remove trailing newline */
+	/* 移除末尾的换行符 */
 	if (str.data[str.len - 1] == '\n')
 		str.data[--str.len] = '\0';
 
@@ -5165,9 +5008,7 @@ ShowUsage(const char *title)
 	pfree(str.data);
 }
 
-/*
- * on_proc_exit handler to log end of session
- */
+/* 用于记录会话结束的 on_proc_exit 处理函数 */
 static void
 log_disconnections(int code, Datum arg)
 {
@@ -5198,16 +5039,15 @@ log_disconnections(int code, Datum arg)
 }
 
 /*
- * Start statement timeout timer, if enabled.
- *
- * If there's already a timeout running, don't restart the timer.  That
- * enables compromises between accuracy of timeouts and cost of starting a
- * timeout.
+ * 如果启用了语句超时，则启动语句超时定时器。
+ * 
+ * 如果已经有一个超时正在运行，不要重启定时器。那样可以在超时
+ * 的精度与启动超时的开销之间取得折中。
  */
 static void
 enable_statement_timeout(void)
 {
-	/* must be within an xact */
+	/* 必须处于事务内部 */
 	Assert(xact_started);
 
 	if (StatementTimeout > 0
@@ -5223,9 +5063,7 @@ enable_statement_timeout(void)
 	}
 }
 
-/*
- * Disable statement timeout, if active.
- */
+/* 如果处于活动状态，则禁用语句超时。 */
 static void
 disable_statement_timeout(void)
 {

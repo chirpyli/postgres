@@ -1,14 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * selfuncs.c
- *	  Selectivity functions and index cost estimation functions for
- *	  standard operators and index access methods.
+ *	  标准操作符与索引访问方法的选择性函数及索引代价估算函数。
  *
- *	  Selectivity routines are registered in the pg_operator catalog
- *	  in the "oprrest" and "oprjoin" attributes.
+ *	  选择性例程注册于 pg_operator 系统表的 "oprrest" 与 "oprjoin" 属性中。
  *
- *	  Index cost functions are located via the index AM's API struct,
- *	  which is obtained from the handler function registered in pg_am.
+ *	  索引代价函数通过索引访问方法（AM）的 API 结构体定位，
+ *	  该结构体由注册在 pg_am 中的处理函数提供。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -21,47 +19,40 @@
  */
 
 /*----------
- * Operator selectivity estimation functions are called to estimate the
- * selectivity of WHERE clauses whose top-level operator is their operator.
- * We divide the problem into two cases:
- *		Restriction clause estimation: the clause involves vars of just
- *			one relation.
- *		Join clause estimation: the clause involves vars of multiple rels.
- * Join selectivity estimation is far more difficult and usually less accurate
- * than restriction estimation.
+ * 选择性（selectivity）估计函数用于估算 WHERE 子句中顶层操作符为其本身的选择性。
+ * 我们把问题分为两种情况：
+ *		限制子句估计：子句只涉及单个关系的变量。
+ *		连接子句估计：子句涉及多个关系的变量。
+ * 连接选择性估计远比限制子句估计困难，且通常精度更低。
  *
- * When dealing with the inner scan of a nestloop join, we consider the
- * join's joinclauses as restriction clauses for the inner relation, and
- * treat vars of the outer relation as parameters (a/k/a constants of unknown
- * values).  So, restriction estimators need to be able to accept an argument
- * telling which relation is to be treated as the variable.
+ * 处理嵌套循环连接（nestloop join）的内表扫描时，我们把
+ * 连接的连接条件（joinclauses）视为内表关系的限制子句，并将
+ * 外表关系的变量视为参数（即取值未知的常量）。因此，限制子句
+ * 估计器需要能够接受一个参数来指明哪个关系被当作变量。
  *
- * The call convention for a restriction estimator (oprrest function) is
+ * 限制子句估计器（oprrest 函数）的调用约定如下：
  *
  *		Selectivity oprrest (PlannerInfo *root,
  *							 Oid operator,
  *							 List *args,
  *							 int varRelid);
  *
- * root: general information about the query (rtable and RelOptInfo lists
- * are particularly important for the estimator).
- * operator: OID of the specific operator in question.
- * args: argument list from the operator clause.
- * varRelid: if not zero, the relid (rtable index) of the relation to
- * be treated as the variable relation.  May be zero if the args list
- * is known to contain vars of only one relation.
+ * root: 关于查询的总体信息（rtable 与 RelOptInfo 列表
+ * 对估计器尤为重要）。
+ * operator: 所讨论的具体操作符的 OID。
+ * args: 来自操作符子句的参数列表。
+ * varRelid: 若非零，表示被当作变量关系的关系 id（rtable 索引）。
+ * 若已知 args 列表仅包含单个关系的变量，则可为零。
  *
- * This is represented at the SQL level (in pg_proc) as
+ * 在 SQL 层面（pg_proc 中）其表示为：
  *
  *		float8 oprrest (internal, oid, internal, int4);
  *
- * The result is a selectivity, that is, a fraction (0 to 1) of the rows
- * of the relation that are expected to produce a TRUE result for the
- * given operator.
+ * 返回值为一个选择性，即期望对给定操作符产生 TRUE 结果的
+ * 关系行数所占的比例（0 到 1）。
  *
- * The call convention for a join estimator (oprjoin function) is similar
- * except that varRelid is not needed, and instead join information is
- * supplied:
+ * 连接估计器（oprjoin 函数）的调用约定类似，只是不需要 varRelid，
+ * 而是提供连接信息：
  *
  *		Selectivity oprjoin (PlannerInfo *root,
  *							 Oid operator,
@@ -71,24 +62,20 @@
  *
  *		float8 oprjoin (internal, oid, internal, int2, internal);
  *
- * (Before Postgres 8.4, join estimators had only the first four of these
- * parameters.  That signature is still allowed, but deprecated.)  The
- * relationship between jointype and sjinfo is explained in the comments for
- * clause_selectivity() --- the short version is that jointype is usually
- * best ignored in favor of examining sjinfo.
+ * （在 Postgres 8.4 之前，连接估计器只有前面四个参数。
+ * 该签名目前仍被允许，但已废弃。）jointype 与 sjinfo 之间的关系
+ * 在 clause_selectivity() 的注释中有说明——简而言之，通常应忽略
+ * jointype，转而检查 sjinfo。
  *
- * Join selectivity for regular inner and outer joins is defined as the
- * fraction (0 to 1) of the cross product of the relations that is expected
- * to produce a TRUE result for the given operator.  For both semi and anti
- * joins, however, the selectivity is defined as the fraction of the left-hand
- * side relation's rows that are expected to have a match (ie, at least one
- * row with a TRUE result) in the right-hand side.
+ * 对于常规内连接与外连接，连接选择性定义为关系的笛卡尔积中
+ * 期望对给定操作符产生 TRUE 结果的部分所占比例（0 到 1）。
+ * 但对于半连接（semi）和反连接（anti），选择性定义为左表关系的
+ * 行中期望在右表中存在匹配（即至少一行产生 TRUE 结果）的比例。
  *
- * For both oprrest and oprjoin functions, the operator's input collation OID
- * (if any) is passed using the standard fmgr mechanism, so that the estimator
- * function can fetch it with PG_GET_COLLATION().  Note, however, that all
- * statistics in pg_statistic are currently built using the relevant column's
- * collation.
+ * 对于 oprrest 与 oprjoin 函数，操作符的输入排序规则 OID（若有）
+ * 通过标准 fmgr 机制传递，估计器函数可用 PG_GET_COLLATION() 获取。
+ * 但需注意，pg_statistic 中的所有统计信息目前都是使用相关列的
+ * 排序规则构建的。
  *----------
  */
 
@@ -144,7 +131,7 @@
 
 #define DEFAULT_PAGE_CPU_MULTIPLIER 50.0
 
-/* Hooks for plugins to get control when we ask for stats */
+/* 插件在请求统计信息时获取控制权的钩子 */
 get_relation_stats_hook_type get_relation_stats_hook = NULL;
 get_index_stats_hook_type get_index_stats_hook = NULL;
 
@@ -224,12 +211,11 @@ static double btcost_correlation(IndexOptInfo *index,
 
 
 /*
- *		eqsel			- Selectivity of "=" for any data types.
+ *		eqsel			- 任意数据类型的 "=" 选择性。
  *
- * Note: this routine is also used to estimate selectivity for some
- * operators that are not "=" but have comparable selectivity behavior,
- * such as "~=" (geometric approximate-match).  Even for "=", we must
- * keep in mind that the left and right datatypes may differ.
+ * 注意：本例程也用于估算某些并非 "=" 但具有类似选择性行为的
+ * 操作符的选择性，例如 "~="（几何近似匹配）。即使是 "=",
+ * 我们也必须记住左右两侧的数据类型可能不同。
  */
 Datum
 eqsel(PG_FUNCTION_ARGS)
@@ -238,7 +224,7 @@ eqsel(PG_FUNCTION_ARGS)
 }
 
 /*
- * Common code for eqsel() and neqsel()
+ * eqsel() 与 neqsel() 的共用代码
  */
 static double
 eqsel_internal(PG_FUNCTION_ARGS, bool negate)
@@ -254,31 +240,30 @@ eqsel_internal(PG_FUNCTION_ARGS, bool negate)
 	double		selec;
 
 	/*
-	 * When asked about <>, we do the estimation using the corresponding =
-	 * operator, then convert to <> via "1.0 - eq_selectivity - nullfrac".
+	 * 当被问及 <> 时，我们先使用对应的 = 操作符进行估计，
+	 * 然后通过 "1.0 - eq_selectivity - nullfrac" 转换为 <>。
 	 */
 	if (negate)
 	{
 		operator = get_negator(operator);
 		if (!OidIsValid(operator))
 		{
-			/* Use default selectivity (should we raise an error instead?) */
+			/* 使用默认选择性（或者我们是否应该改为报错？） */
 			return 1.0 - DEFAULT_EQ_SEL;
 		}
 	}
 
 	/*
-	 * If expression is not variable = something or something = variable, then
-	 * punt and return a default estimate.
+	 * 如果表达式不是 变量 = 某值 或 某值 = 变量 的形式，
+	 * 则放弃并返回默认估计值。
 	 */
 	if (!get_restriction_variable(root, args, varRelid,
 								  &vardata, &other, &varonleft))
 		return negate ? (1.0 - DEFAULT_EQ_SEL) : DEFAULT_EQ_SEL;
 
 	/*
-	 * We can do a lot better if the something is a constant.  (Note: the
-	 * Const might result from estimation rather than being a simple constant
-	 * in the query.)
+	 * 如果另一侧是一个常量，我们可以做得更好。（注意：该
+	 * Const 可能是由估计过程产生的，而不一定是查询中简单的常量。）
 	 */
 	if (IsA(other, Const))
 		selec = var_eq_const(&vardata, operator, collation,
@@ -317,8 +302,8 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 		return 0.0;
 
 	/*
-	 * Grab the nullfrac for use below.  Note we allow use of nullfrac
-	 * regardless of security check.
+	 * 抓取 nullfrac 以备后续使用。注意我们允许使用 nullfrac，
+	 * 而不受安全性检查的限制。
 	 */
 	if (HeapTupleIsValid(vardata->statsTuple))
 	{
@@ -329,11 +314,10 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 	}
 
 	/*
-	 * If we matched the var to a unique index, DISTINCT or GROUP-BY clause,
-	 * assume there is exactly one match regardless of anything else.  (This
-	 * is slightly bogus, since the index or clause's equality operator might
-	 * be different from ours, but it's much more likely to be right than
-	 * ignoring the information.)
+	 * 如果变量匹配到了唯一索引、DISTINCT 或 GROUP-BY 子句，
+	 * 则假定恰好只有一个匹配，而不考虑其他任何因素。（这
+	 * 稍微有些不可靠，因为该索引或子句所用的等值操作符
+	 * 可能和我们不同，但忽略这一信息反而更可能出错。）
 	 */
 	if (vardata->isunique && vardata->rel && vardata->rel->tuples >= 1.0)
 	{
@@ -348,11 +332,11 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 		int			i;
 
 		/*
-		 * Is the constant "=" to any of the column's most common values?
-		 * (Although the given operator may not really be "=", we will assume
-		 * that seeing whether it returns TRUE is an appropriate test.  If you
-		 * don't like this, maybe you shouldn't be using eqsel for your
-		 * operator...)
+		 * 该常量是否 "=" 于列的任一最常见值（MCV）？
+		 * （尽管给定的操作符可能并非真正的 "="，我们仍假定
+		 * 判断其是否返回 TRUE 是一种合适的测试。如果你
+		 * 不喜欢这样，也许你不该把 eqsel 用于你的
+		 * 操作符……）
 		 */
 		if (get_attstatsslot(&sslot, vardata->statsTuple,
 							 STATISTIC_KIND_MCV, InvalidOid,
@@ -364,10 +348,9 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 			fmgr_info(opfuncoid, &eqproc);
 
 			/*
-			 * Save a few cycles by setting up the fcinfo struct just once.
-			 * Using FunctionCallInvoke directly also avoids failure if the
-			 * eqproc returns NULL, though really equality functions should
-			 * never do that.
+			 * 通过只初始化一次 fcinfo 结构体来节省若干周期。
+			 * 直接使用 FunctionCallInvoke 也能避免 eqproc 返回
+			 * NULL 时失败，尽管等值函数本不应返回 NULL。
 			 */
 			InitFunctionCallInfoData(*fcinfo, &eqproc, 2, collation,
 									 NULL, NULL);
@@ -398,8 +381,8 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 		}
 		else
 		{
-			/* no most-common-value info available */
-			i = 0;				/* keep compiler quiet */
+		/* 没有可用的常见值（MCV）信息 */
+		i = 0;				/* 避免编译器告警 */
 		}
 
 		if (match)
@@ -413,9 +396,8 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 		else
 		{
 			/*
-			 * Comparison is against a constant that is neither NULL nor any
-			 * of the common values.  Its selectivity cannot be more than
-			 * this:
+			 * 被比较的常量既不是 NULL 也不属于任何常见值。
+			 * 其选择性不可能超过这个值：
 			 */
 			double		sumcommon = 0.0;
 			double		otherdistinct;
@@ -426,9 +408,9 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 			CLAMP_PROBABILITY(selec);
 
 			/*
-			 * and in fact it's probably a good deal less. We approximate that
-			 * all the not-common values share this remaining fraction
-			 * equally, so we divide by the number of other distinct values.
+			 * 而实际上它可能要小得多。我们近似认为所有
+			 * 非常见值平分剩余的这部分比例，因此用其他
+			 * 不同值的数量来除。
 			 */
 			otherdistinct = get_variable_numdistinct(vardata, &isdefault) -
 				sslot.nnumbers;
@@ -436,8 +418,8 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 				selec /= otherdistinct;
 
 			/*
-			 * Another cross-check: selectivity shouldn't be estimated as more
-			 * than the least common "most common value".
+			 * 再做一个交叉校验：选择性不应被估计得高于
+			 * 最不常见的那个“最常见值”。
 			 */
 			if (sslot.nnumbers > 0 && selec > sslot.numbers[sslot.nnumbers - 1])
 				selec = sslot.numbers[sslot.nnumbers - 1];
@@ -448,18 +430,18 @@ var_eq_const(VariableStatData *vardata, Oid oproid, Oid collation,
 	else
 	{
 		/*
-		 * No ANALYZE stats available, so make a guess using estimated number
-		 * of distinct values and assuming they are equally common. (The guess
-		 * is unlikely to be very good, but we do know a few special cases.)
+		 * 没有可用的 ANALYZE 统计信息，于是利用估计的不同值
+		 * 数量并假设它们出现频率相同来做一次猜测。（该猜测
+		 * 不太可能很准确，但我们的确知道一些特殊情况。）
 		 */
 		selec = 1.0 / get_variable_numdistinct(vardata, &isdefault);
 	}
 
-	/* now adjust if we wanted <> rather than = */
+	/* 如果需要的是 <> 而非 =，则在此调整 */
 	if (negate)
 		selec = 1.0 - selec - nullfrac;
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(selec);
 
 	return selec;
@@ -480,7 +462,7 @@ var_eq_non_const(VariableStatData *vardata, Oid oproid, Oid collation,
 	bool		isdefault;
 
 	/*
-	 * Grab the nullfrac for use below.
+	 * 抓取 nullfrac 以备后续使用。
 	 */
 	if (HeapTupleIsValid(vardata->statsTuple))
 	{
@@ -491,11 +473,10 @@ var_eq_non_const(VariableStatData *vardata, Oid oproid, Oid collation,
 	}
 
 	/*
-	 * If we matched the var to a unique index, DISTINCT or GROUP-BY clause,
-	 * assume there is exactly one match regardless of anything else.  (This
-	 * is slightly bogus, since the index or clause's equality operator might
-	 * be different from ours, but it's much more likely to be right than
-	 * ignoring the information.)
+	 * 如果变量匹配到了唯一索引、DISTINCT 或 GROUP-BY 子句，
+	 * 则假定恰好只有一个匹配，而不考虑其他任何因素。（这
+	 * 稍微有些不可靠，因为该索引或子句所用的等值操作符
+	 * 可能和我们不同，但忽略这一信息反而更可能出错。）
 	 */
 	if (vardata->isunique && vardata->rel && vardata->rel->tuples >= 1.0)
 	{
@@ -507,14 +488,12 @@ var_eq_non_const(VariableStatData *vardata, Oid oproid, Oid collation,
 		AttStatsSlot sslot;
 
 		/*
-		 * Search is for a value that we do not know a priori, but we will
-		 * assume it is not NULL.  Estimate the selectivity as non-null
-		 * fraction divided by number of distinct values, so that we get a
-		 * result averaged over all possible values whether common or
-		 * uncommon.  (Essentially, we are assuming that the not-yet-known
-		 * comparison value is equally likely to be any of the possible
-		 * values, regardless of their frequency in the table.  Is that a good
-		 * idea?)
+		 * 这里搜索的是一个我们先前并不知道的值，但我们会
+		 * 假定它不为 NULL。把选择性估计为非空比例除以不同值的
+		 * 数量，这样我们得到的结果就是对所有可能值（无论是常见
+		 * 还是少见）的平均。（本质上，我们是假定这个尚未
+		 * 可知的比较值等可能地是任意一个可能的值，而不管它们在
+		 * 表中的实际频率。这算是个好主意吗？）
 		 */
 		selec = 1.0 - nullfrac;
 		ndistinct = get_variable_numdistinct(vardata, &isdefault);
@@ -522,8 +501,8 @@ var_eq_non_const(VariableStatData *vardata, Oid oproid, Oid collation,
 			selec /= ndistinct;
 
 		/*
-		 * Cross-check: selectivity should never be estimated as more than the
-		 * most common value's.
+		 * 交叉校验：选择性永远不应被估计得高于
+		 * 最常见值的比例。
 		 */
 		if (get_attstatsslot(&sslot, vardata->statsTuple,
 							 STATISTIC_KIND_MCV, InvalidOid,
@@ -537,18 +516,18 @@ var_eq_non_const(VariableStatData *vardata, Oid oproid, Oid collation,
 	else
 	{
 		/*
-		 * No ANALYZE stats available, so make a guess using estimated number
-		 * of distinct values and assuming they are equally common. (The guess
-		 * is unlikely to be very good, but we do know a few special cases.)
+		 * 没有可用的 ANALYZE 统计信息，于是利用估计的不同值
+		 * 数量并假设它们出现频率相同来做一次猜测。（该猜测
+		 * 不太可能很准确，但我们的确知道一些特殊情况。）
 		 */
 		selec = 1.0 / get_variable_numdistinct(vardata, &isdefault);
 	}
 
-	/* now adjust if we wanted <> rather than = */
+	/* 如果需要的是 <> 而非 =，则在此调整 */
 	if (negate)
 		selec = 1.0 - selec - nullfrac;
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(selec);
 
 	return selec;
@@ -568,21 +547,20 @@ neqsel(PG_FUNCTION_ARGS)
 }
 
 /*
- *	scalarineqsel		- Selectivity of "<", "<=", ">", ">=" for scalars.
+ *	scalarineqsel		- 标量类型 "<"、"<="、">"、">=" 的选择性。
  *
- * This is the guts of scalarltsel/scalarlesel/scalargtsel/scalargesel.
- * The isgt and iseq flags distinguish which of the four cases apply.
+ * 这是 scalarltsel/scalarlesel/scalargtsel/scalargesel 的核心实现。
+ * isgt 与 iseq 标志用于区分上述四种情况中哪一种适用。
  *
- * The caller has commuted the clause, if necessary, so that we can treat
- * the variable as being on the left.  The caller must also make sure that
- * the other side of the clause is a non-null Const, and dissect that into
- * a value and datatype.  (This definition simplifies some callers that
- * want to estimate against a computed value instead of a Const node.)
+ * 调用方（必要时）已经对子句做了交换律变换，使我们可以把
+ * 变量视为位于左侧。调用方还须确保子句另一侧是一个非 NULL 的
+ * Const，并将其拆解为值与数据类型。（这样定义简化了某些
+ * 希望针对计算值而非 Const 节点进行估计的调用方。）
  *
- * This routine works for any datatype (or pair of datatypes) known to
- * convert_to_scalar().  If it is applied to some other datatype,
- * it will return an approximate estimate based on assuming that the constant
- * value falls in the middle of the bin identified by binary search.
+ * 本例程适用于任何 convert_to_scalar() 所能处理的
+ * 数据类型（或数据类型对）。如果把它用于其它数据类型，
+ * 它将返回一个近似估计，假定常量值落在二分查找所定位的
+ * 区间（bin）的中间位置。
  */
 static double
 scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
@@ -611,8 +589,8 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 			double		density;
 
 			/*
-			 * If the relation's empty, we're going to include all of it.
-			 * (This is mostly to avoid divide-by-zero below.)
+			 * 如果关系为空，我们将包含它的全部。
+			 * （这主要是为了避免下面的除以零。）
 			 */
 			if (vardata->rel->pages == 0)
 				return 1.0;
@@ -629,17 +607,17 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 			 */
 			density = vardata->rel->tuples / (vardata->rel->pages - 0.5);
 
-			/* If target is the last page, use half the density. */
+			/* 如果目标为最后一页，则使用一半的密度。 */
 			if (block >= vardata->rel->pages - 1)
 				density *= 0.5;
 
 			/*
-			 * Using the average tuples per page, calculate how far into the
-			 * page the itemptr is likely to be and adjust block accordingly,
-			 * by adding that fraction of a whole block (but never more than a
-			 * whole block, no matter how high the itemptr's offset is).  Here
-			 * we are ignoring the possibility of dead-tuple line pointers,
-			 * which is fairly bogus, but we lack the info to do better.
+			 * 利用每页的平均元组数，估算 itemptr 大约位于
+			 * 页内的什么位置，并据以调整 block 值，方法是
+			 * 加上一整块中的该比例部分（但无论 itemptr 的偏移
+			 * 量多大，都绝不超过一整块）。这里
+			 * 我们忽略了死元组行指针的可能性，这相当不严谨，
+			 * 但我们缺乏更好的信息。
 			 */
 			if (density > 0.0)
 			{
@@ -649,23 +627,22 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 			}
 
 			/*
-			 * Convert relative block number to selectivity.  Again, the last
-			 * page has only half weight.
+			 * 将相对块号转换为选择性。同样，最后一页
+			 * 只有一半的权重。
 			 */
 			selec = block / (vardata->rel->pages - 0.5);
 
 			/*
-			 * The calculation so far gave us a selectivity for the "<=" case.
-			 * We'll have one fewer tuple for "<" and one additional tuple for
-			 * ">=", the latter of which we'll reverse the selectivity for
-			 * below, so we can simply subtract one tuple for both cases.  The
-			 * cases that need this adjustment can be identified by iseq being
-			 * equal to isgt.
+			 * 到目前为止的计算给出了 "<=" 情况下的选择性。
+			 * 对于 "<" 我们会少算一个元组，对于 ">=" 会多算一个
+			 * 元组（后者我们会在下方做选择性反转），因此两种情况
+			 * 都可以简单地减去一个元组。需要此调整的情况可由
+			 * iseq 等于 isgt 来识别。
 			 */
 			if (iseq == isgt && vardata->rel->tuples >= 1.0)
 				selec -= (1.0 / vardata->rel->tuples);
 
-			/* Finally, reverse the selectivity for the ">", ">=" cases. */
+			/* 最后，对 ">"、">=" 情况做选择性反转。 */
 			if (isgt)
 				selec = 1.0 - selec;
 
@@ -673,7 +650,7 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 			return selec;
 		}
 
-		/* no stats available, so default result */
+		/* 没有可用的统计信息，因此返回默认结果 */
 		return DEFAULT_INEQ_SEL;
 	}
 	stats = (Form_pg_statistic) GETSTRUCT(vardata->statsTuple);
@@ -681,10 +658,10 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 	fmgr_info(get_opcode(operator), &opproc);
 
 	/*
-	 * If we have most-common-values info, add up the fractions of the MCV
-	 * entries that satisfy MCV OP CONST.  These fractions contribute directly
-	 * to the result selectivity.  Also add up the total fraction represented
-	 * by MCV entries.
+	 * 如果拥有最常见值（MCV）信息，则累加满足
+	 * MCV OP CONST 的 MCV 条目的比例。这些比例直接
+	 * 贡献于最终的选择性。同时累加 MCV 条目所代表的
+	 * 总体比例。
 	 */
 	mcv_selec = mcv_selectivity(vardata, &opproc, collation, constval, true,
 								&sumcommon);
@@ -710,31 +687,30 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 	else
 	{
 		/*
-		 * If no histogram but there are values not accounted for by MCV,
-		 * arbitrarily assume half of them will match.
+		 * 如果没有直方图，但存在 MCV 未覆盖的值，
+		 * 则武断地假定其中一半会匹配。
 		 */
 		selec *= 0.5;
 	}
 
 	selec += mcv_selec;
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(selec);
 
 	return selec;
 }
 
 /*
- *	mcv_selectivity			- Examine the MCV list for selectivity estimates
+ *	mcv_selectivity			- 检查 MCV 列表以估算选择性
  *
- * Determine the fraction of the variable's MCV population that satisfies
- * the predicate (VAR OP CONST), or (CONST OP VAR) if !varonleft.  Also
- * compute the fraction of the total column population represented by the MCV
- * list.  This code will work for any boolean-returning predicate operator.
+ * 确定变量的 MCV 群体中满足谓词 (VAR OP CONST)（若 !varonleft
+ * 则为 (CONST OP VAR)）的部分所占比例。同时计算
+ * MCV 列表所代表的总列群体的比例。本代码适用于任何
+ * 返回布尔值的谓词操作符。
  *
- * The function result is the MCV selectivity, and the fraction of the
- * total population is returned into *sumcommonp.  Zeroes are returned
- * if there is no MCV list.
+ * 函数返回值为 MCV 选择性，总群体的比例通过
+ * *sumcommonp 返回。若没有 MCV 列表，则返回零。
  */
 double
 mcv_selectivity(VariableStatData *vardata, FmgrInfo *opproc, Oid collation,
@@ -758,11 +734,11 @@ mcv_selectivity(VariableStatData *vardata, FmgrInfo *opproc, Oid collation,
 		LOCAL_FCINFO(fcinfo, 2);
 
 		/*
-		 * We invoke the opproc "by hand" so that we won't fail on NULL
-		 * results.  Such cases won't arise for normal comparison functions,
-		 * but generic_restriction_selectivity could perhaps be used with
-		 * operators that can return NULL.  A small side benefit is to not
-		 * need to re-initialize the fcinfo struct from scratch each time.
+		 * 我们“手工”调用 opproc，以免在结果为 NULL 时失败。
+		 * 对于普通比较函数这种情况不会出现，但
+		 * generic_restriction_selectivity 可能会被用于
+		 * 能够返回 NULL 的操作符。一个附带的小好处是
+		 * 无需每次都从头重新初始化 fcinfo 结构体。
 		 */
 		InitFunctionCallInfoData(*fcinfo, opproc, 2, collation,
 								 NULL, NULL);
@@ -796,36 +772,36 @@ mcv_selectivity(VariableStatData *vardata, FmgrInfo *opproc, Oid collation,
 }
 
 /*
- *	histogram_selectivity	- Examine the histogram for selectivity estimates
+ *	histogram_selectivity	- 检查直方图以估算选择性
  *
- * Determine the fraction of the variable's histogram entries that satisfy
- * the predicate (VAR OP CONST), or (CONST OP VAR) if !varonleft.
+ * 确定变量的直方图条目中满足谓词 (VAR OP CONST)（若 !varonleft
+ * 则为 (CONST OP VAR)）的部分所占比例。
  *
- * This code will work for any boolean-returning predicate operator, whether
- * or not it has anything to do with the histogram sort operator.  We are
- * essentially using the histogram just as a representative sample.  However,
- * small histograms are unlikely to be all that representative, so the caller
- * should be prepared to fall back on some other estimation approach when the
- * histogram is missing or very small.  It may also be prudent to combine this
- * approach with another one when the histogram is small.
+ * 本代码适用于任何返回布尔值的谓词操作符，无论它
+ * 是否与直方图的排序操作符有关。我们本质上只是把直方图
+ * 当作一个有代表性的样本来使用。然而，较小的直方图
+ * 不太可能具有很强的代表性，因此调用方在直方图缺失或
+ * 非常小时应准备好退回到其它估计方法。在直方图较小
+ * 时，将该方法与另一种方法结合使用也许是审慎之举。
  *
- * If the actual histogram size is not at least min_hist_size, we won't bother
- * to do the calculation at all.  Also, if the n_skip parameter is > 0, we
- * ignore the first and last n_skip histogram elements, on the grounds that
- * they are outliers and hence not very representative.  Typical values for
- * these parameters are 10 and 1.
+ * 如果实际直方图的大小不足 min_hist_size，我们将干脆
+ * 不做此计算。此外，如果 n_skip 参数大于 0，我们会
+ * 忽略直方图的前 n_skip 个和最后 n_skip 个元素，理由
+ * 是它们是离群值，因此代表性不强。这些参数的典型值
+ * 为 10 和 1。
  *
- * The function result is the selectivity, or -1 if there is no histogram
- * or it's smaller than min_hist_size.
+ * 函数返回值为选择性；若没有直方图或它小于 min_hist_size，
+ * 则返回 -1。
  *
- * The output parameter *hist_size receives the actual histogram size,
- * or zero if no histogram.  Callers may use this number to decide how
- * much faith to put in the function result.
+ * 输出参数 *hist_size 接收实际的直方图大小，
+ * 若无直方图则为零。调用方可用该数值来判断对函数
+ * 结果的信任程度。
  *
- * Note that the result disregards both the most-common-values (if any) and
- * null entries.  The caller is expected to combine this result with
- * statistics for those portions of the column population.  It may also be
- * prudent to clamp the result range, ie, disbelieve exact 0 or 1 outputs.
+ * 注意，该结果既忽略了最常见值（MCV，若有）也忽略了
+ * NULL 条目。调用方应将此结果与针对列群体中那些
+ * 部分（MCV、NULL）的统计信息结合起来使用。将结果
+ * 范围钳制一下也许是审慎的，即不要完全相信精确的
+ * 0 或 1 输出。
  */
 double
 histogram_selectivity(VariableStatData *vardata,
@@ -855,12 +831,11 @@ histogram_selectivity(VariableStatData *vardata,
 			int			i;
 
 			/*
-			 * We invoke the opproc "by hand" so that we won't fail on NULL
-			 * results.  Such cases won't arise for normal comparison
-			 * functions, but generic_restriction_selectivity could perhaps be
-			 * used with operators that can return NULL.  A small side benefit
-			 * is to not need to re-initialize the fcinfo struct from scratch
-			 * each time.
+			 * 我们“手工”调用 opproc，以免在结果为 NULL 时失败。
+			 * 对于普通比较函数这种情况不会出现，但
+			 * generic_restriction_selectivity 可能会被用于
+			 * 能够返回 NULL 的操作符。一个附带的小好处是
+			 * 无需每次都从头重新初始化 fcinfo 结构体。
 			 */
 			InitFunctionCallInfoData(*fcinfo, opproc, 2, collation,
 									 NULL, NULL);
@@ -929,16 +904,16 @@ generic_restriction_selectivity(PlannerInfo *root, Oid oproid, Oid collation,
 	bool		varonleft;
 
 	/*
-	 * If expression is not variable OP something or something OP variable,
-	 * then punt and return the default estimate.
+	 * 如果表达式不是 变量 OP 某值 或 某值 OP 变量 的形式，
+	 * 则放弃并返回默认估计值。
 	 */
 	if (!get_restriction_variable(root, args, varRelid,
 								  &vardata, &other, &varonleft))
 		return default_selectivity;
 
 	/*
-	 * If the something is a NULL constant, assume operator is strict and
-	 * return zero, ie, operator will never return TRUE.
+	 * 如果另一侧是一个 NULL 常量，假定操作符是严格的并
+	 * 返回零，即操作符永远不会返回 TRUE。
 	 */
 	if (IsA(other, Const) &&
 		((Const *) other)->constisnull)
@@ -949,7 +924,7 @@ generic_restriction_selectivity(PlannerInfo *root, Oid oproid, Oid collation,
 
 	if (IsA(other, Const))
 	{
-		/* Variable is being compared to a known non-null constant */
+		/* 变量正在与一个已知的非 NULL 常量进行比较 */
 		Datum		constval = ((Const *) other)->constvalue;
 		FmgrInfo	opproc;
 		double		mcvsum;
@@ -960,32 +935,31 @@ generic_restriction_selectivity(PlannerInfo *root, Oid oproid, Oid collation,
 		fmgr_info(get_opcode(oproid), &opproc);
 
 		/*
-		 * Calculate the selectivity for the column's most common values.
+		 * 计算该列最常见值（MCV）的选择性。
 		 */
 		mcvsel = mcv_selectivity(&vardata, &opproc, collation,
 								 constval, varonleft,
 								 &mcvsum);
 
 		/*
-		 * If the histogram is large enough, see what fraction of it matches
-		 * the query, and assume that's representative of the non-MCV
-		 * population.  Otherwise use the default selectivity for the non-MCV
-		 * population.
+		 * 如果直方图足够大，则查看其中有多大比例与查询匹配，
+		 * 并假定该比例对非 MCV 群体具有代表性。否则对非 MCV
+		 * 群体使用默认选择性。
 		 */
 		selec = histogram_selectivity(&vardata, &opproc, collation,
 									  constval, varonleft,
 									  10, 1, &hist_size);
 		if (selec < 0)
 		{
-			/* Nope, fall back on default */
+			/* 没有，退回默认 */
 			selec = default_selectivity;
 		}
 		else if (hist_size < 100)
 		{
 			/*
-			 * For histogram sizes from 10 to 100, we combine the histogram
-			 * and default selectivities, putting increasingly more trust in
-			 * the histogram for larger sizes.
+			 * 对于 10 到 100 之间的直方图大小，我们将直方图
+			 * 与默认选择性结合起来，随着大小增大而越来越
+			 * 信任直方图。
 			 */
 			double		hist_weight = hist_size / 100.0;
 
@@ -993,22 +967,21 @@ generic_restriction_selectivity(PlannerInfo *root, Oid oproid, Oid collation,
 				default_selectivity * (1.0 - hist_weight);
 		}
 
-		/* In any case, don't believe extremely small or large estimates. */
+		/* 无论如何，不要相信极端偏小或偏大的估计值。 */
 		if (selec < 0.0001)
 			selec = 0.0001;
 		else if (selec > 0.9999)
 			selec = 0.9999;
 
-		/* Don't forget to account for nulls. */
+		/* 不要忘记把 NULL 计算在内。 */
 		if (HeapTupleIsValid(vardata.statsTuple))
 			nullfrac = ((Form_pg_statistic) GETSTRUCT(vardata.statsTuple))->stanullfrac;
 		else
 			nullfrac = 0.0;
 
 		/*
-		 * Now merge the results from the MCV and histogram calculations,
-		 * realizing that the histogram covers only the non-null values that
-		 * are not listed in MCV.
+		 * 现在合并来自 MCV 与直方图计算的结果，
+		 * 注意直方图只覆盖未列入 MCV 的非空值。
 		 */
 		selec *= 1.0 - nullfrac - mcvsum;
 		selec += mcvsel;
@@ -1021,29 +994,29 @@ generic_restriction_selectivity(PlannerInfo *root, Oid oproid, Oid collation,
 
 	ReleaseVariableStats(vardata);
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(selec);
 
 	return selec;
 }
 
 /*
- *	ineq_histogram_selectivity	- Examine the histogram for scalarineqsel
+ *	ineq_histogram_selectivity	- 为 scalarineqsel 检查直方图
  *
- * Determine the fraction of the variable's histogram population that
- * satisfies the inequality condition, ie, VAR < (or <=, >, >=) CONST.
- * The isgt and iseq flags distinguish which of the four cases apply.
+ * 确定变量的直方图群体中满足不等式条件（即
+ * VAR <（或 <=、>、>=）CONST）的部分所占比例。
+ * isgt 与 iseq 标志用于区分四种情况中哪一种适用。
  *
- * While opproc could be looked up from the operator OID, common callers
- * also need to call it separately, so we make the caller pass both.
+ * 虽然 opproc 可以从操作符 OID 查到，但常见的调用方
+ * 也需要单独调用它，因此我们让调用方同时传入两者。
  *
- * Returns -1 if there is no histogram (valid results will always be >= 0).
+ * 如果没有直方图则返回 -1（有效结果总是 >= 0）。
  *
- * Note that the result disregards both the most-common-values (if any) and
- * null entries.  The caller is expected to combine this result with
- * statistics for those portions of the column population.
+ * 注意，该结果既忽略了最常见值（MCV，若有）也忽略了
+ * NULL 条目。调用方应将此结果与针对列群体中那些
+ * 部分的统计信息结合起来使用。
  *
- * This is exported so that some other estimation functions can use it.
+ * 本函数被导出，以便其它一些估计函数可以使用它。
  */
 double
 ineq_histogram_selectivity(PlannerInfo *root,
@@ -1058,16 +1031,17 @@ ineq_histogram_selectivity(PlannerInfo *root,
 	hist_selec = -1.0;
 
 	/*
-	 * Someday, ANALYZE might store more than one histogram per rel/att,
-	 * corresponding to more than one possible sort ordering defined for the
-	 * column type.  Right now, we know there is only one, so just grab it and
-	 * see if it matches the query.
+	 * 将来某天，ANALYZE 可能会为每个关系/属性存储多个
+	 * 直方图，对应于为列类型定义的多种可能的排序顺序。
+	 * 目前我们只知道有一个，因此直接抓取它并看是否
+	 * 与查询匹配即可。
 	 *
-	 * Note that we can't use opoid as search argument; the staop appearing in
-	 * pg_statistic will be for the relevant '<' operator, but what we have
-	 * might be some other inequality operator such as '>='.  (Even if opoid
-	 * is a '<' operator, it could be cross-type.)  Hence we must use
-	 * comparison_ops_are_compatible() to see if the operators match.
+	 * 注意我们不能用 opoid 作为查找参数；pg_statistic 中
+	 * 出现的 staop 是相关的 '<' 操作符，但我们手里可能
+	 * 是其它不等式操作符，例如 '>='。（即使 opoid 是
+	 * '<' 操作符，它也可能是跨类型的。）因此我们必须
+	 * 使用 comparison_ops_are_compatible() 来判断操作符
+	 * 是否匹配。
 	 */
 	if (HeapTupleIsValid(vardata->statsTuple) &&
 		statistic_proc_security_check(vardata, opproc->fn_oid) &&
@@ -1080,22 +1054,20 @@ ineq_histogram_selectivity(PlannerInfo *root,
 			comparison_ops_are_compatible(sslot.staop, opoid))
 		{
 			/*
-			 * Use binary search to find the desired location, namely the
-			 * right end of the histogram bin containing the comparison value,
-			 * which is the leftmost entry for which the comparison operator
-			 * succeeds (if isgt) or fails (if !isgt).
+			 * 使用二分查找找到目标位置，即包含比较值的直方图
+			 * 区间（bin）的右端——也就是比较操作符成功（isgt 时）
+			 * 或失败（!isgt 时）的最左条目。
 			 *
-			 * In this loop, we pay no attention to whether the operator iseq
-			 * or not; that detail will be mopped up below.  (We cannot tell,
-			 * anyway, whether the operator thinks the values are equal.)
+			 * 在此循环中，我们不关心操作符是否为 iseq；这一
+			 * 细节将在下面处理。（反正我们也无法判断操作符
+			 * 是否认为两个值相等。）
 			 *
-			 * If the binary search accesses the first or last histogram
-			 * entry, we try to replace that endpoint with the true column min
-			 * or max as found by get_actual_variable_range().  This
-			 * ameliorates misestimates when the min or max is moving as a
-			 * result of changes since the last ANALYZE.  Note that this could
-			 * result in effectively including MCVs into the histogram that
-			 * weren't there before, but we don't try to correct for that.
+			 * 如果二分查找访问到直方图的首个或最后一个条目，
+			 * 我们尝试用 get_actual_variable_range() 找到的真实列
+			 * 最小值或最大值来替换该端点。这可以缓解由于自
+			 * 上次 ANALYZE 以来最小/最大值发生变化而导致的
+			 * 估计偏差。注意这可能实际上把之前不在直方图中的
+			 * MCV 纳入直方图，但我们并不尝试对此进行纠正。
 			 */
 			double		histfrac;
 			int			lobound = 0;	/* first possible slot to search */
@@ -1103,10 +1075,9 @@ ineq_histogram_selectivity(PlannerInfo *root,
 			bool		have_end = false;
 
 			/*
-			 * If there are only two histogram entries, we'll want up-to-date
-			 * values for both.  (If there are more than two, we need at most
-			 * one of them to be updated, so we deal with that within the
-			 * loop.)
+			 * 如果只有两个直方图条目，我们会希望两者都是
+			 * 最新值。（如果多于两个，我们最多只需更新其中
+			 * 一个，因此这点在循环内处理。）
 			 */
 			if (sslot.nvalues == 2)
 				have_end = get_actual_variable_range(root,
@@ -1122,9 +1093,9 @@ ineq_histogram_selectivity(PlannerInfo *root,
 				bool		ltcmp;
 
 				/*
-				 * If we find ourselves about to compare to the first or last
-				 * histogram entry, first try to replace it with the actual
-				 * current min or max (unless we already did so above).
+				 * 如果我们即将与直方图的首个或最后一个条目
+				 * 进行比较，先尝试用真实的当前最小或最大值
+				 * 替换它（除非上面已经这样做过）。
 				 */
 				if (probe == 0 && sslot.nvalues > 2)
 					have_end = get_actual_variable_range(root,
@@ -1156,25 +1127,24 @@ ineq_histogram_selectivity(PlannerInfo *root,
 			if (lobound <= 0)
 			{
 				/*
-				 * Constant is below lower histogram boundary.  More
-				 * precisely, we have found that no entry in the histogram
-				 * satisfies the inequality clause (if !isgt) or they all do
-				 * (if isgt).  We estimate that that's true of the entire
-				 * table, so set histfrac to 0.0 (which we'll flip to 1.0
-				 * below, if isgt).
+				 * 常量低于直方图下边界。更准确地说，我们发现
+				 * 直方图中没有任何条目满足该不等式条件
+				 * （!isgt 时），或者它们全部满足（isgt 时）。
+				 * 我们估计整张表也是如此，因此把 histfrac 设为
+				 * 0.0（若是 isgt，下面会翻转为 1.0）。
 				 */
 				histfrac = 0.0;
 			}
 			else if (lobound >= sslot.nvalues)
 			{
 				/*
-				 * Inverse case: constant is above upper histogram boundary.
+				 * 相反的情况：常量高于直方图上边界。
 				 */
 				histfrac = 1.0;
 			}
 			else
 			{
-				/* We have values[i-1] <= constant <= values[i]. */
+				/* 我们有 values[i-1] <= constant <= values[i]。 */
 				int			i = lobound;
 				double		eq_selec = 0;
 				double		val,
@@ -1183,20 +1153,20 @@ ineq_histogram_selectivity(PlannerInfo *root,
 				double		binfrac;
 
 				/*
-				 * In the cases where we'll need it below, obtain an estimate
-				 * of the selectivity of "x = constval".  We use a calculation
-				 * similar to what var_eq_const() does for a non-MCV constant,
-				 * ie, estimate that all distinct non-MCV values occur equally
-				 * often.  But multiplication by "1.0 - sumcommon - nullfrac"
-				 * will be done by our caller, so we shouldn't do that here.
-				 * Therefore we can't try to clamp the estimate by reference
-				 * to the least common MCV; the result would be too small.
+				 * 在下面需要用到的情况下，先估算 "x = constval"
+				 * 的选择性。我们使用的计算方式类似于
+				 * var_eq_const() 对非常见值（非 MCV）常量的处理，
+				 * 即估计所有不同的非 MCV 值出现频率相同。
+				 * 但乘以 "1.0 - sumcommon - nullfrac" 这一步会由
+				 * 调用方完成，因此我们这里不做。也正因如此，
+				 * 我们无法参照最不常见的 MCV 来钳制该估计，
+				 * 否则结果会偏小。
 				 *
-				 * Note: since this is effectively assuming that constval
-				 * isn't an MCV, it's logically dubious if constval in fact is
-				 * one.  But we have to apply *some* correction for equality,
-				 * and anyway we cannot tell if constval is an MCV, since we
-				 * don't have a suitable equality operator at hand.
+				 * 注意：由于这实际上是假定 constval 不是 MCV，
+				 * 若 constval 事实上就是 MCV，则逻辑上值得怀疑。
+				 * 但我们总得对等值情况做某些修正，况且我们也
+				 * 无从判断 constval 是否为 MCV，因为我们手边
+				 * 没有合适的等值操作符。
 				 */
 				if (i == 1 || isgt == iseq)
 				{
@@ -1208,7 +1178,7 @@ ineq_histogram_selectivity(PlannerInfo *root,
 					otherdistinct = get_variable_numdistinct(vardata,
 															 &isdefault);
 
-					/* Subtract off the number of known MCVs */
+					/* 减去已知 MCV 的数量 */
 					if (get_attstatsslot(&mcvslot, vardata->statsTuple,
 										 STATISTIC_KIND_MCV, InvalidOid,
 										 ATTSTATSSLOT_NUMBERS))
@@ -1217,15 +1187,14 @@ ineq_histogram_selectivity(PlannerInfo *root,
 						free_attstatsslot(&mcvslot);
 					}
 
-					/* If result doesn't seem sane, leave eq_selec at 0 */
+					/* 如果结果看起来不合理，则保持 eq_selec 为 0 */
 					if (otherdistinct > 1)
 						eq_selec = 1.0 / otherdistinct;
 				}
 
 				/*
-				 * Convert the constant and the two nearest bin boundary
-				 * values to a uniform comparison scale, and do a linear
-				 * interpolation within this bin.
+				 * 将常量以及两个最接近的区间边界值转换到
+				 * 统一的比较标尺上，并在该区间内做线性插值。
 				 */
 				if (convert_to_scalar(constval, consttype, collation,
 									  &val,
@@ -1235,7 +1204,7 @@ ineq_histogram_selectivity(PlannerInfo *root,
 				{
 					if (high <= low)
 					{
-						/* cope if bin boundaries appear identical */
+						/* 如果区间边界看似相同，则如此处理 */
 						binfrac = 0.5;
 					}
 					else if (val <= low)
@@ -1247,10 +1216,9 @@ ineq_histogram_selectivity(PlannerInfo *root,
 						binfrac = (val - low) / (high - low);
 
 						/*
-						 * Watch out for the possibility that we got a NaN or
-						 * Infinity from the division.  This can happen
-						 * despite the previous checks, if for example "low"
-						 * is -Infinity.
+						 * 注意除法可能产生 NaN 或 Infinity 的
+						 * 可能性。即便有了前面的检查，这种情况仍可能
+						 * 发生，例如当 "low" 为 -Infinity 时。
 						 */
 						if (isnan(binfrac) ||
 							binfrac < 0.0 || binfrac > 1.0)
@@ -1260,63 +1228,56 @@ ineq_histogram_selectivity(PlannerInfo *root,
 				else
 				{
 					/*
-					 * Ideally we'd produce an error here, on the grounds that
-					 * the given operator shouldn't have scalarXXsel
-					 * registered as its selectivity func unless we can deal
-					 * with its operand types.  But currently, all manner of
-					 * stuff is invoking scalarXXsel, so give a default
-					 * estimate until that can be fixed.
+					 * 理想情况下我们在此应报错，理由是对于给定的
+					 * 操作符，除非我们能处理其操作数类型，否则不应
+					 * 把 scalarXXsel 注册为其选择性函数。但当前
+					 * 各种各样的代码都在调用 scalarXXsel，因此在
+					 * 这个问题被修复之前，先给出一个默认估计。
 					 */
 					binfrac = 0.5;
 				}
 
 				/*
-				 * Now, compute the overall selectivity across the values
-				 * represented by the histogram.  We have i-1 full bins and
-				 * binfrac partial bin below the constant.
+				 * 现在计算直方图所代表的值整体的选择性。
+				 * 在常量之下有 i-1 个完整的区间，以及
+				 * binfrac 个部分区间。
 				 */
 				histfrac = (double) (i - 1) + binfrac;
 				histfrac /= (double) (sslot.nvalues - 1);
 
 				/*
-				 * At this point, histfrac is an estimate of the fraction of
-				 * the population represented by the histogram that satisfies
-				 * "x <= constval".  Somewhat remarkably, this statement is
-				 * true regardless of which operator we were doing the probes
-				 * with, so long as convert_to_scalar() delivers reasonable
-				 * results.  If the probe constant is equal to some histogram
-				 * entry, we would have considered the bin to the left of that
-				 * entry if probing with "<" or ">=", or the bin to the right
-				 * if probing with "<=" or ">"; but binfrac would have come
-				 * out as 1.0 in the first case and 0.0 in the second, leading
-				 * to the same histfrac in either case.  For probe constants
-				 * between histogram entries, we find the same bin and get the
-				 * same estimate with any operator.
+				 * 此时，histfrac 是直方图所代表的群体中满足
+				 * "x <= constval" 的部分比例的估计值。颇为奇妙的是，
+				 * 只要 convert_to_scalar() 给出合理的结果，无论我们
+				 * 用哪个操作符进行探测，这句话都成立。如果探测
+				 * 常量等于某个直方图条目，那么用 "<" 或 ">=" 探测时
+				 * 我们会考虑该条目左侧的区间，用 "<=" 或 ">" 探测时
+				 * 则会考虑右侧的区间；但 binfrac 在第一种情况下会
+				 * 得出 1.0，在第二种情况下得出 0.0，两种情况下得到的
+				 * histfrac 相同。对于位于直方图条目之间的探测常量，
+				 * 用任何操作符都会找到相同的区间并得到相同的估计。
 				 *
-				 * The fact that the estimate corresponds to "x <= constval"
-				 * and not "x < constval" is because of the way that ANALYZE
-				 * constructs the histogram: each entry is, effectively, the
-				 * rightmost value in its sample bucket.  So selectivity
-				 * values that are exact multiples of 1/(histogram_size-1)
-				 * should be understood as estimates including a histogram
-				 * entry plus everything to its left.
+				 * 该估计对应的是 "x <= constval" 而非 "x < constval"，
+				 * 原因在于 ANALYZE 构建直方图的方式：每个条目实际上
+				 * 是其采样桶中最右边的值。因此，恰好为
+				 * 1/(histogram_size-1) 整数倍的那些选择性值，应理解为
+				 * 包含某个直方图条目及其左侧所有内容的估计。
 				 *
-				 * However, that breaks down for the first histogram entry,
-				 * which necessarily is the leftmost value in its sample
-				 * bucket.  That means the first histogram bin is slightly
-				 * narrower than the rest, by an amount equal to eq_selec.
-				 * Another way to say that is that we want "x <= leftmost" to
-				 * be estimated as eq_selec not zero.  So, if we're dealing
-				 * with the first bin (i==1), rescale to make that true while
-				 * adjusting the rest of that bin linearly.
+				 * 然而，这一点对第一个直方图条目并不成立，因为
+				 * 它必然是其采样桶中最左边的值。这意味着第一个
+				 * 直方图区间比其余的略窄，窄的量恰好等于 eq_selec。
+				 * 换句话说，我们希望把 "x <= 最左值" 估计为 eq_selec
+				 * 而非零。因此，如果处理的是第一个区间（i==1），
+				 * 则在对其余部分做线性调整的同时重新缩放，使这一点
+				 * 成立。
 				 */
 				if (i == 1)
 					histfrac += eq_selec * (1.0 - binfrac);
 
 				/*
-				 * "x <= constval" is good if we want an estimate for "<=" or
-				 * ">", but if we are estimating for "<" or ">=", we now need
-				 * to decrease the estimate by eq_selec.
+				 * 如果我们要估计的是 "<=" 或 ">"，那么 "x <= constval"
+				 * 正合适；但如果估计的是 "<" 或 ">=",我们此刻
+				 * 需要把估计值减去 eq_selec。
 				 */
 				if (isgt == iseq)
 					histfrac -= eq_selec;
@@ -1351,13 +1312,13 @@ ineq_histogram_selectivity(PlannerInfo *root,
 		}
 		else if (sslot.nvalues > 1)
 		{
-			/*
-			 * If we get here, we have a histogram but it's not sorted the way
-			 * we want.  Do a brute-force search to see how many of the
-			 * entries satisfy the comparison condition, and take that
-			 * fraction as our estimate.  (This is identical to the inner loop
-			 * of histogram_selectivity; maybe share code?)
-			 */
+		/*
+		 * 如果到了这里，说明我们有直方图，但它的排序方式
+		 * 并非我们所期望。做一次暴力搜索，看看有多少条目
+		 * 满足比较条件，并把该比例当作我们的估计。
+		 * （这与 histogram_selectivity 的内层循环相同；也许
+		 * 可以共享代码？）
+		 */
 			LOCAL_FCINFO(fcinfo, 2);
 			int			nmatch = 0;
 
@@ -1378,12 +1339,12 @@ ineq_histogram_selectivity(PlannerInfo *root,
 			}
 			hist_selec = ((double) nmatch) / ((double) sslot.nvalues);
 
-			/*
-			 * As above, clamp to a hundredth of the histogram resolution.
-			 * This case is surely even less trustworthy than the normal one,
-			 * so we shouldn't believe exact 0 or 1 selectivity.  (Maybe the
-			 * clamp should be more restrictive in this case?)
-			 */
+		/*
+		 * 同上，钳制到直方图分辨率的百分之一。这种情形
+		 * 必定比正常情形更不可信，因此我们不应相信
+		 * 精确为 0 或 1 的选择性。（也许此情形下的
+		 * 钳制应更严格？）
+		 */
 			{
 				double		cutoff = 0.01 / (double) (sslot.nvalues - 1);
 
@@ -1420,15 +1381,15 @@ scalarineqsel_wrapper(PG_FUNCTION_ARGS, bool isgt, bool iseq)
 	double		selec;
 
 	/*
-	 * If expression is not variable op something or something op variable,
-	 * then punt and return a default estimate.
+	 * 如果表达式不是 变量 op 某值 或 某值 op 变量 的形式，
+	 * 则放弃并返回默认估计值。
 	 */
 	if (!get_restriction_variable(root, args, varRelid,
 								  &vardata, &other, &varonleft))
 		PG_RETURN_FLOAT8(DEFAULT_INEQ_SEL);
 
 	/*
-	 * Can't do anything useful if the something is not a constant, either.
+	 * 如果另一侧也不是常量，同样无法做任何有意义的估计。
 	 */
 	if (!IsA(other, Const))
 	{
@@ -1456,7 +1417,7 @@ scalarineqsel_wrapper(PG_FUNCTION_ARGS, bool isgt, bool iseq)
 		operator = get_commutator(operator);
 		if (!operator)
 		{
-			/* Use default selectivity (should we raise an error instead?) */
+			/* 使用默认选择性（或者我们是否应该改为报错？） */
 			ReleaseVariableStats(vardata);
 			PG_RETURN_FLOAT8(DEFAULT_INEQ_SEL);
 		}
@@ -1482,7 +1443,7 @@ scalarltsel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		scalarlesel		- Selectivity of "<=" for scalars.
+ *		scalarlesel		- 标量类型 "<=" 的选择性。
  */
 Datum
 scalarlesel(PG_FUNCTION_ARGS)
@@ -1491,7 +1452,7 @@ scalarlesel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		scalargtsel		- Selectivity of ">" for scalars.
+ *		scalargtsel		- 标量类型 ">" 的选择性。
  */
 Datum
 scalargtsel(PG_FUNCTION_ARGS)
@@ -1500,7 +1461,7 @@ scalargtsel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		scalargesel		- Selectivity of ">=" for scalars.
+ *		scalargesel		- 标量类型 ">=" 的选择性。
  */
 Datum
 scalargesel(PG_FUNCTION_ARGS)
@@ -1509,12 +1470,12 @@ scalargesel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		boolvarsel		- Selectivity of Boolean variable.
+ *		boolvarsel		- 布尔变量的选择性。
  *
- * This can actually be called on any boolean-valued expression.  If it
- * involves only Vars of the specified relation, and if there are statistics
- * about the Var or expression (the latter is possible if it's indexed) then
- * we'll produce a real estimate; otherwise it's just a default.
+ * 实际上它可以作用于任何布尔值表达式。如果它只涉及
+ * 指定关系的 Var，并且存在关于该 Var 或表达式的统计
+ * 信息（后者在表达式被索引时有可能存在），那么我们会
+ * 给出一个真实的估计；否则就只是默认估计。
  */
 Selectivity
 boolvarsel(PlannerInfo *root, Node *arg, int varRelid)
@@ -1526,8 +1487,8 @@ boolvarsel(PlannerInfo *root, Node *arg, int varRelid)
 	if (HeapTupleIsValid(vardata.statsTuple))
 	{
 		/*
-		 * A boolean variable V is equivalent to the clause V = 't', so we
-		 * compute the selectivity as if that is what we have.
+		 * 布尔变量 V 等价于子句 V = 't'，因此我们按
+		 * 拥有该子句来计算选择性。
 		 */
 		selec = var_eq_const(&vardata, BooleanEqualOperator, InvalidOid,
 							 BoolGetDatum(true), false, true, false);
@@ -1542,7 +1503,7 @@ boolvarsel(PlannerInfo *root, Node *arg, int varRelid)
 }
 
 /*
- *		booltestsel		- Selectivity of BooleanTest Node.
+ *		booltestsel		- BooleanTest 节点的选择性。
  */
 Selectivity
 booltestsel(PlannerInfo *root, BoolTestType booltesttype, Node *arg,
@@ -1579,15 +1540,15 @@ booltestsel(PlannerInfo *root, BoolTestType booltesttype, Node *arg,
 				freq_true = 1.0 - sslot.numbers[0] - freq_null;
 
 			/*
-			 * Next derive frequency for false. Then use these as appropriate
-			 * to derive frequency for each case.
+			 * 接着推导 false 的频率。然后视情况利用这些
+			 * 频率推导出每种情况的频率。
 			 */
 			freq_false = 1.0 - freq_true - freq_null;
 
 			switch (booltesttype)
 			{
 				case IS_UNKNOWN:
-					/* select only NULL values */
+					/* 只选择 NULL 值 */
 					selec = freq_null;
 					break;
 				case IS_NOT_UNKNOWN:
@@ -1595,25 +1556,25 @@ booltestsel(PlannerInfo *root, BoolTestType booltesttype, Node *arg,
 					selec = 1.0 - freq_null;
 					break;
 				case IS_TRUE:
-					/* select only TRUE values */
+					/* 只选择 TRUE 值 */
 					selec = freq_true;
 					break;
 				case IS_NOT_TRUE:
-					/* select non-TRUE values */
+					/* 选择非 TRUE 值 */
 					selec = 1.0 - freq_true;
 					break;
 				case IS_FALSE:
-					/* select only FALSE values */
+					/* 只选择 FALSE 值 */
 					selec = freq_false;
 					break;
 				case IS_NOT_FALSE:
-					/* select non-FALSE values */
+					/* 选择非 FALSE 值 */
 					selec = 1.0 - freq_false;
 					break;
 				default:
 					elog(ERROR, "unrecognized booltesttype: %d",
 						 (int) booltesttype);
-					selec = 0.0;	/* Keep compiler quiet */
+					selec = 0.0;	/* 避免编译器告警 */
 					break;
 			}
 
@@ -1629,7 +1590,7 @@ booltestsel(PlannerInfo *root, BoolTestType booltesttype, Node *arg,
 			switch (booltesttype)
 			{
 				case IS_UNKNOWN:
-					/* select only NULL values */
+					/* 只选择 NULL 值 */
 					selec = freq_null;
 					break;
 				case IS_NOT_UNKNOWN:
@@ -1638,19 +1599,19 @@ booltestsel(PlannerInfo *root, BoolTestType booltesttype, Node *arg,
 					break;
 				case IS_TRUE:
 				case IS_FALSE:
-					/* Assume we select half of the non-NULL values */
+					/* 假定选择了非 NULL 值的一半 */
 					selec = (1.0 - freq_null) / 2.0;
 					break;
 				case IS_NOT_TRUE:
 				case IS_NOT_FALSE:
 					/* Assume we select NULLs plus half of the non-NULLs */
-					/* equiv. to freq_null + (1.0 - freq_null) / 2.0 */
+					/* 等价于 freq_null + (1.0 - freq_null) / 2.0 */
 					selec = (freq_null + 1.0) / 2.0;
 					break;
 				default:
 					elog(ERROR, "unrecognized booltesttype: %d",
 						 (int) booltesttype);
-					selec = 0.0;	/* Keep compiler quiet */
+					selec = 0.0;	/* 避免编译器告警 */
 					break;
 			}
 		}
@@ -1686,14 +1647,14 @@ booltestsel(PlannerInfo *root, BoolTestType booltesttype, Node *arg,
 			default:
 				elog(ERROR, "unrecognized booltesttype: %d",
 					 (int) booltesttype);
-				selec = 0.0;	/* Keep compiler quiet */
+				selec = 0.0;	/* 避免编译器告警 */
 				break;
 		}
 	}
 
 	ReleaseVariableStats(vardata);
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(selec);
 
 	return (Selectivity) selec;
@@ -1731,30 +1692,30 @@ nulltestsel(PlannerInfo *root, NullTestType nulltesttype, Node *arg,
 			case IS_NOT_NULL:
 
 				/*
-				 * Select not unknown (not null) values. Calculate from
-				 * freq_null.
+				 * 选择非未知（非 NULL）的值。根据 freq_null
+				 * 计算。
 				 */
 				selec = 1.0 - freq_null;
 				break;
 			default:
 				elog(ERROR, "unrecognized nulltesttype: %d",
 					 (int) nulltesttype);
-				return (Selectivity) 0; /* keep compiler quiet */
+				return (Selectivity) 0; /* 避免编译器告警 */
 		}
 	}
 	else if (vardata.var && IsA(vardata.var, Var) &&
 			 ((Var *) vardata.var)->varattno < 0)
 	{
 		/*
-		 * There are no stats for system columns, but we know they are never
-		 * NULL.
+		 * 系统列没有统计信息，但我们知道它们
+		 * 永不为 NULL。
 		 */
 		selec = (nulltesttype == IS_NULL) ? 0.0 : 1.0;
 	}
 	else
 	{
 		/*
-		 * No ANALYZE stats available, so make a guess
+		 * 没有可用的 ANALYZE 统计信息，于是做一个猜测
 		 */
 		switch (nulltesttype)
 		{
@@ -1767,25 +1728,25 @@ nulltestsel(PlannerInfo *root, NullTestType nulltesttype, Node *arg,
 			default:
 				elog(ERROR, "unrecognized nulltesttype: %d",
 					 (int) nulltesttype);
-				return (Selectivity) 0; /* keep compiler quiet */
+				return (Selectivity) 0; /* 避免编译器告警 */
 		}
 	}
 
 	ReleaseVariableStats(vardata);
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(selec);
 
 	return (Selectivity) selec;
 }
 
 /*
- * strip_array_coercion - strip binary-compatible relabeling from an array expr
+ * strip_array_coercion - 从数组表达式中剥离二进制兼容的重标记
  *
- * For array values, the parser normally generates ArrayCoerceExpr conversions,
- * but it seems possible that RelabelType might show up.  Also, the planner
- * is not currently tense about collapsing stacked ArrayCoerceExpr nodes,
- * so we need to be ready to deal with more than one level.
+ * 对于数组值，解析器通常会生成 ArrayCoerceExpr 转换，
+ * 但 RelabelType 似乎也有可能出现。此外，规划器
+ * 目前并不急于折叠堆叠的 ArrayCoerceExpr 节点，
+ * 因此我们需要准备好处理多于一层的情况。
  */
 static Node *
 strip_array_coercion(Node *node)
@@ -1808,7 +1769,7 @@ strip_array_coercion(Node *node)
 		}
 		else if (node && IsA(node, RelabelType))
 		{
-			/* We don't really expect this case, but may as well cope */
+			/* 我们其实不期望出现这种情况，但也不妨处理 */
 			node = (Node *) ((RelabelType *) node)->arg;
 		}
 		else
@@ -1847,23 +1808,23 @@ scalararraysel(PlannerInfo *root,
 	leftop = (Node *) linitial(clause->args);
 	rightop = (Node *) lsecond(clause->args);
 
-	/* aggressively reduce both sides to constants */
+	/* 积极地将两侧都化简为常量 */
 	leftop = estimate_expression_value(root, leftop);
 	rightop = estimate_expression_value(root, rightop);
 
-	/* get nominal (after relabeling) element type of rightop */
+	/* 获取 rightop 的标称（经过重标记后的）元素类型 */
 	nominal_element_type = get_base_element_type(exprType(rightop));
 	if (!OidIsValid(nominal_element_type))
-		return (Selectivity) 0.5;	/* probably shouldn't happen */
-	/* get nominal collation, too, for generating constants */
+		return (Selectivity) 0.5;	/* 大概不会发生 */
+	/* 同时获取标称排序规则，用于生成常量 */
 	nominal_element_collation = exprCollation(rightop);
 
 	/* look through any binary-compatible relabeling of rightop */
 	rightop = strip_array_coercion(rightop);
 
 	/*
-	 * Detect whether the operator is the default equality or inequality
-	 * operator of the array element type.
+	 * 判断该操作符是否为数组元素类型的默认等值或
+	 * 不等值操作符。
 	 */
 	typentry = lookup_type_cache(nominal_element_type, TYPECACHE_EQ_OPR);
 	if (OidIsValid(typentry->eq_opr))
@@ -1875,10 +1836,11 @@ scalararraysel(PlannerInfo *root,
 	}
 
 	/*
-	 * If it is equality or inequality, we might be able to estimate this as a
-	 * form of array containment; for instance "const = ANY(column)" can be
-	 * treated as "ARRAY[const] <@ column".  scalararraysel_containment tries
-	 * that, and returns the selectivity estimate if successful, or -1 if not.
+	 * 如果是等值或不等值，我们或许能把它估计为
+	 * 一种数组包含（containment）的形式；例如
+	 * "const = ANY(column)" 可以当作 "ARRAY[const] <@ column"
+	 * 来处理。scalararraysel_containment 会尝试这种做法，
+	 * 成功时返回选择性估计，否则返回 -1。
 	 */
 	if ((isEquality || isInequality) && !is_join_clause)
 	{
@@ -1890,8 +1852,7 @@ scalararraysel(PlannerInfo *root,
 	}
 
 	/*
-	 * Look up the underlying operator's selectivity estimator. Punt if it
-	 * hasn't got one.
+	 * 查找底层操作符的选择性估计器。如果没有则放弃。
 	 */
 	if (is_join_clause)
 		oprsel = get_oprjoin(operator);
@@ -1902,12 +1863,12 @@ scalararraysel(PlannerInfo *root,
 	fmgr_info(oprsel, &oprselproc);
 
 	/*
-	 * In the array-containment check above, we must only believe that an
-	 * operator is equality or inequality if it is the default btree equality
-	 * operator (or its negator) for the element type, since those are the
-	 * operators that array containment will use.  But in what follows, we can
-	 * be a little laxer, and also believe that any operators using eqsel() or
-	 * neqsel() as selectivity estimator act like equality or inequality.
+	 * 在上面的数组包含检查中，我们必须只在操作符是元素类型的
+	 * 默认 btree 等值操作符（或其求反符）时才相信它是等值或
+	 * 不等值，因为数组包含会使用的正是这些操作符。但在接下来的
+	 * 处理中，我们可以放宽一点，也相信任何使用 eqsel() 或
+	 * neqsel() 作为选择性估计器的操作符表现得像等值或
+	 * 不等值。
 	 */
 	if (oprsel == F_EQSEL || oprsel == F_EQJOINSEL)
 		isEquality = true;
@@ -1915,16 +1876,16 @@ scalararraysel(PlannerInfo *root,
 		isInequality = true;
 
 	/*
-	 * We consider three cases:
+	 * 我们考虑三种情况：
 	 *
-	 * 1. rightop is an Array constant: deconstruct the array, apply the
-	 * operator's selectivity function for each array element, and merge the
-	 * results in the same way that clausesel.c does for AND/OR combinations.
+	 * 1. rightop 是一个数组常量：拆解该数组，对数组的每个元素
+	 * 应用操作符的选择性函数，并以 clausesel.c 处理
+	 * AND/OR 组合相同的方式合并结果。
 	 *
-	 * 2. rightop is an ARRAY[] construct: apply the operator's selectivity
-	 * function for each element of the ARRAY[] construct, and merge.
+	 * 2. rightop 是一个 ARRAY[] 构造：对 ARRAY[] 构造的
+	 * 每个元素应用操作符的选择性函数，并合并。
 	 *
-	 * 3. otherwise, make a guess ...
+	 * 3. 否则，做一个猜测……
 	 */
 	if (rightop && IsA(rightop, Const))
 	{
@@ -1939,7 +1900,7 @@ scalararraysel(PlannerInfo *root,
 		bool	   *elem_nulls;
 		int			i;
 
-		if (arrayisnull)		/* qual can't succeed if null array */
+		if (arrayisnull)		/* 若数组为 NULL，该条件不可能成立 */
 			return (Selectivity) 0.0;
 		arrayval = DatumGetArrayTypeP(arraydatum);
 		get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
@@ -1950,18 +1911,17 @@ scalararraysel(PlannerInfo *root,
 						  &elem_values, &elem_nulls, &num_elems);
 
 		/*
-		 * For generic operators, we assume the probability of success is
-		 * independent for each array element.  But for "= ANY" or "<> ALL",
-		 * if the array elements are distinct (which'd typically be the case)
-		 * then the probabilities are disjoint, and we should just sum them.
+		 * 对于通用操作符，我们假设每个数组元素的成功概率
+		 * 是相互独立的。但对于 "= ANY" 或 "<> ALL"，如果
+		 * 数组元素是互不相同的（通常正是如此），那么这些
+		 * 概率是不相交的，我们只需将它们相加即可。
 		 *
-		 * If we were being really tense we would try to confirm that the
-		 * elements are all distinct, but that would be expensive and it
-		 * doesn't seem to be worth the cycles; it would amount to penalizing
-		 * well-written queries in favor of poorly-written ones.  However, we
-		 * do protect ourselves a little bit by checking whether the
-		 * disjointness assumption leads to an impossible (out of range)
-		 * probability; if so, we fall back to the normal calculation.
+		 * 如果我们真要较真，会尝试确认所有元素都互不相同，
+		 * 但那代价高昂，似乎不值得花费这些周期；那无异于
+		 * 惩罚写得好的查询而偏袒写得差的查询。不过，我们
+		 * 确实做了一点自我保护：检查不相交假设是否会导出
+		 * 一个不可能（超出范围）的概率；如果是，则退回到
+		 * 正常计算。
 		 */
 		s1 = s1disjoint = (useOr ? 0.0 : 1.0);
 
@@ -2008,7 +1968,7 @@ scalararraysel(PlannerInfo *root,
 			}
 		}
 
-		/* accept disjoint-probability estimate if in range */
+		/* 若在范围内则采用不相交概率估计 */
 		if ((useOr ? isEquality : isInequality) &&
 			s1disjoint >= 0.0 && s1disjoint <= 1.0)
 			s1 = s1disjoint;
@@ -2025,11 +1985,11 @@ scalararraysel(PlannerInfo *root,
 						&elmlen, &elmbyval);
 
 		/*
-		 * We use the assumption of disjoint probabilities here too, although
-		 * the odds of equal array elements are rather higher if the elements
-		 * are not all constants (which they won't be, else constant folding
-		 * would have reduced the ArrayExpr to a Const).  In this path it's
-		 * critical to have the sanity check on the s1disjoint estimate.
+		 * 在这里我们也使用不相交概率的假设，尽管如果元素
+		 * 不全是常量（它们不会全为常量，否则常量折叠
+		 * 早就把 ArrayExpr 化简成 Const 了），那么出现
+		 * 相同数组元素的概率会高不少。在这条路径上，
+		 * 对 s1disjoint 估计做合理性检查至关重要。
 		 */
 		s1 = s1disjoint = (useOr ? 0.0 : 1.0);
 
@@ -2040,9 +2000,9 @@ scalararraysel(PlannerInfo *root,
 			Selectivity s2;
 
 			/*
-			 * Theoretically, if elem isn't of nominal_element_type we should
-			 * insert a RelabelType, but it seems unlikely that any operator
-			 * estimation function would really care ...
+			 * 理论上，如果 elem 不是 nominal_element_type 类型，
+			 * 我们应该插入一个 RelabelType，但任何操作符估计
+			 * 函数似乎都不太可能真的在意……
 			 */
 			args = list_make2(leftop, elem);
 			if (is_join_clause)
@@ -2075,7 +2035,7 @@ scalararraysel(PlannerInfo *root,
 			}
 		}
 
-		/* accept disjoint-probability estimate if in range */
+		/* 若在范围内则采用不相交概率估计 */
 		if ((useOr ? isEquality : isInequality) &&
 			s1disjoint >= 0.0 && s1disjoint <= 1.0)
 			s1 = s1disjoint;
@@ -2088,9 +2048,9 @@ scalararraysel(PlannerInfo *root,
 		int			i;
 
 		/*
-		 * We need a dummy rightop to pass to the operator selectivity
-		 * routine.  It can be pretty much anything that doesn't look like a
-		 * constant; CaseTestExpr is a convenient choice.
+		 * 我们需要一个虚拟的 rightop 传给操作符的选择性
+		 * 例程。它几乎可以是任何看起来不像常量的东西；
+		 * CaseTestExpr 是一个方便的选择。
 		 */
 		dummyexpr = makeNode(CaseTestExpr);
 		dummyexpr->typeId = nominal_element_type;
@@ -2115,9 +2075,9 @@ scalararraysel(PlannerInfo *root,
 		s1 = useOr ? 0.0 : 1.0;
 
 		/*
-		 * Arbitrarily assume 10 elements in the eventual array value (see
-		 * also estimate_array_length).  We don't risk an assumption of
-		 * disjoint probabilities here.
+		 * 武断地假定最终数组值中有 10 个元素
+		 * （另见 estimate_array_length）。这里我们不冒险
+		 * 采用不相交概率的假设。
 		 */
 		for (i = 0; i < 10; i++)
 		{
@@ -2128,20 +2088,21 @@ scalararraysel(PlannerInfo *root,
 		}
 	}
 
-	/* result should be in range, but make sure... */
+	/* 结果应在 [0,1] 范围内，但仍需确保…… */
 	CLAMP_PROBABILITY(s1);
 
 	return s1;
 }
 
 /*
- * Estimate number of elements in the array yielded by an expression.
+ * 估计某表达式所产生数组的元素个数。
  *
- * Note: the result is integral, but we use "double" to avoid overflow
- * concerns.  Most callers will use it in double-type expressions anyway.
+ * 注意：结果是整数，但我们使用 "double" 以避免
+ * 溢出问题。大多数调用方反正都会把它用在 double 类型的
+ * 表达式中。
  *
- * Note: in some code paths root can be passed as NULL, resulting in
- * slightly worse estimates.
+ * 注意：在某些代码路径中，root 可能被传入 NULL，
+ * 从而导致估计稍差。
  */
 double
 estimate_array_length(PlannerInfo *root, Node *arrayexpr)
@@ -2167,22 +2128,22 @@ estimate_array_length(PlannerInfo *root, Node *arrayexpr)
 	}
 	else if (arrayexpr && root)
 	{
-		/* See if we can find any statistics about it */
+		/* 看看能否找到关于它的任何统计信息 */
 		VariableStatData vardata;
 		AttStatsSlot sslot;
 		double		nelem = 0;
 
 		/*
-		 * Skip calling examine_variable for Var with varno 0, which has no
-		 * valid relation entry and would error in find_base_rel.  Such a Var
-		 * can appear when a nested set operation's output type doesn't match
-		 * the parent's expected type, because recurse_set_operations builds a
-		 * projection target list using generate_setop_tlist with varno 0, and
-		 * if the required type coercion involves an ArrayCoerceExpr, we can
-		 * be called on that Var.
+		 * 对于 varno 为 0 的 Var，跳过调用 examine_variable，
+		 * 因为它没有有效的关系项，会在 find_base_rel 中报错。
+		 * 这种 Var 可能出现在嵌套集合操作的输出类型与
+		 * 父节点期望类型不匹配时，因为 recurse_set_operations 会
+		 * 用 generate_setop_tlist（varno 为 0）构建投影目标
+		 * 列表，而如果所需的类型转换涉及 ArrayCoerceExpr，
+		 * 我们就可能被调用到该 Var 上。
 		 */
 		if (IsA(arrayexpr, Var) && ((Var *) arrayexpr)->varno == 0)
-			return 10;			/* default guess, should match scalararraysel */
+			return 10;			/* 默认猜测，应与 scalararraysel 一致 */
 
 		examine_variable(root, arrayexpr, 0, &vardata);
 		if (HeapTupleIsValid(vardata.statsTuple))
@@ -2208,7 +2169,7 @@ estimate_array_length(PlannerInfo *root, Node *arrayexpr)
 			return nelem;
 	}
 
-	/* Else use a default guess --- this should match scalararraysel */
+	/* 否则使用默认猜测——应与 scalararraysel 一致 */
 	return 10;
 }
 
@@ -2232,13 +2193,13 @@ rowcomparesel(PlannerInfo *root,
 	List	   *opargs;
 	bool		is_join_clause;
 
-	/* Build equivalent arg list for single operator */
+	/* 为单一操作符构建等价的参数列表 */
 	opargs = list_make2(linitial(clause->largs), linitial(clause->rargs));
 
 	/*
-	 * Decide if it's a join clause.  This should match clausesel.c's
-	 * treat_as_join_clause(), except that we intentionally consider only the
-	 * leading columns and not the rest of the clause.
+	 * 判断它是否为连接子句。这应与 clausesel.c 的
+	 * treat_as_join_clause() 保持一致，但我们有意只
+	 * 考虑前导列而非子句的其余部分。
 	 */
 	if (varRelid != 0)
 	{
@@ -2251,8 +2212,8 @@ rowcomparesel(PlannerInfo *root,
 	else if (sjinfo == NULL)
 	{
 		/*
-		 * It must be a restriction clause, since it's being evaluated at a
-		 * scan node.
+		 * 它必定是一个限制子句，因为它正在某个
+		 * 扫描节点上被求值。
 		 */
 		is_join_clause = false;
 	}
@@ -2275,7 +2236,7 @@ rowcomparesel(PlannerInfo *root,
 	}
 	else
 	{
-		/* Estimate selectivity for a restriction clause. */
+		/* 估计限制子句的选择性。 */
 		s1 = restriction_selectivity(root, opno,
 									 opargs,
 									 inputcollid,
@@ -2365,7 +2326,7 @@ eqjoinsel(PG_FUNCTION_ARGS)
 										  ATTSTATSSLOT_VALUES | ATTSTATSSLOT_NUMBERS);
 	}
 
-	/* We need to compute the inner-join selectivity in all cases */
+	/* 在所有情况下我们都需要计算内连接选择性 */
 	selec_inner = eqjoinsel_inner(opfuncoid, collation,
 								  &vardata1, &vardata2,
 								  nd1, nd2,
@@ -2385,10 +2346,10 @@ eqjoinsel(PG_FUNCTION_ARGS)
 		case JOIN_ANTI:
 
 			/*
-			 * Look up the join's inner relation.  min_righthand is sufficient
-			 * information because neither SEMI nor ANTI joins permit any
-			 * reassociation into or out of their RHS, so the righthand will
-			 * always be exactly that set of rels.
+			 * 查找连接的 inner 关系。min_righthand 已是足够的
+			 * 信息，因为无论是 SEMI 还是 ANTI 连接，都不允许
+			 * 对其 RHS 做任何重新关联，因此 righthand 永远恰好
+			 * 就是那组关系。
 			 */
 			inner_rel = find_join_input_rel(root, sjinfo->min_righthand);
 
@@ -2417,22 +2378,21 @@ eqjoinsel(PG_FUNCTION_ARGS)
 			}
 
 			/*
-			 * We should never estimate the output of a semijoin to be more
-			 * rows than we estimate for an inner join with the same input
-			 * rels and join condition; it's obviously impossible for that to
-			 * happen.  The former estimate is N1 * Ssemi while the latter is
-			 * N1 * N2 * Sinner, so we may clamp Ssemi <= N2 * Sinner.  Doing
-			 * this is worthwhile because of the shakier estimation rules we
-			 * use in eqjoinsel_semi, particularly in cases where it has to
-			 * punt entirely.
+			 * 我们永远不应把半连接的输出估计为比相同输入关系
+			 * 和连接条件下的内连接更多的行数；这显然是不可能
+			 * 发生的。前者的估计为 N1 * Ssemi，而后者为
+			 * N1 * N2 * Sinner，因此我们可以钳制 Ssemi <= N2 * Sinner。
+			 * 这样做是值得的，因为我们在 eqjoinsel_semi 中使用的
+			 * 估计规则较不可靠，尤其是在它不得不完全放弃的
+			 * 情况下。
 			 */
 			selec = Min(selec, inner_rel->rows * selec_inner);
 			break;
 		default:
-			/* other values not expected here */
+			/* 此处不应出现其它取值 */
 			elog(ERROR, "unrecognized join type: %d",
 				 (int) sjinfo->jointype);
-			selec = 0;			/* keep compiler quiet */
+			selec = 0;			/* 避免编译器告警 */
 			break;
 	}
 
@@ -2448,10 +2408,10 @@ eqjoinsel(PG_FUNCTION_ARGS)
 }
 
 /*
- * eqjoinsel_inner --- eqjoinsel for normal inner join
+ * eqjoinsel_inner --- 普通内连接的 eqjoinsel
  *
- * We also use this for LEFT/FULL outer joins; it's not presently clear
- * that it's worth trying to distinguish them here.
+ * 我们也把它用于 LEFT/FULL 外连接；目前尚不清楚
+ * 在此处区分它们是否值得。
  */
 static double
 eqjoinsel_inner(Oid opfuncoid, Oid collation,
@@ -2467,16 +2427,15 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 	if (have_mcvs1 && have_mcvs2)
 	{
 		/*
-		 * We have most-common-value lists for both relations.  Run through
-		 * the lists to see which MCVs actually join to each other with the
-		 * given operator.  This allows us to determine the exact join
-		 * selectivity for the portion of the relations represented by the MCV
-		 * lists.  We still have to estimate for the remaining population, but
-		 * in a skewed distribution this gives us a big leg up in accuracy.
-		 * For motivation see the analysis in Y. Ioannidis and S.
-		 * Christodoulakis, "On the propagation of errors in the size of join
-		 * results", Technical Report 1018, Computer Science Dept., University
-		 * of Wisconsin, Madison, March 1991 (available from ftp.cs.wisc.edu).
+		 * 两个关系都有了最常见值（MCV）列表。遍历这些列表，
+		 * 看看哪些 MCV 在给定操作符下真正相互连接。这使我们
+		 * 能够确定由 MCV 列表所代表的那部分关系的精确连接
+		 * 选择性。我们仍须对剩余群体做估计，但在倾斜的
+		 * 分布下，这能大幅提制准确性。相关动机可参见
+		 * Y. Ioannidis 与 S. Christodoulakis 的论文
+		 * "On the propagation of errors in the size of join results"
+		 * （威斯康星大学麦迪逊分校计算机科学系技术报告
+		 * 1018，1991 年 3 月，可从 ftp.cs.wisc.edu 获取）。
 		 */
 		LOCAL_FCINFO(fcinfo, 2);
 		FmgrInfo	eqproc;
@@ -2499,10 +2458,9 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 		fmgr_info(opfuncoid, &eqproc);
 
 		/*
-		 * Save a few cycles by setting up the fcinfo struct just once. Using
-		 * FunctionCallInvoke directly also avoids failure if the eqproc
-		 * returns NULL, though really equality functions should never do
-		 * that.
+		 * 通过只初始化一次 fcinfo 结构体来节省若干周期。
+		 * 直接使用 FunctionCallInvoke 也能避免 eqproc 返回
+		 * NULL 时失败，尽管等值函数本不应返回 NULL。
 		 */
 		InitFunctionCallInfoData(*fcinfo, &eqproc, 2, collation,
 								 NULL, NULL);
@@ -2513,10 +2471,10 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 		hasmatch2 = (bool *) palloc0(sslot2->nvalues * sizeof(bool));
 
 		/*
-		 * Note we assume that each MCV will match at most one member of the
-		 * other MCV list.  If the operator isn't really equality, there could
-		 * be multiple matches --- but we don't look for them, both for speed
-		 * and because the math wouldn't add up...
+		 * 注意我们假设每个 MCV 最多只匹配另一个 MCV 列表中的
+		 * 一个成员。如果操作符并非真正的等值，可能会出现
+		 * 多个匹配——但我们不去寻找它们，既是为了速度，
+		 * 也因为那样数学上会无法自洽……
 		 */
 		matchprodfreq = 0.0;
 		nmatches = 0;
@@ -2545,7 +2503,7 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 			}
 		}
 		CLAMP_PROBABILITY(matchprodfreq);
-		/* Sum up frequencies of matched and unmatched MCVs */
+		/* 累加已匹配与未匹配 MCV 的频率 */
 		matchfreq1 = unmatchfreq1 = 0.0;
 		for (i = 0; i < sslot1->nvalues; i++)
 		{
@@ -2570,8 +2528,7 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 		pfree(hasmatch2);
 
 		/*
-		 * Compute total frequency of non-null values that are not in the MCV
-		 * lists.
+		 * 计算不在 MCV 列表中的非 NULL 值的总频率。
 		 */
 		otherfreq1 = 1.0 - nullfrac1 - matchfreq1 - unmatchfreq1;
 		otherfreq2 = 1.0 - nullfrac2 - matchfreq2 - unmatchfreq2;
@@ -2579,12 +2536,10 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 		CLAMP_PROBABILITY(otherfreq2);
 
 		/*
-		 * We can estimate the total selectivity from the point of view of
-		 * relation 1 as: the known selectivity for matched MCVs, plus
-		 * unmatched MCVs that are assumed to match against random members of
-		 * relation 2's non-MCV population, plus non-MCV values that are
-		 * assumed to match against random members of relation 2's unmatched
-		 * MCVs plus non-MCV values.
+		 * 我们可以从关系 1 的角度估计总选择性：已知已匹配
+		 * MCV 的选择性，加上假定与关系 2 的非 MCV 群体
+		 * 中随机成员匹配的未匹配 MCV，再加上假定与关系 2
+		 * 的未匹配 MCV 及非 MCV 值中随机成员匹配的非 MCV 值。
 		 */
 		totalsel1 = matchprodfreq;
 		if (nd2 > sslot2->nvalues)
@@ -2601,34 +2556,32 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 				(nd1 - nmatches);
 
 		/*
-		 * Use the smaller of the two estimates.  This can be justified in
-		 * essentially the same terms as given below for the no-stats case: to
-		 * a first approximation, we are estimating from the point of view of
-		 * the relation with smaller nd.
+		 * 取两个估计中较小的一个。这可以用与下面无统计情形
+		 * 基本相同的方式来论证：在一级近似下，我们是从
+		 * nd 较小的关系的角度做估计。
 		 */
 		selec = (totalsel1 < totalsel2) ? totalsel1 : totalsel2;
 	}
 	else
 	{
 		/*
-		 * We do not have MCV lists for both sides.  Estimate the join
-		 * selectivity as MIN(1/nd1,1/nd2)*(1-nullfrac1)*(1-nullfrac2). This
-		 * is plausible if we assume that the join operator is strict and the
-		 * non-null values are about equally distributed: a given non-null
-		 * tuple of rel1 will join to either zero or N2*(1-nullfrac2)/nd2 rows
-		 * of rel2, so total join rows are at most
-		 * N1*(1-nullfrac1)*N2*(1-nullfrac2)/nd2 giving a join selectivity of
-		 * not more than (1-nullfrac1)*(1-nullfrac2)/nd2. By the same logic it
-		 * is not more than (1-nullfrac1)*(1-nullfrac2)/nd1, so the expression
-		 * with MIN() is an upper bound.  Using the MIN() means we estimate
-		 * from the point of view of the relation with smaller nd (since the
-		 * larger nd is determining the MIN).  It is reasonable to assume that
-		 * most tuples in this rel will have join partners, so the bound is
-		 * probably reasonably tight and should be taken as-is.
+		 * 我们并没有两侧的 MCV 列表。把连接选择性估计为
+		 * MIN(1/nd1,1/nd2)*(1-nullfrac1)*(1-nullfrac2)。
+		 * 如果我们假定连接操作符是严格的、且非 NULL 值
+		 * 大致均匀分布，这就说得通：rel1 的某个给定非 NULL
+		 * 元组将连接 rel2 的 0 行或 N2*(1-nullfrac2)/nd2 行，
+		 * 因此总连接行数至多为
+		 * N1*(1-nullfrac1)*N2*(1-nullfrac2)/nd2，对应的连接
+		 * 选择性不超过 (1-nullfrac1)*(1-nullfrac2)/nd2。同理
+		 * 它也不超过 (1-nullfrac1)*(1-nullfrac2)/nd1，因此带
+		 * MIN() 的表达式是一个上界。使用 MIN() 意味着我们从
+		 * nd 较小的关系的角度做估计（因为较大的 nd 决定了
+		 * MIN）。有理由假定本关系中的大多数元组都会有连接
+		 * 伙伴，因此该上界可能相当紧，应当直接采用。
 		 *
-		 * XXX Can we be smarter if we have an MCV list for just one side? It
-		 * seems that if we assume equal distribution for the other side, we
-		 * end up with the same answer anyway.
+		 * XXX 如果我们只有一侧的 MCV 列表，能否更聪明些？
+		 * 似乎如果假定另一侧均匀分布，我们最终得到的答案
+		 * 还是一样。
 		 */
 		double		nullfrac1 = stats1 ? stats1->stanullfrac : 0.0;
 		double		nullfrac2 = stats2 ? stats2->stanullfrac : 0.0;
@@ -2644,11 +2597,12 @@ eqjoinsel_inner(Oid opfuncoid, Oid collation,
 }
 
 /*
- * eqjoinsel_semi --- eqjoinsel for semi join
+ * eqjoinsel_semi --- 半连接的 eqjoinsel
  *
- * (Also used for anti join, which we are supposed to estimate the same way.)
- * Caller has ensured that vardata1 is the LHS variable.
- * Unlike eqjoinsel_inner, we have to cope with opfuncoid being InvalidOid.
+ * （也用于反连接，后者我们应当以相同方式估计。）
+ * 调用方已确保 vardata1 是 LHS 变量。
+ * 与 eqjoinsel_inner 不同，我们必须应对 opfuncoid 为
+ * InvalidOid 的情况。
  */
 static double
 eqjoinsel_semi(Oid opfuncoid, Oid collation,
@@ -2663,23 +2617,22 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 	double		selec;
 
 	/*
-	 * We clamp nd2 to be not more than what we estimate the inner relation's
-	 * size to be.  This is intuitively somewhat reasonable since obviously
-	 * there can't be more than that many distinct values coming from the
-	 * inner rel.  The reason for the asymmetry (ie, that we don't clamp nd1
-	 * likewise) is that this is the only pathway by which restriction clauses
-	 * applied to the inner rel will affect the join result size estimate,
-	 * since set_joinrel_size_estimates will multiply SEMI/ANTI selectivity by
-	 * only the outer rel's size.  If we clamped nd1 we'd be double-counting
-	 * the selectivity of outer-rel restrictions.
+	 * 我们把 nd2 钳制为不超过对 inner 关系大小的估计值。
+	 * 这凭直觉有一定合理性，因为来自 inner 关系的
+	 * 不同值显然不可能多于那么多。这种不对称（即我们不
+	 * 对 nd1 做同样钳制）的原因在于，这是应用于 inner
+	 * 关系的限制子句能够影响连接结果大小估计的唯一途径，
+	 * 因为 set_joinrel_size_estimates 只会把 SEMI/ANTI 的选择性
+	 * 乘以 outer 关系的大小。如果我们钳制了 nd1，就会对
+	 * outer 关系限制条件的选择性重复计数。
 	 *
-	 * We can apply this clamping both with respect to the base relation from
-	 * which the join variable comes (if there is just one), and to the
-	 * immediate inner input relation of the current join.
+	 * 我们既可以对连接变量所属的基础关系（如果只有一个）
+	 * 施加这种钳制，也可以对当前连接的紧邻 inner 输入关系
+	 * 施加。
 	 *
-	 * If we clamp, we can treat nd2 as being a non-default estimate; it's not
-	 * great, maybe, but it didn't come out of nowhere either.  This is most
-	 * helpful when the inner relation is empty and consequently has no stats.
+	 * 如果我们做了钳制，可以把 nd2 当作一个非默认的估计；
+	 * 它也许不算很好，但也不是凭空而来的。当 inner 关系
+	 * 为空因而没有统计信息时，这一点最为有用。
 	 */
 	if (vardata2->rel)
 	{
@@ -2698,12 +2651,11 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 	if (have_mcvs1 && have_mcvs2 && OidIsValid(opfuncoid))
 	{
 		/*
-		 * We have most-common-value lists for both relations.  Run through
-		 * the lists to see which MCVs actually join to each other with the
-		 * given operator.  This allows us to determine the exact join
-		 * selectivity for the portion of the relations represented by the MCV
-		 * lists.  We still have to estimate for the remaining population, but
-		 * in a skewed distribution this gives us a big leg up in accuracy.
+		 * 两个关系都有了最常见值（MCV）列表。遍历这些列表，
+		 * 看看哪些 MCV 在给定操作符下真正相互连接。这使我们
+		 * 能够确定由 MCV 列表所代表的那部分关系的精确连接
+		 * 选择性。我们仍须对剩余群体做估计，但在倾斜的
+		 * 分布下，这能大幅提升准确性。
 		 */
 		LOCAL_FCINFO(fcinfo, 2);
 		FmgrInfo	eqproc;
@@ -2718,21 +2670,20 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 					clamped_nvalues2;
 
 		/*
-		 * The clamping above could have resulted in nd2 being less than
-		 * sslot2->nvalues; in which case, we assume that precisely the nd2
-		 * most common values in the relation will appear in the join input,
-		 * and so compare to only the first nd2 members of the MCV list.  Of
-		 * course this is frequently wrong, but it's the best bet we can make.
+		 * 上面的钳制可能导致 nd2 小于 sslot2->nvalues；在
+		 * 这种情况下，我们假设关系中恰好前 nd2 个最常见值会
+		 * 出现在连接输入中，因此只与 MCV 列表的前 nd2 个
+		 * 成员比较。当然这经常是错的，但这已是我们能做的
+		 * 最好猜测。
 		 */
 		clamped_nvalues2 = Min(sslot2->nvalues, nd2);
 
 		fmgr_info(opfuncoid, &eqproc);
 
 		/*
-		 * Save a few cycles by setting up the fcinfo struct just once. Using
-		 * FunctionCallInvoke directly also avoids failure if the eqproc
-		 * returns NULL, though really equality functions should never do
-		 * that.
+		 * 通过只初始化一次 fcinfo 结构体来节省若干周期。
+		 * 直接使用 FunctionCallInvoke 也能避免 eqproc 返回
+		 * NULL 时失败，尽管等值函数本不应返回 NULL。
 		 */
 		InitFunctionCallInfoData(*fcinfo, &eqproc, 2, collation,
 								 NULL, NULL);
@@ -2743,10 +2694,10 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 		hasmatch2 = (bool *) palloc0(clamped_nvalues2 * sizeof(bool));
 
 		/*
-		 * Note we assume that each MCV will match at most one member of the
-		 * other MCV list.  If the operator isn't really equality, there could
-		 * be multiple matches --- but we don't look for them, both for speed
-		 * and because the math wouldn't add up...
+		 * 注意我们假设每个 MCV 最多只匹配另一个 MCV 列表中的
+		 * 一个成员。如果操作符并非真正的等值，可能会出现
+		 * 多个匹配——但我们不去寻找它们，既是为了速度，
+		 * 也因为那样数学上会无法自洽……
 		 */
 		nmatches = 0;
 		for (i = 0; i < sslot1->nvalues; i++)
@@ -2772,7 +2723,7 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 				}
 			}
 		}
-		/* Sum up frequencies of matched MCVs */
+		/* 累加已匹配 MCV 的频率 */
 		matchfreq1 = 0.0;
 		for (i = 0; i < sslot1->nvalues; i++)
 		{
@@ -2784,19 +2735,19 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 		pfree(hasmatch2);
 
 		/*
-		 * Now we need to estimate the fraction of relation 1 that has at
-		 * least one join partner.  We know for certain that the matched MCVs
-		 * do, so that gives us a lower bound, but we're really in the dark
-		 * about everything else.  Our crude approach is: if nd1 <= nd2 then
-		 * assume all non-null rel1 rows have join partners, else assume for
-		 * the uncertain rows that a fraction nd2/nd1 have join partners. We
-		 * can discount the known-matched MCVs from the distinct-values counts
-		 * before doing the division.
+		 * 现在我们需要估计关系 1 中至少有
+		 * 一个连接伙伴的比例。我们确切知道已匹配的 MCV
+		 * 一定有，这给了我们一个下界，但对其它一切就
+		 * 几乎一无所知了。我们粗略的做法是：如果 nd1 <= nd2，
+		 * 则假定所有非 NULL 的 rel1 行都有连接伙伴；否则
+		 * 对不确定的行，假定其中 nd2/nd1 的比例有连接伙伴。
+		 * 在做除法之前，我们可以从不同值计数中扣除已知
+		 * 已匹配的 MCV。
 		 *
-		 * Crude as the above is, it's completely useless if we don't have
-		 * reliable ndistinct values for both sides.  Hence, if either nd1 or
-		 * nd2 is default, punt and assume half of the uncertain rows have
-		 * join partners.
+		 * 尽管上述做法很粗略，但如果我们没有两侧可靠的
+		 * ndistinct 值，它就完全没用了。因此，如果 nd1 或 nd2
+		 * 是任意一方默认值，就放弃并假定一半的不确定行有
+		 * 连接伙伴。
 		 */
 		if (!isdefault1 && !isdefault2)
 		{
@@ -2816,8 +2767,8 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 	else
 	{
 		/*
-		 * Without MCV lists for both sides, we can only use the heuristic
-		 * about nd1 vs nd2.
+		 * 没有两侧的 MCV 列表，我们只能使用关于 nd1 与
+		 * nd2 的启发式方法。
 		 */
 		double		nullfrac1 = stats1 ? stats1->stanullfrac : 0.0;
 
@@ -2836,7 +2787,7 @@ eqjoinsel_semi(Oid opfuncoid, Oid collation,
 }
 
 /*
- *		neqjoinsel		- Join selectivity of "!="
+ *		neqjoinsel		- "!=" 的连接选择性。
  */
 Datum
 neqjoinsel(PG_FUNCTION_ARGS)
@@ -2852,19 +2803,18 @@ neqjoinsel(PG_FUNCTION_ARGS)
 	if (jointype == JOIN_SEMI || jointype == JOIN_ANTI)
 	{
 		/*
-		 * For semi-joins, if there is more than one distinct value in the RHS
-		 * relation then every non-null LHS row must find a row to join since
-		 * it can only be equal to one of them.  We'll assume that there is
-		 * always more than one distinct RHS value for the sake of stability,
-		 * though in theory we could have special cases for empty RHS
-		 * (selectivity = 0) and single-distinct-value RHS (selectivity =
-		 * fraction of LHS that has the same value as the single RHS value).
+		 * 对于半连接，如果 RHS 关系中存在多于一个的不同值，
+		 * 那么每个非 NULL 的 LHS 行都必然能找到一行与之连接，
+		 * 因为它只能与其中一个相等。为了稳定性，我们假定
+		 * RHS 总是存在多于一个的不同值，尽管理论上我们
+		 * 可以对空 RHS（选择性 = 0）和单不同值 RHS（选择性 =
+		 * 与单一 RHS 值相同的 LHS 的比例）做特殊处理。
 		 *
-		 * For anti-joins, if we use the same assumption that there is more
-		 * than one distinct key in the RHS relation, then every non-null LHS
-		 * row must be suppressed by the anti-join.
+		 * 对于反连接，如果我们采用同样的假设，即 RHS 关系
+		 * 中存在多于一个的不同键，那么每个非 NULL 的 LHS 行
+		 * 都必然被反连接抑制。
 		 *
-		 * So either way, the selectivity estimate should be 1 - nullfrac.
+		 * 因此无论哪种情况，选择性估计都应为 1 - nullfrac。
 		 */
 		VariableStatData leftvar;
 		VariableStatData rightvar;
@@ -2886,8 +2836,8 @@ neqjoinsel(PG_FUNCTION_ARGS)
 	else
 	{
 		/*
-		 * We want 1 - eqjoinsel() where the equality operator is the one
-		 * associated with this != operator, that is, its negator.
+		 * 我们需要 1 - eqjoinsel()，其中等值操作符是与这个
+		 * != 操作符相关联的那个，即它的求反符。
 		 */
 		Oid			eqop = get_negator(operator);
 
@@ -2904,7 +2854,7 @@ neqjoinsel(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			/* Use default selectivity (should we raise an error instead?) */
+			/* 使用默认选择性（或者我们是否应该改为报错？） */
 			result = DEFAULT_EQ_SEL;
 		}
 		result = 1.0 - result;
@@ -2914,7 +2864,7 @@ neqjoinsel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		scalarltjoinsel - Join selectivity of "<" for scalars
+ *		scalarltjoinsel - 标量类型 "<" 的连接选择性
  */
 Datum
 scalarltjoinsel(PG_FUNCTION_ARGS)
@@ -2923,7 +2873,7 @@ scalarltjoinsel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		scalarlejoinsel - Join selectivity of "<=" for scalars
+ *		scalarlejoinsel - 标量类型 "<=" 的连接选择性
  */
 Datum
 scalarlejoinsel(PG_FUNCTION_ARGS)
@@ -2932,7 +2882,7 @@ scalarlejoinsel(PG_FUNCTION_ARGS)
 }
 
 /*
- *		scalargtjoinsel - Join selectivity of ">" for scalars
+ *		scalargtjoinsel - 标量类型 ">" 的连接选择性
  */
 Datum
 scalargtjoinsel(PG_FUNCTION_ARGS)
@@ -2951,25 +2901,25 @@ scalargejoinsel(PG_FUNCTION_ARGS)
 
 
 /*
- * mergejoinscansel			- Scan selectivity of merge join.
+ * mergejoinscansel			- 合并连接的扫描选择性。
  *
- * A merge join will stop as soon as it exhausts either input stream.
- * Therefore, if we can estimate the ranges of both input variables,
- * we can estimate how much of the input will actually be read.  This
- * can have a considerable impact on the cost when using indexscans.
+ * 合并连接会在任一输入流耗尽时立即停止。因此，如果我们能
+ * 估计两个输入变量的取值范围，就能估计出实际会被读取的
+ * 输入比例。这在使用索引扫描时会对代价产生相当大的
+ * 影响。
  *
- * Also, we can estimate how much of each input has to be read before the
- * first join pair is found, which will affect the join's startup time.
+ * 此外，我们还能估计在找到第一对连接行之前需要读取多少
+ * 输入，这会影响连接的启动时间。
  *
- * clause should be a clause already known to be mergejoinable.  opfamily,
- * cmptype, and nulls_first specify the sort ordering being used.
+ * clause 应当是一个已知可合并连接（mergejoinable）的子句。
+ * opfamily、cmptype 与 nulls_first 指定所使用的排序顺序。
  *
- * The outputs are:
- *		*leftstart is set to the fraction of the left-hand variable expected
- *		 to be scanned before the first join pair is found (0 to 1).
- *		*leftend is set to the fraction of the left-hand variable expected
- *		 to be scanned before the join terminates (0 to 1).
- *		*rightstart, *rightend similarly for the right-hand variable.
+ * 输出为：
+ *		*leftstart 被设为预期在第一对连接行被找到之前
+ *		 会被扫描的左变量比例（0 到 1）。
+ *		*leftend 被设为预期在连接终止之前会被扫描的
+ *		 左变量比例（0 到 1）。
+ *		*rightstart、*rightend 对右变量同理。
  */
 void
 mergejoinscansel(PlannerInfo *root, Node *clause,
@@ -3006,28 +2956,28 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 				rightmax;
 	double		selec;
 
-	/* Set default results if we can't figure anything out. */
-	/* XXX should default "start" fraction be a bit more than 0? */
+	/* 如果无法得出任何结果，则设置默认值。 */
+	/* XXX 默认的 "start" 比例是否应略大于 0？ */
 	*leftstart = *rightstart = 0.0;
 	*leftend = *rightend = 1.0;
 
-	/* Deconstruct the merge clause */
+	/* 拆解合并子句 */
 	if (!is_opclause(clause))
-		return;					/* shouldn't happen */
+		return;					/* 不应发生 */
 	opno = ((OpExpr *) clause)->opno;
 	collation = ((OpExpr *) clause)->inputcollid;
 	left = get_leftop((Expr *) clause);
 	right = get_rightop((Expr *) clause);
 	if (!right)
-		return;					/* shouldn't happen */
+		return;					/* 不应发生 */
 
-	/* Look for stats for the inputs */
+	/* 查找输入的统计信息 */
 	examine_variable(root, left, 0, &leftvar);
 	examine_variable(root, right, 0, &rightvar);
 
 	opmethod = get_opfamily_method(opfamily);
 
-	/* Extract the operator's declared left/right datatypes */
+	/* 提取操作符声明的左右数据类型 */
 	get_op_opfamily_properties(opno, opfamily, false,
 							   &op_strategy,
 							   &op_lefttype,
@@ -3035,11 +2985,12 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 	Assert(IndexAmTranslateStrategy(op_strategy, opmethod, opfamily, true) == COMPARE_EQ);
 
 	/*
-	 * Look up the various operators we need.  If we don't find them all, it
-	 * probably means the opfamily is broken, but we just fail silently.
+	 * 查找我们所需的各个操作符。如果我们没能全部找到，
+	 * 很可能意味着该操作符族（opfamily）有问题，但我们
+	 * 只是静默地失败。
 	 *
-	 * Note: we expect that pg_statistic histograms will be sorted by the '<'
-	 * operator, regardless of which sort direction we are considering.
+	 * 注意：我们期望 pg_statistic 的直方图总是按 '<'
+	 * 操作符排序，无论我们考虑的是哪种排序方向。
 	 */
 	switch (cmptype)
 	{
@@ -3049,7 +3000,7 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 			lestrat = IndexAmTranslateCompareType(COMPARE_LE, opmethod, opfamily, true);
 			if (op_lefttype == op_righttype)
 			{
-				/* easy case */
+				/* 简单情况 */
 				ltop = get_opfamily_member(opfamily,
 										   op_lefttype, op_righttype,
 										   ltstrat);
@@ -3088,14 +3039,14 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 			}
 			break;
 		case COMPARE_GT:
-			/* descending-order case */
+			/* 降序情况 */
 			isgt = true;
 			ltstrat = IndexAmTranslateCompareType(COMPARE_LT, opmethod, opfamily, true);
 			gtstrat = IndexAmTranslateCompareType(COMPARE_GT, opmethod, opfamily, true);
 			gestrat = IndexAmTranslateCompareType(COMPARE_GE, opmethod, opfamily, true);
 			if (op_lefttype == op_righttype)
 			{
-				/* easy case */
+				/* 简单情况 */
 				ltop = get_opfamily_member(opfamily,
 										   op_lefttype, op_righttype,
 										   gtstrat);
@@ -3140,7 +3091,7 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 			}
 			break;
 		default:
-			goto fail;			/* shouldn't get here */
+			goto fail;			/* 不应到达此处 */
 	}
 
 	if (!OidIsValid(lsortop) ||
@@ -3153,48 +3104,48 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 		!OidIsValid(revleop))
 		goto fail;				/* insufficient info in catalogs */
 
-	/* Try to get ranges of both inputs */
+	/* 尝试获取两个输入的取值范围 */
 	if (!isgt)
 	{
 		if (!get_variable_range(root, &leftvar, lstatop, collation,
 								&leftmin, &leftmax))
-			goto fail;			/* no range available from stats */
+			goto fail;			/* 统计中没有可用范围 */
 		if (!get_variable_range(root, &rightvar, rstatop, collation,
 								&rightmin, &rightmax))
-			goto fail;			/* no range available from stats */
+			goto fail;			/* 统计中没有可用范围 */
 	}
 	else
 	{
-		/* need to swap the max and min */
+		/* 需要交换 max 与 min */
 		if (!get_variable_range(root, &leftvar, lstatop, collation,
 								&leftmax, &leftmin))
-			goto fail;			/* no range available from stats */
+			goto fail;			/* 统计中没有可用范围 */
 		if (!get_variable_range(root, &rightvar, rstatop, collation,
 								&rightmax, &rightmin))
-			goto fail;			/* no range available from stats */
+			goto fail;			/* 统计中没有可用范围 */
 	}
 
 	/*
-	 * Now, the fraction of the left variable that will be scanned is the
-	 * fraction that's <= the right-side maximum value.  But only believe
-	 * non-default estimates, else stick with our 1.0.
+	 * 现在，左变量中将被扫描的比例是
+	 * <= 右侧最大值的部分所占的比例。但我们只相信
+	 * 非默认的估计，否则就维持 1.0。
 	 */
 	selec = scalarineqsel(root, leop, isgt, true, collation, &leftvar,
 						  rightmax, op_righttype);
 	if (selec != DEFAULT_INEQ_SEL)
 		*leftend = selec;
 
-	/* And similarly for the right variable. */
+	/* 右变量同理。 */
 	selec = scalarineqsel(root, revleop, isgt, true, collation, &rightvar,
 						  leftmax, op_lefttype);
 	if (selec != DEFAULT_INEQ_SEL)
 		*rightend = selec;
 
 	/*
-	 * Only one of the two "end" fractions can really be less than 1.0;
-	 * believe the smaller estimate and reset the other one to exactly 1.0. If
-	 * we get exactly equal estimates (as can easily happen with self-joins),
-	 * believe neither.
+	 * 两个 "end" 比例中真正小于 1.0 的只能有一个；
+	 * 相信较小的那个估计，并把另一个重置为正好 1.0。
+	 * 如果得到完全相等的估计（自连接时很容易出现），
+	 * 则两个都不信。
 	 */
 	if (*leftend > *rightend)
 		*leftend = 1.0;
@@ -3204,27 +3155,27 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 		*leftend = *rightend = 1.0;
 
 	/*
-	 * Also, the fraction of the left variable that will be scanned before the
-	 * first join pair is found is the fraction that's < the right-side
-	 * minimum value.  But only believe non-default estimates, else stick with
-	 * our own default.
+	 * 此外，在找到第一对连接行之前会被扫描的左变量
+	 * 比例是 < 右侧最小值的部分所占的比例。
+	 * 但我们只相信非默认的估计，否则就维持我们
+	 * 自己的默认值。
 	 */
 	selec = scalarineqsel(root, ltop, isgt, false, collation, &leftvar,
 						  rightmin, op_righttype);
 	if (selec != DEFAULT_INEQ_SEL)
 		*leftstart = selec;
 
-	/* And similarly for the right variable. */
+	/* 右变量同理。 */
 	selec = scalarineqsel(root, revltop, isgt, false, collation, &rightvar,
 						  leftmin, op_lefttype);
 	if (selec != DEFAULT_INEQ_SEL)
 		*rightstart = selec;
 
 	/*
-	 * Only one of the two "start" fractions can really be more than zero;
-	 * believe the larger estimate and reset the other one to exactly 0.0. If
-	 * we get exactly equal estimates (as can easily happen with self-joins),
-	 * believe neither.
+	 * 两个 "start" 比例中真正大于零的只能有一个；
+	 * 相信较大的那个估计，并把另一个重置为正好 0.0。
+	 * 如果得到完全相等的估计（自连接时很容易出现），
+	 * 则两个都不信。
 	 */
 	if (*leftstart < *rightstart)
 		*leftstart = 0.0;
@@ -3234,10 +3185,10 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 		*leftstart = *rightstart = 0.0;
 
 	/*
-	 * If the sort order is nulls-first, we're going to have to skip over any
-	 * nulls too.  These would not have been counted by scalarineqsel, and we
-	 * can safely add in this fraction regardless of whether we believe
-	 * scalarineqsel's results or not.  But be sure to clamp the sum to 1.0!
+	 * 如果排序顺序是 nulls-first，我们也必须跳过任何
+	 * NULL 值。这些不会被 scalarineqsel 计入，而无论我们
+	 * 是否相信 scalarineqsel 的结果，都可以安全地把这个
+	 * 比例加进来。但务必把总和钳制到 1.0！
 	 */
 	if (nulls_first)
 	{
@@ -3261,7 +3212,7 @@ mergejoinscansel(PlannerInfo *root, Node *clause,
 		}
 	}
 
-	/* Disbelieve start >= end, just in case that can happen */
+	/* 不信任 start >= end，以防这种情况发生 */
 	if (*leftstart >= *leftend)
 	{
 		*leftstart = 0.0;
@@ -3280,12 +3231,12 @@ fail:
 
 
 /*
- *	matchingsel -- generic matching-operator selectivity support
+ *	matchingsel -- 通用匹配操作符选择性支持
  *
- * Use these for any operators that (a) are on data types for which we collect
- * standard statistics, and (b) have behavior for which the default estimate
- * (twice DEFAULT_EQ_SEL) is sane.  Typically that is good for match-like
- * operators.
+ * 把本函数用于满足以下条件的任何操作符：(a) 其数据类型
+ * 是我们收集标准统计信息的类型；(b) 其默认估计
+ * （DEFAULT_EQ_SEL 的两倍）是合理的。通常这对
+ * 匹配类的操作符是合适的。
  */
 
 Datum
@@ -3298,7 +3249,7 @@ matchingsel(PG_FUNCTION_ARGS)
 	Oid			collation = PG_GET_COLLATION();
 	double		selec;
 
-	/* Use generic restriction selectivity logic. */
+	/* 使用通用的限制选择性逻辑。 */
 	selec = generic_restriction_selectivity(root, operator, collation,
 											args, varRelid,
 											DEFAULT_MATCHING_SEL);
@@ -3309,22 +3260,21 @@ matchingsel(PG_FUNCTION_ARGS)
 Datum
 matchingjoinsel(PG_FUNCTION_ARGS)
 {
-	/* Just punt, for the moment. */
+	/* 暂时先放弃。 */
 	PG_RETURN_FLOAT8(DEFAULT_MATCHING_SEL);
 }
 
 
 /*
- * Helper routine for estimate_num_groups: add an item to a list of
- * GroupVarInfos, but only if it's not known equal to any of the existing
- * entries.
+ * estimate_num_groups 的辅助例程：向 GroupVarInfo 列表中
+ * 添加一项，但仅当它不被认为与任何现有项相等时。
  */
 typedef struct
 {
-	Node	   *var;			/* might be an expression, not just a Var */
-	RelOptInfo *rel;			/* relation it belongs to */
-	double		ndistinct;		/* # distinct values */
-	bool		isdefault;		/* true if DEFAULT_NUM_DISTINCT was used */
+	Node	   *var;			/* 可能是一个表达式，而不仅仅是一个 Var */
+	RelOptInfo *rel;			/* 它所属的关系 */
+	double		ndistinct;		/* 不同值的数量 */
+	bool		isdefault;		/* 若使用了 DEFAULT_NUM_DISTINCT 则为 true */
 } GroupVarInfo;
 
 static List *
@@ -3339,11 +3289,10 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
 	ndistinct = get_variable_numdistinct(vardata, &isdefault);
 
 	/*
-	 * The nullingrels bits within the var could cause the same var to be
-	 * counted multiple times if it's marked with different nullingrels.  They
-	 * could also prevent us from matching the var to the expressions in
-	 * extended statistics (see estimate_multivariate_ndistinct).  So strip
-	 * them out first.
+	 * var 内的 nullingrels 位可能导致同一个 var 在标有不同的
+	 * nullingrels 时被重复计数。它们也可能妨碍我们把 var
+	 * 匹配到扩展统计中的表达式（见 estimate_multivariate_ndistinct）。
+	 * 因此先将其剥离。
 	 */
 	var = remove_nulling_relids(var, root->outer_join_rels, NULL);
 
@@ -3351,7 +3300,7 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
 	{
 		varinfo = (GroupVarInfo *) lfirst(lc);
 
-		/* Drop exact duplicates */
+		/* 丢弃完全相同的副本 */
 		if (equal(var, varinfo->var))
 			return varinfos;
 
@@ -3365,7 +3314,7 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
 		{
 			if (varinfo->ndistinct <= ndistinct)
 			{
-				/* Keep older item, forget new one */
+				/* 保留旧项，丢弃新项 */
 				return varinfos;
 			}
 			else
@@ -3387,75 +3336,69 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
 }
 
 /*
- * estimate_num_groups		- Estimate number of groups in a grouped query
+ * estimate_num_groups		- 估计分组查询中的组数
  *
- * Given a query having a GROUP BY clause, estimate how many groups there
- * will be --- ie, the number of distinct combinations of the GROUP BY
- * expressions.
+ * 给定一个带有 GROUP BY 子句的查询，估计会有多少组——
+ * 即 GROUP BY 表达式的不同组合的数量。
  *
- * This routine is also used to estimate the number of rows emitted by
- * a DISTINCT filtering step; that is an isomorphic problem.  (Note:
- * actually, we only use it for DISTINCT when there's no grouping or
- * aggregation ahead of the DISTINCT.)
+ * 本例程也用于估计 DISTINCT 过滤步骤所输出的行数；
+ * 那是一个同构的问题。（注意：实际上，我们只在
+ * DISTINCT 之前没有分组或聚合时才将其用于 DISTINCT。）
  *
- * Inputs:
- *	root - the query
- *	groupExprs - list of expressions being grouped by
- *	input_rows - number of rows estimated to arrive at the group/unique
- *		filter step
- *	pgset - NULL, or a List** pointing to a grouping set to filter the
- *		groupExprs against
+ * 输入：
+ *	root - 查询
+ *	groupExprs - 正在被分组的表达式列表
+ *	input_rows - 估计到达 group/unique 过滤步骤的行数
+ *	pgset - NULL，或一个指向分组集的 List**，用于
+ *		对 groupExprs 进行过滤
  *
- * Outputs:
- *	estinfo - When passed as non-NULL, the function will set bits in the
- *		"flags" field in order to provide callers with additional information
- *		about the estimation.  Currently, we only set the SELFLAG_USED_DEFAULT
- *		bit if we used any default values in the estimation.
+ * 输出：
+ *	estinfo - 当以非 NULL 传入时，函数会在 "flags"
+ *		字段中置位，以向调用方提供关于估计的额外
+ *		信息。目前，仅当我们使用了任何默认值时，才会
+ *		置位 SELFLAG_USED_DEFAULT 位。
  *
- * Given the lack of any cross-correlation statistics in the system, it's
- * impossible to do anything really trustworthy with GROUP BY conditions
- * involving multiple Vars.  We should however avoid assuming the worst
- * case (all possible cross-product terms actually appear as groups) since
- * very often the grouped-by Vars are highly correlated.  Our current approach
- * is as follows:
- *	1.  Expressions yielding boolean are assumed to contribute two groups,
- *		independently of their content, and are ignored in the subsequent
- *		steps.  This is mainly because tests like "col IS NULL" break the
- *		heuristic used in step 2 especially badly.
- *	2.  Reduce the given expressions to a list of unique Vars used.  For
- *		example, GROUP BY a, a + b is treated the same as GROUP BY a, b.
- *		It is clearly correct not to count the same Var more than once.
- *		It is also reasonable to treat f(x) the same as x: f() cannot
- *		increase the number of distinct values (unless it is volatile,
- *		which we consider unlikely for grouping), but it probably won't
- *		reduce the number of distinct values much either.
- *		As a special case, if a GROUP BY expression can be matched to an
- *		expressional index for which we have statistics, then we treat the
- *		whole expression as though it were just a Var.
- *	3.  If the list contains Vars of different relations that are known equal
- *		due to equivalence classes, then drop all but one of the Vars from each
- *		known-equal set, keeping the one with smallest estimated # of values
- *		(since the extra values of the others can't appear in joined rows).
- *		Note the reason we only consider Vars of different relations is that
- *		if we considered ones of the same rel, we'd be double-counting the
- *		restriction selectivity of the equality in the next step.
- *	4.  For Vars within a single source rel, we multiply together the numbers
- *		of values, clamp to the number of rows in the rel (divided by 10 if
- *		more than one Var), and then multiply by a factor based on the
- *		selectivity of the restriction clauses for that rel.  When there's
- *		more than one Var, the initial product is probably too high (it's the
- *		worst case) but clamping to a fraction of the rel's rows seems to be a
- *		helpful heuristic for not letting the estimate get out of hand.  (The
- *		factor of 10 is derived from pre-Postgres-7.4 practice.)  The factor
- *		we multiply by to adjust for the restriction selectivity assumes that
- *		the restriction clauses are independent of the grouping, which may not
- *		be a valid assumption, but it's hard to do better.
- *	5.  If there are Vars from multiple rels, we repeat step 4 for each such
- *		rel, and multiply the results together.
- * Note that rels not containing grouped Vars are ignored completely, as are
- * join clauses.  Such rels cannot increase the number of groups, and we
- * assume such clauses do not reduce the number either (somewhat bogus,
- * but we don't have the info to do better).
+ * 由于系统中缺乏任何交叉相关性统计，对于涉及多个
+ * Var 的 GROUP BY 条件，我们不可能做出真正可信的处理。
+ * 但我们也应避免假设最坏情况（所有可能的交叉乘积
+ * 项都实际作为组出现），因为被分组的 Var 往往高度
+ * 相关。我们当前的方法如下：
+ *	1.  产生布尔值的表达式被假定贡献两个组，与其内容
+ *		无关，并在后续步骤中被忽略。这主要是因为像
+ *		"col IS NULL" 这样的测试会严重破坏第 2 步中
+ *		所用的启发式。
+ *	2.  将给定的表达式化简为所用到的唯一 Var 列表。
+ *		例如，GROUP BY a, a + b 被视为与 GROUP BY a, b
+ *		相同。显然，不对同一个 Var 计数超过一次是正确的。
+ *		把 f(x) 视为与 x 相同也是合理的：f() 不可能
+ *		增加不同值的数量（除非它是易变的，而我们认为
+ *		对分组而言不太可能），但它大概也不会显著
+ *		减少不同值的数量。
+ *		作为一种特殊情况，如果一个 GROUP BY 表达式能
+ *		匹配到一个我们有统计信息的表达式索引，那么
+ *		我们把整个表达式当作仅仅是一个 Var。
+ *	3.  如果列表包含因等价类而已知相等的不同关系的
+ *		Var，则从每个已知相等的集合中只保留一个 Var，
+ *		保留估计值数量最少的那一个（因为其它 Var 的
+ *		额外值不可能出现在连接行中）。我们只考虑不同
+ *		关系的 Var 的原因是，如果考虑同一关系的 Var，
+ *		就会在下一步中对该等值的限制选择性重复计数。
+ *	4.  对于单个源关系内的 Var，我们把它们的值数量相乘，
+ *		钳制到该关系的行数（若有多个 Var 则除以 10），
+ *		再乘以一个基于该关系限制子句选择性的因子。当
+ *		存在多个 Var 时，初始乘积可能过高（那是最坏
+ *		情况），但钳制到关系行数的某个比例似乎是防止
+ *		估计失控的有用启发式。（因子 10 源自
+ *		Postgres 7.4 之前的做法。）我们用来根据限制
+ *		选择性进行调整的乘法因子假定限制子句与分组
+ *		相互独立，这也许并非一个有效的假设，但很难
+ *		做得更好。
+ *	5.  如果存在来自多个关系的 Var，我们对每个这样的
+ *		关系重复第 4 步，并将结果相乘。
+ * 注意，不包含被分组 Var 的关系以及连接子句都会被
+ * 完全忽略。这样的关系不可能增加组数，而我们假定
+ * 这样的子句也不会减少组数（有点不可靠，但我们
+ * 没有更好的信息）。
  */
 double
 estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
@@ -3467,7 +3410,7 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 	ListCell   *l;
 	int			i;
 
-	/* Zero the estinfo output parameter, if non-NULL */
+	/* 清零 estinfo 输出参数（若非 NULL） */
 	if (estinfo != NULL)
 		memset(estinfo, 0, sizeof(EstimationInfo));
 
@@ -3488,11 +3431,10 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		return 1.0;
 
 	/*
-	 * Count groups derived from boolean grouping expressions.  For other
-	 * expressions, find the unique Vars used, treating an expression as a Var
-	 * if we can find stats for it.  For each one, record the statistical
-	 * estimate of number of distinct values (total in its table, without
-	 * regard for filtering).
+	 * 统计由布尔分组表达式得到的组数。对于其它表达式，
+	 * 找出所用到的唯一 Var，如果能找到其统计信息，则把
+	 * 该表达式当作一个 Var。对每一个，记录其不同值数量
+	 * 的统计估计（其表中的总数，不考虑过滤）。
 	 */
 	numdistinct = 1.0;
 
@@ -3524,7 +3466,7 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		if (srf_multiplier < this_srf_multiplier)
 			srf_multiplier = this_srf_multiplier;
 
-		/* Short-circuit for expressions returning boolean */
+		/* 对返回布尔值的表达式短路处理 */
 		if (exprType(groupexpr) == BOOLOID)
 		{
 			numdistinct *= 2.0;
@@ -3566,10 +3508,10 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 								   PVC_RECURSE_PLACEHOLDERS);
 
 		/*
-		 * If we find any variable-free GROUP BY item, then either it is a
-		 * constant (and we can ignore it) or it contains a volatile function;
-		 * in the latter case we punt and assume that each input row will
-		 * yield a distinct group.
+		 * 如果我们发现任何不含变量的 GROUP BY 项，那么
+		 * 它要么是个常量（可忽略），要么包含易变函数；
+		 * 在后者的情况下，我们放弃并假定每个输入行都会
+		 * 产生一个不同的组。
 		 */
 		if (varshere == NIL)
 		{
@@ -3610,12 +3552,11 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 	}
 
 	/*
-	 * Group Vars by relation and estimate total numdistinct.
+	 * 按关系对 Var 分组，并估计整体的不同值数量（numdistinct）。
 	 *
-	 * For each iteration of the outer loop, we process the frontmost Var in
-	 * varinfos, plus all other Vars in the same relation.  We remove these
-	 * Vars from the newvarinfos list for the next iteration. This is the
-	 * easiest way to group Vars of same rel together.
+	 * 外层循环的每一次迭代中，我们处理 varinfos 中最前面的那个 Var，
+	 * 以及同属一个关系的所有其他 Var。我们把这些 Var 从 newvarinfos
+	 * 列表中移除，供下一次迭代使用。这是把同关系的 Var 归到一起的最简便方式。
 	 */
 	do
 	{
@@ -3628,8 +3569,8 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		List	   *relvarinfos = NIL;
 
 		/*
-		 * Split the list of varinfos in two - one for the current rel, one
-		 * for remaining Vars on other rels.
+		 * 把 varinfos 列表分成两组——一组属于当前关系，另一组属于
+		 * 其他关系上剩余的 Var。
 		 */
 		relvarinfos = lappend(relvarinfos, varinfo1);
 		for_each_from(l, varinfos, 1)
@@ -3638,27 +3579,24 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 
 			if (varinfo2->rel == varinfo1->rel)
 			{
-				/* varinfos on current rel */
+				/* 当前关系上的 varinfo */
 				relvarinfos = lappend(relvarinfos, varinfo2);
 			}
 			else
 			{
-				/* not time to process varinfo2 yet */
+				/* varinfo2 暂未轮到处理 */
 				newvarinfos = lappend(newvarinfos, varinfo2);
 			}
 		}
 
 		/*
-		 * Get the numdistinct estimate for the Vars of this rel.  We
-		 * iteratively search for multivariate n-distinct with maximum number
-		 * of vars; assuming that each var group is independent of the others,
-		 * we multiply them together.  Any remaining relvarinfos after no more
-		 * multivariate matches are found are assumed independent too, so
-		 * their individual ndistinct estimates are multiplied also.
+		 * 取得该关系上各 Var 的 numdistinct 估计。我们迭代地寻找包含
+		 * 最多 Var 的多变量 n-distinct；假设每个 Var 组彼此独立，便把它们
+		 * 相乘。当再也找不到多变量匹配后，剩余的 relvarinfos 也被视为
+		 * 相互独立，因此它们各自的 ndistinct 估计同样会被乘进来。
 		 *
-		 * While iterating, count how many separate numdistinct values we
-		 * apply.  We apply a fudge factor below, but only if we multiplied
-		 * more than one such values.
+		 * 迭代过程中，统计我们一共应用了多少个独立的 numdistinct 值。
+		 * 下面会应用一个修正因子，但仅当我们乘入了不止一个这样的值时才会使用。
 		 */
 		while (relvarinfos)
 		{
@@ -3684,8 +3622,8 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 					relvarcount++;
 
 					/*
-					 * When varinfo2's isdefault is set then we'd better set
-					 * the SELFLAG_USED_DEFAULT bit in the EstimationInfo.
+					 * 当 varinfo2 的 isdefault 被置位时，我们最好在
+					 * EstimationInfo 中设置 SELFLAG_USED_DEFAULT 标志位。
 					 */
 					if (estinfo != NULL && varinfo2->isdefault)
 						estinfo->flags |= SELFLAG_USED_DEFAULT;
@@ -3697,17 +3635,16 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		}
 
 		/*
-		 * Sanity check --- don't divide by zero if empty relation.
+		 * 健全性检查——若关系为空，则不要除以零。
 		 */
 		Assert(IS_SIMPLE_REL(rel));
 		if (rel->tuples > 0)
 		{
 			/*
-			 * Clamp to size of rel, or size of rel / 10 if multiple Vars. The
-			 * fudge factor is because the Vars are probably correlated but we
-			 * don't know by how much.  We should never clamp to less than the
-			 * largest ndistinct value for any of the Vars, though, since
-			 * there will surely be at least that many groups.
+			 * 钳制到关系的大小，若包含多个 Var 则钳制到关系大小 / 10。
+			 * 引入这个修正因子是因为这些 Var 之间很可能相关，但我们并不知道
+			 * 相关程度如何。不过，我们永远不应钳制到小于任一 Var 的最大
+			 * ndistinct 值，因为组的数量必定至少达到那么多。
 			 */
 			double		clamp = rel->tuples;
 
@@ -3717,7 +3654,7 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 				if (clamp < relmaxndistinct)
 				{
 					clamp = relmaxndistinct;
-					/* for sanity in case some ndistinct is too large: */
+					/* 防御性处理：万一某个 ndistinct 取值过大 */
 					if (clamp > rel->tuples)
 						clamp = rel->tuples;
 				}
@@ -3725,55 +3662,50 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 			if (reldistinct > clamp)
 				reldistinct = clamp;
 
+		/*
+		 * 基于限制子句的选择性来更新估计，当 reldistinct 为零时
+		 * 要防止除以零。另外，如果我们知道会返回全部行，则跳过此步骤。
+		 */
+		if (reldistinct > 0 && rel->rows < rel->tuples)
+		{
 			/*
-			 * Update the estimate based on the restriction selectivity,
-			 * guarding against division by zero when reldistinct is zero.
-			 * Also skip this if we know that we are returning all rows.
+			 * 对于一个包含 N 行、其中有 n 个不同值且呈均匀分布的表，
+			 * 如果我们随机选取 p 行，那么被选中值中不同值的期望数量为
+			 *
+			 * n * (1 - product((N-N/n-i)/(N-i), i=0..p-1))
+			 *
+			 * = n * (1 - (N-N/n)! / (N-N/n-p)! * (N-p)! / N!)
+			 *
+			 * 参见 "Approximating block accesses in database
+			 * organizations"，S. B. Yao，Communications of the ACM，
+			 * 第 20 卷第 4 期，1977 年 4 月，第 260-261 页。
+			 *
+			 * 或者，把阶乘中的各项重新整理后，也可写成
+			 *
+			 * n * (1 - product((N-p-i)/(N-i), i=0..N/n-1))
+			 *
+			 * 在 p 大于 N/n 的常见情形下，这种形式的公式计算效率更高。
+			 * 此外，正如 Dell'Era 所指出的，如果乘积中所有项的 i << N，
+			 * 它可以被近似为
+			 *
+			 * n * (1 - ((N-p)/N)^(N/n))
+			 *
+			 * 参见 "Expected distinct values when selecting from a bag
+			 * without replacement"，Alberto Dell'Era，
+			 * http://www.adellera.it/investigations/distinct_balls/。
+			 *
+			 * 条件 i << N 等价于 n >> 1，因此当表中不同值的数量很大时，
+			 * 这是一个很好的近似。事实证明，即便 n 很小时，这个公式
+			 * 的效果也不错。
 			 */
-			if (reldistinct > 0 && rel->rows < rel->tuples)
-			{
-				/*
-				 * Given a table containing N rows with n distinct values in a
-				 * uniform distribution, if we select p rows at random then
-				 * the expected number of distinct values selected is
-				 *
-				 * n * (1 - product((N-N/n-i)/(N-i), i=0..p-1))
-				 *
-				 * = n * (1 - (N-N/n)! / (N-N/n-p)! * (N-p)! / N!)
-				 *
-				 * See "Approximating block accesses in database
-				 * organizations", S. B. Yao, Communications of the ACM,
-				 * Volume 20 Issue 4, April 1977 Pages 260-261.
-				 *
-				 * Alternatively, re-arranging the terms from the factorials,
-				 * this may be written as
-				 *
-				 * n * (1 - product((N-p-i)/(N-i), i=0..N/n-1))
-				 *
-				 * This form of the formula is more efficient to compute in
-				 * the common case where p is larger than N/n.  Additionally,
-				 * as pointed out by Dell'Era, if i << N for all terms in the
-				 * product, it can be approximated by
-				 *
-				 * n * (1 - ((N-p)/N)^(N/n))
-				 *
-				 * See "Expected distinct values when selecting from a bag
-				 * without replacement", Alberto Dell'Era,
-				 * http://www.adellera.it/investigations/distinct_balls/.
-				 *
-				 * The condition i << N is equivalent to n >> 1, so this is a
-				 * good approximation when the number of distinct values in
-				 * the table is large.  It turns out that this formula also
-				 * works well even when n is small.
-				 */
-				reldistinct *=
+			reldistinct *=
 					(1 - pow((rel->tuples - rel->rows) / rel->tuples,
 							 rel->tuples / reldistinct));
 			}
 			reldistinct = clamp_row_est(reldistinct);
 
 			/*
-			 * Update estimate of total distinct groups.
+			 * 更新对总组数的估计。
 			 */
 			numdistinct *= reldistinct;
 		}
@@ -3781,13 +3713,13 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		varinfos = newvarinfos;
 	} while (varinfos != NIL);
 
-	/* Now we can account for the effects of any SRFs */
+	/* 现在把任意 SRF 带来的效果计入 */
 	numdistinct *= srf_multiplier;
 
-	/* Round off */
+	/* 取整 */
 	numdistinct = ceil(numdistinct);
 
-	/* Guard against out-of-range answers */
+	/* 防止结果超出合理范围 */
 	if (numdistinct > input_rows)
 		numdistinct = input_rows;
 	if (numdistinct < 1.0)
@@ -3797,17 +3729,15 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 }
 
 /*
- * Try to estimate the bucket size of the hash join inner side when the join
- * condition contains two or more clauses by employing extended statistics.
+ * 当连接条件包含两个或更多子句时，尝试借助扩展统计信息来估计哈希连接
+ * 内表的桶大小。
  *
- * The main idea of this approach is that the distinct value generated by
- * multivariate estimation on two or more columns would provide less bucket size
- * than estimation on one separate column.
+ * 这种方法的主要思路是：对两列或更多列进行多变量估计所得到的不同值，
+ * 会比单独对某一列估计出来的不同值产生更小的桶大小。
  *
- * IMPORTANT: It is crucial to synchronize the approach of combining different
- * estimations with the caller's method.
+ * 重要：把不同估计结果组合起来的方式，必须与调用方的方法保持一致。
  *
- * Return a list of clauses that didn't fetch any extended statistics.
+ * 返回那些没有取到任何扩展统计信息的子句列表。
  */
 List *
 estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
@@ -3821,8 +3751,7 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 	if (list_length(hashclauses) <= 1)
 
 		/*
-		 * Nothing to do for a single clause.  Could we employ univariate
-		 * extended stat here?
+		 * 对于单个子句无需处理。我们能否在这里使用单变量扩展统计？
 		 */
 		return hashclauses;
 
@@ -3840,10 +3769,9 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 				   *lc2;
 
 		/*
-		 * Find clauses, referencing the same single base relation and try to
-		 * estimate such a group with extended statistics.  Create varinfo for
-		 * an approved clause, push it to otherclauses, if it can't be
-		 * estimated here or ignore to process at the next iteration.
+		 * 找出引用同一单个基关系、并尝试用扩展统计来估计这样一组子句的
+		 * 子句。为被接纳的子句创建 varinfo；如果它无法在这里被估计，则
+		 * 把它推入 otherclauses，留待下一次迭代处理。
 		 */
 		foreach(lc, clauses)
 		{
@@ -3867,11 +3795,11 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 			{
 				bool		is_duplicate = false;
 
-				/*
-				 * This inner-side expression references only one relation.
-				 * Extended statistics on this clause can exist.
-				 */
-				if (group_relid < 0)
+			/*
+			 * 这个内表侧表达式只引用了一个关系。关于这个子句的
+			 * 扩展统计信息有可能存在。
+			 */
+			if (group_relid < 0)
 				{
 					RangeTblEntry *rte = root->simple_rte_array[relid];
 
@@ -3880,8 +3808,8 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 								 rte->relkind != RELKIND_FOREIGN_TABLE &&
 								 rte->relkind != RELKIND_PARTITIONED_TABLE))
 					{
-						/* Extended statistics can't exist in principle */
-						otherclauses = lappend(otherclauses, rinfo);
+					/* 原则上不可能存在扩展统计信息 */
+					otherclauses = lappend(otherclauses, rinfo);
 						clauses = foreach_delete_current(clauses, lc);
 						continue;
 					}
@@ -3892,39 +3820,33 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 				else if (group_relid != relid)
 
 					/*
-					 * Being in the group forming state we don't need other
-					 * clauses.
+					 * 当前正处于分组形成阶段，我们不需要其他子句。
 					 */
 					continue;
 
-				/*
-				 * We're going to add the new clause to the varinfos list.  We
-				 * might re-use add_unique_group_var(), but we don't do so for
-				 * two reasons.
-				 *
-				 * 1) We must keep the origin_rinfos list ordered exactly the
-				 * same way as varinfos.
-				 *
-				 * 2) add_unique_group_var() is designed for
-				 * estimate_num_groups(), where a larger number of groups is
-				 * worse.   While estimating the number of hash buckets, we
-				 * have the opposite: a lesser number of groups is worse.
-				 * Therefore, we don't have to remove "known equal" vars: the
-				 * removed var may valuably contribute to the multivariate
-				 * statistics to grow the number of groups.
-				 */
+		/*
+		 * 我们要把新子句加入 varinfos 列表。我们本可以复用
+		 * add_unique_group_var()，但有两个原因让我们没有这么做。
+		 *
+		 * 1) 我们必须让 origin_rinfos 列表的排列顺序与 varinfos
+		 * 完全一致。
+		 *
+		 * 2) add_unique_group_var() 是为 estimate_num_groups() 设计的，
+		 * 在那里组数越多越糟。但在估计哈希桶数量时，情况正好相反：
+		 * 组数越少越糟。因此，我们没有必要移除“已知相等”的 var：
+		 * 被移除的 var 可能很有价值地为多变量统计做出贡献，从而增加组数。
+		 */
 
-				/*
-				 * Clear nullingrels to correctly match hash keys.  See
-				 * add_unique_group_var()'s comment for details.
-				 */
-				expr = remove_nulling_relids(expr, root->outer_join_rels, NULL);
+			/*
+			 * 清除 nullingrels 以正确匹配哈希键。详情参见
+			 * add_unique_group_var() 的注释。
+			 */
+			expr = remove_nulling_relids(expr, root->outer_join_rels, NULL);
 
-				/*
-				 * Detect and exclude exact duplicates from the list of hash
-				 * keys (like add_unique_group_var does).
-				 */
-				foreach(lc1, varinfos)
+			/*
+			 * 检测并排除哈希键列表中的完全重复项（与 add_unique_group_var 的做法相同）。
+			 */
+			foreach(lc1, varinfos)
 				{
 					varinfo = (GroupVarInfo *) lfirst(lc1);
 
@@ -3937,33 +3859,31 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 
 				if (is_duplicate)
 				{
-					/*
-					 * Skip exact duplicates. Adding them to the otherclauses
-					 * list also doesn't make sense.
-					 */
-					continue;
+				/*
+				 * 跳过完全重复的项。把它们加入 otherclauses 列表同样没有意义。
+				 */
+				continue;
 				}
 
-				/*
-				 * Initialize GroupVarInfo.  We only use it to call
-				 * estimate_multivariate_ndistinct(), which doesn't care about
-				 * ndistinct and isdefault fields.  Thus, skip these fields.
-				 */
-				varinfo = (GroupVarInfo *) palloc0(sizeof(GroupVarInfo));
+			/*
+			 * 初始化 GroupVarInfo。我们只用它来调用
+			 * estimate_multivariate_ndistinct()，而该函数并不关心
+			 * ndistinct 和 isdefault 字段。因此，跳过这两个字段。
+			 */
+			varinfo = (GroupVarInfo *) palloc0(sizeof(GroupVarInfo));
 				varinfo->var = expr;
 				varinfo->rel = root->simple_rel_array[relid];
 				varinfos = lappend(varinfos, varinfo);
 
-				/*
-				 * Remember the link to RestrictInfo for the case the clause
-				 * is failed to be estimated.
-				 */
-				origin_rinfos = lappend(origin_rinfos, rinfo);
+			/*
+			 * 记住与 RestrictInfo 的关联，以备该子句估计失败时使用。
+			 */
+			origin_rinfos = lappend(origin_rinfos, rinfo);
 			}
 			else
 			{
-				/* This clause can't be estimated with extended statistics */
-				otherclauses = lappend(otherclauses, rinfo);
+			/* 这个子句无法用扩展统计来估计 */
+			otherclauses = lappend(otherclauses, rinfo);
 			}
 
 			clauses = foreach_delete_current(clauses, lc);
@@ -3972,8 +3892,7 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 		if (list_length(varinfos) < 2)
 		{
 			/*
-			 * Multivariate statistics doesn't apply to single columns except
-			 * for expressions, but it has not been implemented yet.
+			 * 多变量统计不适用于单字段（表达式除外），但该功能尚未实现。
 			 */
 			otherclauses = list_concat(otherclauses, origin_rinfos);
 			list_free_deep(varinfos);
@@ -3983,7 +3902,7 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 
 		Assert(group_rel != NULL);
 
-		/* Employ the extended statistics. */
+		/* 使用扩展统计。 */
 		origin_varinfos = varinfos;
 		for (;;)
 		{
@@ -3996,9 +3915,8 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 				break;
 
 			/*
-			 * We've got an estimation.  Use ndistinct value in a consistent
-			 * way - according to the caller's logic (see
-			 * final_cost_hashjoin).
+			 * 我们已得到一个估计值。按照与调用方逻辑一致的方式使用
+			 * ndistinct 值（参见 final_cost_hashjoin）。
 			 */
 			if (ndistinct < mvndistinct)
 				ndistinct = mvndistinct;
@@ -4007,16 +3925,16 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 
 		Assert(list_length(origin_varinfos) == list_length(origin_rinfos));
 
-		/* Collect unmatched clauses as otherclauses. */
+		/* 收集未能匹配的子句，放入 otherclauses。 */
 		forboth(lc1, origin_varinfos, lc2, origin_rinfos)
 		{
 			GroupVarInfo *vinfo = lfirst(lc1);
 
 			if (!list_member_ptr(varinfos, vinfo))
-				/* Already estimated */
+				/* 已经估计过了 */
 				continue;
 
-			/* Can't be estimated here - push to the returning list */
+			/* 无法在这里估计——推入返回列表 */
 			otherclauses = lappend(otherclauses, lfirst(lc2));
 		}
 	}
@@ -4026,47 +3944,34 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 }
 
 /*
- * Estimate hash bucket statistics when the specified expression is used
- * as a hash key for the given number of buckets.
+ * 当指定表达式被用作哈希键、且给定桶数量时，估计哈希桶的统计信息。
  *
- * This attempts to determine two values:
+ * 这里尝试确定两个值：
  *
- * 1. The frequency of the most common value of the expression (returns
- * zero into *mcv_freq if we can't get that).
+ * 1. 表达式中最常见值的频率（如果无法获取，则向 *mcv_freq 返回零）。
  *
- * 2. The "bucketsize fraction", ie, average number of entries in a bucket
- * divided by total tuples in relation.
+ * 2. “桶大小比例”，即桶中的平均条目数除以关系中的元组总数。
  *
- * XXX This is really pretty bogus since we're effectively assuming that the
- * distribution of hash keys will be the same after applying restriction
- * clauses as it was in the underlying relation.  However, we are not nearly
- * smart enough to figure out how the restrict clauses might change the
- * distribution, so this will have to do for now.
+ * XXX 这其实相当不靠谱，因为我们实际上假设了在施加限制子句之后，
+ * 哈希键的分布与底层关系中的分布相同。然而，我们远没有聪明到能够
+ * 推算出限制子句会如何改变分布，所以目前只能将就。
  *
- * We are passed the number of buckets the executor will use for the given
- * input relation.  If the data were perfectly distributed, with the same
- * number of tuples going into each available bucket, then the bucketsize
- * fraction would be 1/nbuckets.  But this happy state of affairs will occur
- * only if (a) there are at least nbuckets distinct data values, and (b)
- * we have a not-too-skewed data distribution.  Otherwise the buckets will
- * be nonuniformly occupied.  If the other relation in the join has a key
- * distribution similar to this one's, then the most-loaded buckets are
- * exactly those that will be probed most often.  Therefore, the "average"
- * bucket size for costing purposes should really be taken as something close
- * to the "worst case" bucket size.  We try to estimate this by adjusting the
- * fraction if there are too few distinct data values, and then scaling up
- * by the ratio of the most common value's frequency to the average frequency.
+ * 我们被传入执行器将为给定输入关系使用的桶数量。如果数据是完美分布的，
+ * 即每个可用桶都放入相同数量的元组，那么桶大小比例应为 1/nbuckets。
+ * 但这种理想状态只会在以下情况下出现：(a) 至少有 nbuckets 个不同数据值，
+ * 并且 (b) 数据的分布不那么倾斜。否则，桶的占用就会不均匀。如果连接中的
+ * 另一个关系具有与本关系相似的键分布，那么负载最重的桶恰好就是被探测得
+ * 最频繁的桶。因此，出于代价估算目的，“平均”桶大小其实应当取接近
+ * “最坏情况”桶大小的值。我们试图这样来估计：如果不同数据值太少，
+ * 就调整该比例，然后再按最常见值的频率与平均频率之比进行放大。
  *
- * If no statistics are available, use a default estimate of 0.1.  This will
- * discourage use of a hash rather strongly if the inner relation is large,
- * which is what we want.  We do not want to hash unless we know that the
- * inner rel is well-dispersed (or the alternatives seem much worse).
+ * 如果没有可用的统计信息，则使用默认值 0.1 作为估计。当内表很大时，
+ * 这会相当强烈地抑制哈希连接的使用，而这正是我们想要的。除非我们知道
+ * 内表分布很均匀（或者其它方案明显更糟），否则我们不想用哈希连接。
  *
- * The caller should also check that the mcv_freq is not so large that the
- * most common value would by itself require an impractically large bucket.
- * In a hash join, the executor can split buckets if they get too big, but
- * obviously that doesn't help for a bucket that contains many duplicates of
- * the same value.
+ * 调用方还应当检查 mcv_freq 不要大到让那个最常见值本身就需要一个
+ * 大到不切实际的桶。在哈希连接中，执行器可以在桶过大时拆分它们，
+ * 但对于一个包含大量同一值重复项的桶来说，这显然无济于事。
  */
 void
 estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
@@ -4083,7 +3988,7 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 
 	examine_variable(root, hashkey, 0, &vardata);
 
-	/* Look up the frequency of the most common value, if available */
+	/* 如果可用，则查找最常见值的频率 */
 	*mcv_freq = 0.0;
 
 	if (HeapTupleIsValid(vardata.statsTuple))
@@ -4092,10 +3997,10 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 							 STATISTIC_KIND_MCV, InvalidOid,
 							 ATTSTATSSLOT_NUMBERS))
 		{
-			/*
-			 * The first MCV stat is for the most common value.
-			 */
-			if (sslot.nnumbers > 0)
+		/*
+		 * 第一个 MCV 统计量对应最常见的值。
+		 */
+		if (sslot.nnumbers > 0)
 				*mcv_freq = sslot.numbers[0];
 			free_attstatsslot(&sslot);
 		}
@@ -4126,16 +4031,15 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 	else
 		stanullfrac = 0.0;
 
-	/* Compute avg freq of all distinct data values in raw relation */
+	/* 计算原始关系中所有不同数据值的平均频率 */
 	avgfreq = (1.0 - stanullfrac) / ndistinct;
 
 	/*
-	 * Adjust ndistinct to account for restriction clauses.  Observe we are
-	 * assuming that the data distribution is affected uniformly by the
-	 * restriction clauses!
+	 * 调整 ndistinct 以考虑限制子句的影响。注意，我们这里假设数据分布被
+	 * 限制子句均匀地改变了！
 	 *
-	 * XXX Possibly better way, but much more expensive: multiply by
-	 * selectivity of rel's restriction clauses that mention the target Var.
+	 * XXX 可能有更好的办法，但代价高得多：乘以那些引用了目标 Var 的关系
+	 * 限制子句的选择性。
 	 */
 	if (vardata.rel && vardata.rel->tuples > 0)
 	{
@@ -4144,9 +4048,8 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 	}
 
 	/*
-	 * Initial estimate of bucketsize fraction is 1/nbuckets as long as the
-	 * number of buckets is less than the expected number of distinct values;
-	 * otherwise it is 1/ndistinct.
+	 * 桶大小比例的初始估计：只要桶数量小于期望的不同值数量，就是
+	 * 1/nbuckets；否则为 1/ndistinct。
 	 */
 	if (ndistinct > nbuckets)
 		estfract = 1.0 / nbuckets;
@@ -4154,15 +4057,14 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 		estfract = 1.0 / ndistinct;
 
 	/*
-	 * Adjust estimated bucketsize upward to account for skewed distribution.
+	 * 把估计的桶大小向上调整，以考虑倾斜分布的影响。
 	 */
 	if (avgfreq > 0.0 && *mcv_freq > avgfreq)
 		estfract *= *mcv_freq / avgfreq;
 
 	/*
-	 * Clamp bucketsize to sane range (the above adjustment could easily
-	 * produce an out-of-range result).  We set the lower bound a little above
-	 * zero, since zero isn't a very sane result.
+	 * 把桶大小钳制到合理范围（上面的调整很容易产生超出范围的结果）。
+	 * 我们把下界设得比零略高一点，因为零并不是一个很合理的结果。
 	 */
 	if (estfract < 1.0e-6)
 		estfract = 1.0e-6;
@@ -4176,16 +4078,14 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 
 /*
  * estimate_hashagg_tablesize
- *	  estimate the number of bytes that a hash aggregate hashtable will
- *	  require based on the agg_costs, path width and number of groups.
+ *	  根据 agg_costs、路径宽度和组数，估计哈希聚合的哈希表所需的字节数。
  *
- * We return the result as "double" to forestall any possible overflow
- * problem in the multiplication by dNumGroups.
+ * 我们把结果以 "double" 形式返回，以避免在乘以 dNumGroups 时
+ * 可能出现溢出问题。
  *
- * XXX this may be over-estimating the size now that hashagg knows to omit
- * unneeded columns from the hashtable.  Also for mixed-mode grouping sets,
- * grouping columns not in the hashed set are counted here even though hashagg
- * won't store them.  Is this a problem?
+ * XXX 鉴于现在的 hashagg 已知道从哈希表中省略不需要的列，这里可能高估了
+ * 大小。另外对于混合模式的 grouping sets，不在哈希集合中的分组列也会被
+ * 计入，即便 hashagg 并不会存储它们。这会成为问题吗？
  */
 double
 estimate_hashagg_tablesize(PlannerInfo *root, Path *path,
@@ -4198,10 +4098,9 @@ estimate_hashagg_tablesize(PlannerInfo *root, Path *path,
 										agg_costs->transitionSpace);
 
 	/*
-	 * Note that this disregards the effect of fill-factor and growth policy
-	 * of the hash table.  That's probably ok, given that the default
-	 * fill-factor is relatively high.  It'd be hard to meaningfully factor in
-	 * "double-in-size" growth policies here.
+	 * 注意，这里忽略了哈希表的填充因子和增长策略的影响。考虑到默认的
+	 * 填充因子相对较高，这样做应该是没问题的。在这里很难有意义地把
+	 * “体积翻倍”式的增长策略也纳入考虑。
 	 */
 	return hashentrysize * dNumGroups;
 }
@@ -4209,24 +4108,22 @@ estimate_hashagg_tablesize(PlannerInfo *root, Path *path,
 
 /*-------------------------------------------------------------------------
  *
- * Support routines
+ * 辅助例程
  *
  *-------------------------------------------------------------------------
  */
 
 /*
- * Find the best matching ndistinct extended statistics for the given list of
- * GroupVarInfos.
+ * 为给定的 GroupVarInfo 列表寻找匹配程度最高的 ndistinct 扩展统计信息。
  *
- * Callers must ensure that the given GroupVarInfos all belong to 'rel' and
- * the GroupVarInfos list does not contain any duplicate Vars or expressions.
+ * 调用方必须确保给定的 GroupVarInfo 全部属于 'rel'，并且 GroupVarInfo
+ * 列表中不包含任何重复的 Var 或表达式。
  *
- * When statistics are found that match > 1 of the given GroupVarInfo, the
- * *ndistinct parameter is set according to the ndistinct estimate and a new
- * list is built with the matching GroupVarInfos removed, which is output via
- * the *varinfos parameter before returning true.  When no matching stats are
- * found, false is returned and the *varinfos and *ndistinct parameters are
- * left untouched.
+ * 当找到匹配了 1 个以上给定 GroupVarInfo 的统计信息时，*ndistinct 参数
+ * 会按 ndistinct 估计值被设置，同时会构建一个新的列表，其中匹配的
+ * GroupVarInfo 已被移除，并通过 *varinfos 参数在返回 true 之前输出。
+ * 当找不到匹配的统计信息时，返回 false，并且 *varinfos 和 *ndistinct
+ * 参数保持不变。
  */
 static bool
 estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
@@ -4240,12 +4137,12 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 	StatisticExtInfo *matched_info = NULL;
 	RangeTblEntry *rte = planner_rt_fetch(rel->relid, root);
 
-	/* bail out immediately if the table has no extended statistics */
+	/* 如果表没有扩展统计信息，则立即退出 */
 	if (!rel->statlist)
 		return false;
 
-	/* look for the ndistinct statistics object matching the most vars */
-	nmatches_vars = 0;			/* we require at least two matches */
+	/* 寻找匹配最多 Var 的 ndistinct 统计对象 */
+	nmatches_vars = 0;			/* 我们要求至少匹配两个 */
 	nmatches_exprs = 0;
 	foreach(lc, rel->statlist)
 	{
@@ -4254,18 +4151,17 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 		int			nshared_vars = 0;
 		int			nshared_exprs = 0;
 
-		/* skip statistics of other kinds */
+		/* 跳过其它种类的统计 */
 		if (info->kind != STATS_EXT_NDISTINCT)
 			continue;
 
-		/* skip statistics with mismatching stxdinherit value */
+		/* 跳过 stxdinherit 值不匹配的统计 */
 		if (info->inherit != rte->inh)
 			continue;
 
 		/*
-		 * Determine how many expressions (and variables in non-matched
-		 * expressions) match. We'll then use these numbers to pick the
-		 * statistics object that best matches the clauses.
+		 * 确定有多少个表达式（以及未匹配表达式中的变量）能够匹配。
+		 * 我们随后会用这些数值来挑选与子句匹配程度最高的统计对象。
 		 */
 		foreach(lc2, *varinfos)
 		{
@@ -4275,15 +4171,14 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 
 			Assert(varinfo->rel == rel);
 
-			/* simple Var, search in statistics keys directly */
+			/* 简单 Var，直接在统计键中查找 */
 			if (IsA(varinfo->var, Var))
 			{
 				attnum = ((Var *) varinfo->var)->varattno;
 
 				/*
-				 * Ignore system attributes - we don't support statistics on
-				 * them, so can't match them (and it'd fail as the values are
-				 * negative).
+				 * 忽略系统属性——我们不支持对它们做统计，因此无法匹配
+				 * （而且由于这些值是负数，匹配也会失败）。
 				 */
 				if (!AttrNumberIsForUserDefinedAttr(attnum))
 					continue;
@@ -4294,7 +4189,7 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 				continue;
 			}
 
-			/* expression - see if it's in the statistics object */
+			/* 表达式——看它是否在统计对象中 */
 			foreach(lc3, info->exprs)
 			{
 				Node	   *expr = (Node *) lfirst(lc3);
@@ -4308,21 +4203,19 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 		}
 
 		/*
-		 * The ndistinct extended statistics contain estimates for a minimum
-		 * of pairs of columns which the statistics are defined on and
-		 * certainly not single columns.  Here we skip unless we managed to
-		 * match to at least two columns.
+		 * ndistinct 扩展统计包含的是针对统计所定义列的成对（至少）
+		 * 组合的估计，而绝不是单字段的估计。这里我们要求至少匹配两列，
+		 * 否则就跳过。
 		 */
 		if (nshared_vars + nshared_exprs < 2)
 			continue;
 
 		/*
-		 * Check if these statistics are a better match than the previous best
-		 * match and if so, take note of the StatisticExtInfo.
+		 * 检查这些统计是否比之前最佳匹配更好；如果是，则记下这个
+		 * StatisticExtInfo。
 		 *
-		 * The statslist is sorted by statOid, so the StatisticExtInfo we
-		 * select as the best match is deterministic even when multiple sets
-		 * of statistics match equally as well.
+		 * statlist 是按 statOid 排序的，因此即便有多组统计匹配程度相同，
+		 * 我们选为最佳匹配的 StatisticExtInfo 也是确定性的。
 		 */
 		if ((nshared_exprs > nmatches_exprs) ||
 			(((nshared_exprs == nmatches_exprs)) && (nshared_vars > nmatches_vars)))
@@ -4334,7 +4227,7 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 		}
 	}
 
-	/* No match? */
+	/* 没有匹配？ */
 	if (statOid == InvalidOid)
 		return false;
 
@@ -4343,8 +4236,8 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 	stats = statext_ndistinct_load(statOid, rte->inh);
 
 	/*
-	 * If we have a match, search it for the specific item that matches (there
-	 * must be one), and construct the output values.
+	 * 如果找到了匹配，则在其中搜索那个具体的匹配项（必定存在），并
+	 * 构造输出值。
 	 */
 	if (stats)
 	{
@@ -4356,16 +4249,15 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 		AttrNumber	attnum_offset;
 
 		/*
-		 * How much we need to offset the attnums? If there are no
-		 * expressions, no offset is needed. Otherwise offset enough to move
-		 * the lowest one (which is equal to number of expressions) to 1.
+		 * attnum 需要偏移多少？如果没有表达式，则无需偏移。否则，把
+		 * 偏移量设得足够大，使得最小的那个（等于表达式的个数）被移到 1。
 		 */
 		if (matched_info->exprs)
 			attnum_offset = (list_length(matched_info->exprs) + 1);
 		else
 			attnum_offset = 0;
 
-		/* see what actually matched */
+		/* 看看实际匹配了哪些 */
 		foreach(lc2, *varinfos)
 		{
 			ListCell   *lc3;
@@ -4375,28 +4267,26 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 			GroupVarInfo *varinfo = (GroupVarInfo *) lfirst(lc2);
 
 			/*
-			 * Process a simple Var expression, by matching it to keys
-			 * directly. If there's a matching expression, we'll try matching
-			 * it later.
+			 * 处理简单的 Var 表达式，方法是直接把它与键匹配。如果存在一个
+			 * 匹配的表达式，我们稍后会尝试匹配它。
 			 */
 			if (IsA(varinfo->var, Var))
 			{
 				AttrNumber	attnum = ((Var *) varinfo->var)->varattno;
 
 				/*
-				 * Ignore expressions on system attributes. Can't rely on the
-				 * bms check for negative values.
+				 * 忽略系统属性上的表达式。不能依赖 bms 检查来处理负值。
 				 */
 				if (!AttrNumberIsForUserDefinedAttr(attnum))
 					continue;
 
-				/* Is the variable covered by the statistics object? */
+				/* 该变量是否落在统计对象的覆盖范围内？ */
 				if (!bms_is_member(attnum, matched_info->keys))
 					continue;
 
 				attnum = attnum + attnum_offset;
 
-				/* ensure sufficient offset */
+				/* 确保偏移量足够 */
 				Assert(AttrNumberIsForUserDefinedAttr(attnum));
 
 				matched = bms_add_member(matched, attnum);
@@ -4405,14 +4295,14 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 			}
 
 			/*
-			 * XXX Maybe we should allow searching the expressions even if we
-			 * found an attribute matching the expression? That would handle
-			 * trivial expressions like "(a)" but it seems fairly useless.
+			 * XXX 也许我们应该允许即便找到了匹配表达式的属性，也去搜索这些
+			 * 表达式？那样可以处理像 "(a)" 这样平凡的表达式，但似乎相当
+			 * 没有用处。
 			 */
 			if (found)
 				continue;
 
-			/* expression - see if it's in the statistics object */
+			/* 表达式——看它是否在统计对象中 */
 			idx = 0;
 			foreach(lc3, matched_info->exprs)
 			{
@@ -4424,12 +4314,12 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 
 					attnum = attnum + attnum_offset;
 
-					/* ensure sufficient offset */
+					/* 确保偏移量足够 */
 					Assert(AttrNumberIsForUserDefinedAttr(attnum));
 
 					matched = bms_add_member(matched, attnum);
 
-					/* there should be just one matching expression */
+					/* 应该只存在一个匹配的表达式 */
 					break;
 				}
 
@@ -4446,44 +4336,44 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 			if (tmpitem->nattributes != bms_num_members(matched))
 				continue;
 
-			/* assume it's the right item */
+			/* 假设它就是正确的项 */
 			item = tmpitem;
 
-			/* check that all item attributes/expressions fit the match */
+			/* 检查该项的所有属性/表达式是否都符合匹配 */
 			for (j = 0; j < tmpitem->nattributes; j++)
 			{
 				AttrNumber	attnum = tmpitem->attributes[j];
 
 				/*
-				 * Thanks to how we constructed the matched bitmap above, we
-				 * can just offset all attnums the same way.
+				 * 鉴于我们上面构造 matched 位图的方式，我们可以直接用同样的
+				 * 方式偏移所有 attnum。
 				 */
 				attnum = attnum + attnum_offset;
 
 				if (!bms_is_member(attnum, matched))
 				{
-					/* nah, it's not this item */
+					/* 不，不是这一项 */
 					item = NULL;
 					break;
 				}
 			}
 
 			/*
-			 * If the item has all the matched attributes, we know it's the
-			 * right one - there can't be a better one. matching more.
+			 * 如果该项包含了所有被匹配的属性，我们就知道它是正确的那个——
+			 * 不可能有更好的了。
 			 */
 			if (item)
 				break;
 		}
 
 		/*
-		 * Make sure we found an item. There has to be one, because ndistinct
-		 * statistics includes all combinations of attributes.
+		 * 确保我们找到了一个项。必定存在一个，因为 ndistinct 统计包含了
+		 * 属性的所有组合。
 		 */
 		if (!item)
 			elog(ERROR, "corrupt MVNDistinct entry");
 
-		/* Form the output varinfo list, keeping only unmatched ones */
+		/* 构造输出的 varinfo 列表，只保留未被匹配的项 */
 		foreach(lc, *varinfos)
 		{
 			GroupVarInfo *varinfo = (GroupVarInfo *) lfirst(lc);
@@ -4491,18 +4381,16 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 			bool		found = false;
 
 			/*
-			 * Let's look at plain variables first, because it's the most
-			 * common case and the check is quite cheap. We can simply get the
-			 * attnum and check (with an offset) matched bitmap.
+			 * 让我们先看看普通变量，因为这是最常见的情况，而且检查开销很低。
+			 * 我们只要拿到 attnum 并用（带偏移的）matched 位图检查即可。
 			 */
 			if (IsA(varinfo->var, Var))
 			{
 				AttrNumber	attnum = ((Var *) varinfo->var)->varattno;
 
 				/*
-				 * If it's a system attribute, we're done. We don't support
-				 * extended statistics on system attributes, so it's clearly
-				 * not matched. Just keep the expression and continue.
+				 * 如果是系统属性，我们就完成了。我们不支持对系统属性做扩展
+				 * 统计，所以它显然没有被匹配。只需保留这个表达式并继续。
 				 */
 				if (!AttrNumberIsForUserDefinedAttr(attnum))
 				{
@@ -4510,26 +4398,24 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 					continue;
 				}
 
-				/* apply the same offset as above */
+				/* 应用与上面相同的偏移 */
 				attnum += attnum_offset;
 
-				/* if it's not matched, keep the varinfo */
+				/* 如果它没有被匹配，则保留这个 varinfo */
 				if (!bms_is_member(attnum, matched))
 					newlist = lappend(newlist, varinfo);
 
-				/* The rest of the loop deals with complex expressions. */
+				/* 循环剩余部分处理复杂表达式。 */
 				continue;
 			}
 
 			/*
-			 * Process complex expressions, not just simple Vars.
+			 * 处理复杂表达式，而不仅仅是简单的 Var。
 			 *
-			 * First, we search for an exact match of an expression. If we
-			 * find one, we can just discard the whole GroupVarInfo, with all
-			 * the variables we extracted from it.
+			 * 首先，我们搜索一个表达式的精确匹配。如果找到了，就可以直接
+			 * 丢弃整个 GroupVarInfo，连同我们从其中提取出的所有变量。
 			 *
-			 * Otherwise we inspect the individual vars, and try matching it
-			 * to variables in the item.
+			 * 否则，我们检查各个变量的个体情况，并尝试将其与项中的变量匹配。
 			 */
 			foreach(lc3, matched_info->exprs)
 			{
@@ -4542,7 +4428,7 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 				}
 			}
 
-			/* found exact match, skip */
+			/* 找到精确匹配，跳过 */
 			if (found)
 				continue;
 
@@ -4559,32 +4445,25 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 
 /*
  * convert_to_scalar
- *	  Convert non-NULL values of the indicated types to the comparison
- *	  scale needed by scalarineqsel().
- *	  Returns "true" if successful.
+ *	  把指定类型的非 NULL 值转换为 scalarineqsel() 所需的比较标尺。
+ *	  成功时返回 "true"。
  *
- * XXX this routine is a hack: ideally we should look up the conversion
- * subroutines in pg_type.
+ * XXX 这个例程是个 hack：理想情况下我们应该从 pg_type 中查找转换子例程。
  *
- * All numeric datatypes are simply converted to their equivalent
- * "double" values.  (NUMERIC values that are outside the range of "double"
- * are clamped to +/- HUGE_VAL.)
+ * 所有数值类型都被简单地转换为等价的 "double" 值。（超出 "double"
+ * 范围的 NUMERIC 值会被钳制到 +/- HUGE_VAL。）
  *
- * String datatypes are converted by convert_string_to_scalar(),
- * which is explained below.  The reason why this routine deals with
- * three values at a time, not just one, is that we need it for strings.
+ * 字符串类型由 convert_string_to_scalar() 转换，详见下文的说明。这个
+ * 例程之所以一次处理三个值而不是一个，是因为对字符串来说我们需要这样。
  *
- * The bytea datatype is just enough different from strings that it has
- * to be treated separately.
+ * bytea 类型与字符串的差异足以让它必须被单独对待。
  *
- * The several datatypes representing absolute times are all converted
- * to Timestamp, which is actually an int64, and then we promote that to
- * a double.  Note this will give correct results even for the "special"
- * values of Timestamp, since those are chosen to compare correctly;
- * see timestamp_cmp.
+ * 几种表示绝对时间的类型都被转换为 Timestamp（它实际上是一个 int64），
+ * 然后我们把它提升为 double。注意，即便对于 Timestamp 的“特殊”值，
+ * 这也能给出正确结果，因为这些特殊值是被特意选成能够正确比较的；
+ * 参见 timestamp_cmp。
  *
- * The several datatypes representing relative times (intervals) are all
- * converted to measurements expressed in seconds.
+ * 几种表示相对时间（interval）的类型都被转换为以秒为单位的度量。
  */
 static bool
 convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
@@ -4594,27 +4473,23 @@ convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
 	bool		failure = false;
 
 	/*
-	 * Both the valuetypid and the boundstypid should exactly match the
-	 * declared input type(s) of the operator we are invoked for.  However,
-	 * extensions might try to use scalarineqsel as estimator for operators
-	 * with input type(s) we don't handle here; in such cases, we want to
-	 * return false, not fail.  In any case, we mustn't assume that valuetypid
-	 * and boundstypid are identical.
+	 * valuetypid 和 boundstypid 都应当与我们所调用操作符的声明输入类型
+	 * 完全匹配。不过，扩展可能会尝试把 scalarineqsel 用作其输入类型
+	 * 我们在这里不处理的那些操作符的估计函数；在这种情况下，我们希望
+	 * 返回 false 而不是失败。无论如何，我们都不能假设 valuetypid 和
+	 * boundstypid 是相同的。
 	 *
-	 * XXX The histogram we are interpolating between points of could belong
-	 * to a column that's only binary-compatible with the declared type. In
-	 * essence we are assuming that the semantics of binary-compatible types
-	 * are enough alike that we can use a histogram generated with one type's
-	 * operators to estimate selectivity for the other's.  This is outright
-	 * wrong in some cases --- in particular signed versus unsigned
-	 * interpretation could trip us up.  But it's useful enough in the
-	 * majority of cases that we do it anyway.  Should think about more
-	 * rigorous ways to do it.
+	 * XXX 我们插值于其间的直方图，可能属于一个仅仅与声明类型二进制兼容的
+	 * 列。本质上我们是在假设：二进制兼容类型的语义足够相似，以至于我们
+	 * 可以用一种类型的操作符生成的直方图去估计另一种类型的选择性。这在某些
+	 * 情况下是彻头彻尾错误的——尤其是有符号与无符号解释的差异可能让我们
+	 * 出错。但在大多数情况下它足够有用，所以我们仍然这样做了。应该考虑
+	 * 更严谨的做法。
 	 */
 	switch (valuetypid)
 	{
 			/*
-			 * Built-in numeric types
+			 * 内建数值类型
 			 */
 		case BOOLOID:
 		case INT2OID:
@@ -4644,7 +4519,7 @@ convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
 			return !failure;
 
 			/*
-			 * Built-in string types
+			 * 内建字符串类型
 			 */
 		case CHAROID:
 		case BPCHAROID:
@@ -4660,9 +4535,8 @@ convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
 														 collid, &failure);
 
 				/*
-				 * Bail out if any of the values is not of string type.  We
-				 * might leak converted strings for the other value(s), but
-				 * that's not worth troubling over.
+				 * 如果任意值不是字符串类型，则退出。我们可能会泄漏其它
+				 * 值的已转换字符串，但这不值得专门处理。
 				 */
 				if (failure)
 					return false;
@@ -4677,11 +4551,11 @@ convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
 			}
 
 			/*
-			 * Built-in bytea type
+			 * 内建 bytea 类型
 			 */
 		case BYTEAOID:
 			{
-				/* We only support bytea vs bytea comparison */
+				/* 我们只支持 bytea 与 bytea 的比较 */
 				if (boundstypid != BYTEAOID)
 					return false;
 				convert_bytea_to_scalar(value, scaledvalue,
@@ -4691,7 +4565,7 @@ convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
 			}
 
 			/*
-			 * Built-in time types
+			 * 内建时间类型
 			 */
 		case TIMESTAMPOID:
 		case TIMESTAMPTZOID:
@@ -4728,10 +4602,9 @@ convert_to_scalar(Datum value, Oid valuetypid, Oid collid, double *scaledvalue,
 }
 
 /*
- * Do convert_to_scalar()'s work for any numeric data type.
+ * 为任意数值数据类型完成 convert_to_scalar() 的工作。
  *
- * On failure (e.g., unsupported typid), set *failure to true;
- * otherwise, that variable is not changed.
+ * 失败时（例如不支持的 typid），把 *failure 置为 true；否则该变量不变。
  */
 static double
 convert_numeric_to_scalar(Datum value, Oid typid, bool *failure)
@@ -4751,7 +4624,7 @@ convert_numeric_to_scalar(Datum value, Oid typid, bool *failure)
 		case FLOAT8OID:
 			return (double) DatumGetFloat8(value);
 		case NUMERICOID:
-			/* Note: out-of-range values will be clamped to +-HUGE_VAL */
+			/* 注意：超出范围的值会被钳制到 +-HUGE_VAL */
 			return (double)
 				DatumGetFloat8(DirectFunctionCall1(numeric_float8_no_overflow,
 												   value));
@@ -4767,7 +4640,7 @@ convert_numeric_to_scalar(Datum value, Oid typid, bool *failure)
 		case REGDICTIONARYOID:
 		case REGROLEOID:
 		case REGNAMESPACEOID:
-			/* we can treat OIDs as integers... */
+			/* 我们可以把 OID 当作整数来处理…… */
 			return (double) DatumGetObjectId(value);
 	}
 
@@ -4776,24 +4649,19 @@ convert_numeric_to_scalar(Datum value, Oid typid, bool *failure)
 }
 
 /*
- * Do convert_to_scalar()'s work for any character-string data type.
+ * 为任意字符串数据类型完成 convert_to_scalar() 的工作。
  *
- * String datatypes are converted to a scale that ranges from 0 to 1,
- * where we visualize the bytes of the string as fractional digits.
+ * 字符串类型被转换到从 0 到 1 的标尺上，我们把字符串的字节看作小数位。
  *
- * We do not want the base to be 256, however, since that tends to
- * generate inflated selectivity estimates; few databases will have
- * occurrences of all 256 possible byte values at each position.
- * Instead, use the smallest and largest byte values seen in the bounds
- * as the estimated range for each byte, after some fudging to deal with
- * the fact that we probably aren't going to see the full range that way.
+ * 不过我们不希望基数取 256，因为那往往会生成过高的选择性估计；
+ * 很少有数据库会在每个位置上都出现全部 256 种可能的字节值。相反，我们
+ * 把边界中出现的最小和最大字节值作为每个字节的估计范围，并在做一些
+ * 修正之后使用，以处理我们大概不会以那种方式看到完整范围这一事实。
  *
- * An additional refinement is that we discard any common prefix of the
- * three strings before computing the scaled values.  This allows us to
- * "zoom in" when we encounter a narrow data range.  An example is a phone
- * number database where all the values begin with the same area code.
- * (Actually, the bounds will be adjacent histogram-bin-boundary values,
- * so this is more likely to happen than you might think.)
+ * 另外一项改进是：在计算缩放值之前，我们先丢弃这三个字符串的任何公共
+ * 前缀。这让我们在遇到很窄的数据范围时能够“放大”。一个例子是电话号码
+ * 数据库，其中所有值都以相同的区号开头。（实际上，边界会是相邻的
+ * 直方图分箱边界值，所以这比你想象的更可能发生。）
  */
 static void
 convert_string_to_scalar(char *value,
@@ -4822,7 +4690,7 @@ convert_string_to_scalar(char *value,
 		if (rangehi < (unsigned char) *sptr)
 			rangehi = (unsigned char) *sptr;
 	}
-	/* If range includes any upper-case ASCII chars, make it include all */
+	/* 如果范围包含任何大写 ASCII 字符，则让它包含全部 */
 	if (rangelo <= 'Z' && rangehi >= 'A')
 	{
 		if (rangelo > 'A')
@@ -4830,7 +4698,7 @@ convert_string_to_scalar(char *value,
 		if (rangehi < 'Z')
 			rangehi = 'Z';
 	}
-	/* Ditto lower-case */
+	/* 小写同理 */
 	if (rangelo <= 'z' && rangehi >= 'a')
 	{
 		if (rangelo > 'a')
@@ -4838,7 +4706,7 @@ convert_string_to_scalar(char *value,
 		if (rangehi < 'z')
 			rangehi = 'z';
 	}
-	/* Ditto digits */
+	/* 数字同理 */
 	if (rangelo <= '9' && rangehi >= '0')
 	{
 		if (rangelo > '0')
@@ -4848,8 +4716,8 @@ convert_string_to_scalar(char *value,
 	}
 
 	/*
-	 * If range includes less than 10 chars, assume we have not got enough
-	 * data, and make it include regular ASCII set.
+	 * 如果范围包含的字符少于 10 个，就假设我们掌握的数据不足，并让它
+	 * 包含常规的 ASCII 字符集。
 	 */
 	if (rangehi - rangelo < 9)
 	{
@@ -4858,7 +4726,7 @@ convert_string_to_scalar(char *value,
 	}
 
 	/*
-	 * Now strip any common prefix of the three strings.
+	 * 现在去掉这三个字符串的任何公共前缀。
 	 */
 	while (*lobound)
 	{
@@ -4868,7 +4736,7 @@ convert_string_to_scalar(char *value,
 	}
 
 	/*
-	 * Now we can do the conversions.
+	 * 现在可以进行转换了。
 	 */
 	*scaledvalue = convert_one_string_to_scalar(value, rangelo, rangehi);
 	*scaledlobound = convert_one_string_to_scalar(lobound, rangelo, rangehi);
@@ -4884,21 +4752,19 @@ convert_one_string_to_scalar(char *value, int rangelo, int rangehi)
 				base;
 
 	if (slen <= 0)
-		return 0.0;				/* empty string has scalar value 0 */
+		return 0.0;				/* 空字符串的标量值为 0 */
 
 	/*
-	 * There seems little point in considering more than a dozen bytes from
-	 * the string.  Since base is at least 10, that will give us nominal
-	 * resolution of at least 12 decimal digits, which is surely far more
-	 * precision than this estimation technique has got anyway (especially in
-	 * non-C locales).  Also, even with the maximum possible base of 256, this
-	 * ensures denom cannot grow larger than 256^13 = 2.03e31, which will not
-	 * overflow on any known machine.
+	 * 从字符串中考虑超过一打的字节似乎意义不大。由于基数至少为 10，这
+	 * 会给我们至少 12 位十进制的名义精度，而这肯定远比这种估计技术本身
+	 * 能达到的精度更高（尤其是在非 C 区域设置下）。此外，即便使用最大
+	 * 可能的基数 256，这也能保证 denom 不会增长到超过 256^13 = 2.03e31，
+	 * 这在任何已知的机器上都不会溢出。
 	 */
 	if (slen > 12)
 		slen = 12;
 
-	/* Convert initial characters to fraction */
+	/* 把起始字符转换为小数 */
 	base = rangehi - rangelo + 1;
 	num = 0.0;
 	denom = base;
@@ -4918,13 +4784,13 @@ convert_one_string_to_scalar(char *value, int rangelo, int rangehi)
 }
 
 /*
- * Convert a string-type Datum into a palloc'd, null-terminated string.
+ * 把一个字符串类型的 Datum 转换为一个由 palloc 分配、以 null 结尾的字符串。
  *
- * On failure (e.g., unsupported typid), set *failure to true;
- * otherwise, that variable is not changed.  (We'll return NULL on failure.)
+ * 失败时（例如不支持的 typid），把 *failure 置为 true；否则该变量不变。
+ * （失败时我们会返回 NULL。）
  *
- * When using a non-C locale, we must pass the string through pg_strxfrm()
- * before continuing, so as to generate correct locale-specific results.
+ * 当使用非 C 区域设置时，我们必须先让字符串经过 pg_strxfrm() 处理，
+ * 以生成正确的区域相关结果。
  */
 static char *
 convert_string_datum(Datum value, Oid typid, Oid collid, bool *failure)
@@ -4965,25 +4831,23 @@ convert_string_datum(Datum value, Oid typid, Oid collid, bool *failure)
 		size_t		xfrmlen2 PG_USED_FOR_ASSERTS_ONLY;
 
 		/*
-		 * XXX: We could guess at a suitable output buffer size and only call
-		 * pg_strxfrm() twice if our guess is too small.
+		 * XXX: 我们可以猜测一个合适的输出缓冲区大小，只有当猜测过小时
+		 * 才调用两次 pg_strxfrm()。
 		 *
-		 * XXX: strxfrm doesn't support UTF-8 encoding on Win32, it can return
-		 * bogus data or set an error. This is not really a problem unless it
-		 * crashes since it will only give an estimation error and nothing
-		 * fatal.
+		 * XXX: strxfrm 在 Win32 上不支持 UTF-8 编码，它可能返回伪造的数据
+		 * 或设置一个错误。除非它导致崩溃，否则这其实不是问题，因为它只会
+		 * 造成估计误差而非致命错误。
 		 *
-		 * XXX: we do not check pg_strxfrm_enabled(). On some platforms and in
-		 * some cases, libc strxfrm() may return the wrong results, but that
-		 * will only lead to an estimation error.
+		 * XXX: 我们没有检查 pg_strxfrm_enabled()。在某些平台和某些情况下，
+		 * libc 的 strxfrm() 可能返回错误结果，但这只会导致估计误差。
 		 */
 		xfrmlen = pg_strxfrm(NULL, val, 0, mylocale);
 #ifdef WIN32
 
 		/*
-		 * On Windows, strxfrm returns INT_MAX when an error occurs. Instead
-		 * of trying to allocate this much memory (and fail), just return the
-		 * original string unmodified as if we were in the C locale.
+		 * 在 Windows 上，strxfrm 发生错误时会返回 INT_MAX。与其尝试分配
+		 * 这么大一块内存（并失败），不如就像处在 C 区域设置下那样直接返回
+		 * 原始的、未修改的字符串。
 		 */
 		if (xfrmlen == INT_MAX)
 			return val;
@@ -5004,15 +4868,14 @@ convert_string_datum(Datum value, Oid typid, Oid collid, bool *failure)
 }
 
 /*
- * Do convert_to_scalar()'s work for any bytea data type.
+ * 为任意 bytea 数据类型完成 convert_to_scalar() 的工作。
  *
- * Very similar to convert_string_to_scalar except we can't assume
- * null-termination and therefore pass explicit lengths around.
+ * 与 convert_string_to_scalar 非常相似，只是我们不能假定以 null 结尾，
+ * 因此要显式传递长度。
  *
- * Also, assumptions about likely "normal" ranges of characters have been
- * removed - a data range of 0..255 is always used, for now.  (Perhaps
- * someday we will add information about actual byte data range to
- * pg_statistic.)
+ * 另外，关于字符“正常”取值范围的假设已被去除——目前固定使用 0..255 的
+ * 数据范围。（也许将来我们会把关于实际字节数据范围的信息加入
+ * pg_statistic。）
  */
 static void
 convert_bytea_to_scalar(Datum value,
@@ -5037,13 +4900,13 @@ convert_bytea_to_scalar(Datum value,
 	unsigned char *histr = (unsigned char *) VARDATA_ANY(hiboundp);
 
 	/*
-	 * Assume bytea data is uniformly distributed across all byte values.
+	 * 假设 bytea 数据在所有字节值上均匀分布。
 	 */
 	rangelo = 0;
 	rangehi = 255;
 
 	/*
-	 * Now strip any common prefix of the three strings.
+	 * 现在去掉这三个字符串的任何公共前缀。
 	 */
 	minlen = Min(Min(valuelen, loboundlen), hiboundlen);
 	for (i = 0; i < minlen; i++)
@@ -5055,7 +4918,7 @@ convert_bytea_to_scalar(Datum value,
 	}
 
 	/*
-	 * Now we can do the conversions.
+	 * 现在可以进行转换了。
 	 */
 	*scaledvalue = convert_one_bytea_to_scalar(valstr, valuelen, rangelo, rangehi);
 	*scaledlobound = convert_one_bytea_to_scalar(lostr, loboundlen, rangelo, rangehi);
@@ -5071,16 +4934,16 @@ convert_one_bytea_to_scalar(unsigned char *value, int valuelen,
 				base;
 
 	if (valuelen <= 0)
-		return 0.0;				/* empty string has scalar value 0 */
+		return 0.0;				/* 空 bytea 的标量值为 0 */
 
 	/*
-	 * Since base is 256, need not consider more than about 10 chars (even
-	 * this many seems like overkill)
+	 * 由于基数为 256，没必要考虑超过大约 10 个字符（即便这么多似乎也
+	 * 有些多余）
 	 */
 	if (valuelen > 10)
 		valuelen = 10;
 
-	/* Convert initial characters to fraction */
+	/* 把起始字符转换为小数 */
 	base = rangehi - rangelo + 1;
 	num = 0.0;
 	denom = base;
@@ -5100,10 +4963,9 @@ convert_one_bytea_to_scalar(unsigned char *value, int valuelen,
 }
 
 /*
- * Do convert_to_scalar()'s work for any timevalue data type.
+ * 为任意时间值数据类型完成 convert_to_scalar() 的工作。
  *
- * On failure (e.g., unsupported typid), set *failure to true;
- * otherwise, that variable is not changed.
+ * 失败时（例如不支持的 typid），把 *failure 置为 true；否则该变量不变。
  */
 static double
 convert_timevalue_to_scalar(Datum value, Oid typid, bool *failure)
@@ -5121,13 +4983,12 @@ convert_timevalue_to_scalar(Datum value, Oid typid, bool *failure)
 				Interval   *interval = DatumGetIntervalP(value);
 
 				/*
-				 * Convert the month part of Interval to days using assumed
-				 * average month length of 365.25/12.0 days.  Not too
-				 * accurate, but plenty good enough for our purposes.
+				 * 把 Interval 的月份部分按假设的平均月长 365.25/12.0 天
+				 * 转换为天。不够精确，但对我们的用途来说已经足够好了。
 				 *
-				 * This also works for infinite intervals, which just have all
-				 * fields set to INT_MIN/INT_MAX, and so will produce a result
-				 * smaller/larger than any finite interval.
+				 * 这对无限 interval 同样有效——它只是把所有字段都设为
+				 * INT_MIN/INT_MAX，因此会产生比任何有限 interval 更小/更
+				 * 大的结果。
 				 */
 				return interval->time + interval->day * (double) USECS_PER_DAY +
 					interval->month * ((DAYS_PER_YEAR / (double) MONTHS_PER_YEAR) * USECS_PER_DAY);
@@ -5138,7 +4999,7 @@ convert_timevalue_to_scalar(Datum value, Oid typid, bool *failure)
 			{
 				TimeTzADT  *timetz = DatumGetTimeTzADTP(value);
 
-				/* use GMT-equivalent time */
+				/* 使用相当于 GMT 的时间 */
 				return (double) (timetz->time + (timetz->zone * 1000000.0));
 			}
 	}
@@ -5150,26 +5011,26 @@ convert_timevalue_to_scalar(Datum value, Oid typid, bool *failure)
 
 /*
  * get_restriction_variable
- *		Examine the args of a restriction clause to see if it's of the
- *		form (variable op pseudoconstant) or (pseudoconstant op variable),
- *		where "variable" could be either a Var or an expression in vars of a
- *		single relation.  If so, extract information about the variable,
- *		and also indicate which side it was on and the other argument.
+ *		检查一个限制子句的参数，看它是否形如
+ *		（变量 op 伪常量）或（伪常量 op 变量），
+ *		其中“变量”可以是一个 Var，也可以是某个单关系上的、由 Var 构成的
+ *		表达式。如果是，则提取关于该变量的信息，并指出它在哪一侧，以及
+ *		另一个参数是什么。
  *
- * Inputs:
- *	root: the planner info
- *	args: clause argument list
- *	varRelid: see specs for restriction selectivity functions
+ * 输入：
+ *	root: 规划器信息
+ *	args: 子句参数列表
+ *	varRelid: 参见限制选择性函数的规范说明
  *
- * Outputs: (these are valid only if true is returned)
- *	*vardata: gets information about variable (see examine_variable)
- *	*other: gets other clause argument, aggressively reduced to a constant
- *	*varonleft: set true if variable is on the left, false if on the right
+ * 输出：（仅在返回 true 时才有效）
+ *	*vardata: 取得关于变量的信息（参见 examine_variable）
+ *	*other: 取得子句的另一参数，积极地化简为一个常量
+ *	*varonleft: 若变量在左侧则置 true，在右侧则置 false
  *
- * Returns true if a variable is identified, otherwise false.
+ * 如果识别出一个变量则返回 true，否则返回 false。
  *
- * Note: if there are Vars on both sides of the clause, we must fail, because
- * callers are expecting that the other side will act like a pseudoconstant.
+ * 注意：如果子句两侧都有 Var，我们必须失败，因为调用方期望另一侧
+ * 表现得像个伪常量。
  */
 bool
 get_restriction_variable(PlannerInfo *root, List *args, int varRelid,
@@ -5180,7 +5041,7 @@ get_restriction_variable(PlannerInfo *root, List *args, int varRelid,
 			   *right;
 	VariableStatData rdata;
 
-	/* Fail if not a binary opclause (probably shouldn't happen) */
+	/* 若不是二元操作符子句则失败（大概不该发生） */
 	if (list_length(args) != 2)
 		return false;
 
@@ -5188,20 +5049,19 @@ get_restriction_variable(PlannerInfo *root, List *args, int varRelid,
 	right = (Node *) lsecond(args);
 
 	/*
-	 * Examine both sides.  Note that when varRelid is nonzero, Vars of other
-	 * relations will be treated as pseudoconstants.
+	 * 检查两侧。注意，当 varRelid 非零时，其它关系的 Var 会被当作伪常量。
 	 */
 	examine_variable(root, left, varRelid, vardata);
 	examine_variable(root, right, varRelid, &rdata);
 
 	/*
-	 * If one side is a variable and the other not, we win.
+	 * 如果一侧是变量而另一侧不是，我们就成功了。
 	 */
 	if (vardata->rel && rdata.rel == NULL)
 	{
 		*varonleft = true;
 		*other = estimate_expression_value(root, rdata.var);
-		/* Assume we need no ReleaseVariableStats(rdata) here */
+		/* 这里假定无需调用 ReleaseVariableStats(rdata) */
 		return true;
 	}
 
@@ -5209,12 +5069,12 @@ get_restriction_variable(PlannerInfo *root, List *args, int varRelid,
 	{
 		*varonleft = false;
 		*other = estimate_expression_value(root, vardata->var);
-		/* Assume we need no ReleaseVariableStats(*vardata) here */
+		/* 这里假定无需调用 ReleaseVariableStats(*vardata) */
 		*vardata = rdata;
 		return true;
 	}
 
-	/* Oops, clause has wrong structure (probably var op var) */
+	/* 糟糕，子句结构不对（大概是 var op var） */
 	ReleaseVariableStats(*vardata);
 	ReleaseVariableStats(rdata);
 
@@ -5223,13 +5083,12 @@ get_restriction_variable(PlannerInfo *root, List *args, int varRelid,
 
 /*
  * get_join_variables
- *		Apply examine_variable() to each side of a join clause.
- *		Also, attempt to identify whether the join clause has the same
- *		or reversed sense compared to the SpecialJoinInfo.
+ *		对连接子句的每一侧调用 examine_variable()。同时，尝试判断该连接子句
+ *		与 SpecialJoinInfo 相比，方向是相同还是相反。
  *
- * We consider the join clause "normal" if it is "lhs_var OP rhs_var",
- * or "reversed" if it is "rhs_var OP lhs_var".  In complicated cases
- * where we can't tell for sure, we default to assuming it's normal.
+ * 如果连接子句形如 "lhs_var OP rhs_var"，我们视其为“正常”；若形如
+ * "rhs_var OP lhs_var"，则视为“相反”。在无法确定而情况复杂时，我们
+ * 默认假设它是正常的。
  */
 void
 get_join_variables(PlannerInfo *root, List *args, SpecialJoinInfo *sjinfo,
@@ -5250,15 +5109,15 @@ get_join_variables(PlannerInfo *root, List *args, SpecialJoinInfo *sjinfo,
 
 	if (vardata1->rel &&
 		bms_is_subset(vardata1->rel->relids, sjinfo->syn_righthand))
-		*join_is_reversed = true;	/* var1 is on RHS */
+		*join_is_reversed = true;	/* var1 在右侧 (RHS) */
 	else if (vardata2->rel &&
 			 bms_is_subset(vardata2->rel->relids, sjinfo->syn_lefthand))
-		*join_is_reversed = true;	/* var2 is on LHS */
+		*join_is_reversed = true;	/* var2 在左侧 (LHS) */
 	else
 		*join_is_reversed = false;
 }
 
-/* statext_expressions_load copies the tuple, so just pfree it. */
+/* statext_expressions_load 会复制该元组，所以这里只需 pfree 它即可。 */
 static void
 ReleaseDummy(HeapTuple tuple)
 {
@@ -5267,38 +5126,33 @@ ReleaseDummy(HeapTuple tuple)
 
 /*
  * examine_variable
- *		Try to look up statistical data about an expression.
- *		Fill in a VariableStatData struct to describe the expression.
+ *		尝试查找关于某个表达式的统计信息。填充一个 VariableStatData
+ *		结构来描述该表达式。
  *
- * Inputs:
- *	root: the planner info
- *	node: the expression tree to examine
- *	varRelid: see specs for restriction selectivity functions
+ * 输入：
+ *	root: 规划器信息
+ *	node: 待检查的表达式树
+ *	varRelid: 参见限制选择性函数的规范说明
  *
- * Outputs: *vardata is filled as follows:
- *	var: the input expression (with any phvs or binary relabeling stripped,
- *		if it is or contains a variable; but otherwise unchanged)
- *	rel: RelOptInfo for relation containing variable; NULL if expression
- *		contains no Vars (NOTE this could point to a RelOptInfo of a
- *		subquery, not one in the current query).
- *	statsTuple: the pg_statistic entry for the variable, if one exists;
- *		otherwise NULL.
- *	freefunc: pointer to a function to release statsTuple with.
- *	vartype: exposed type of the expression; this should always match
- *		the declared input type of the operator we are estimating for.
- *	atttype, atttypmod: actual type/typmod of the "var" expression.  This is
- *		commonly the same as the exposed type of the variable argument,
- *		but can be different in binary-compatible-type cases.
- *	isunique: true if we were able to match the var to a unique index, a
- *		single-column DISTINCT or GROUP-BY clause, implying its values are
- *		unique for this query.  (Caution: this should be trusted for
- *		statistical purposes only, since we do not check indimmediate nor
- *		verify that the exact same definition of equality applies.)
- *	acl_ok: true if current user has permission to read all table rows from
- *		the column(s) underlying the pg_statistic entry.  This is consulted by
- *		statistic_proc_security_check().
+ * 输出：*vardata 按如下方式填充：
+ *	var: 输入表达式（如果它本身是或包含变量，则去掉任何 phv 或二进制
+ *		relabeling；否则保持不变）
+ *	rel: 包含该变量的关系的 RelOptInfo；如果表达式不含任何 Var 则为 NULL
+ *		（注意：这可能指向一个子查询的 RelOptInfo，而非当前查询中的）。
+ *	statsTuple: 该变量的 pg_statistic 项，若存在则为其；否则为 NULL。
+ *	freefunc: 用于释放 statsTuple 的函数指针。
+ *	vartype: 表达式的暴露类型；这应当始终与我们正在估计的操作符的声明
+ *		输入类型相匹配。
+ *	atttype, atttypmod: “var”表达式的实际类型/ typmod。这通常与变量参数
+ *		的暴露类型相同，但在二进制兼容类型的情况下可能不同。
+ *	isunique: 如果我们能把该 var 匹配到唯一索引、单列 DISTINCT 或 GROUP-BY
+ *		子句，则为 true，这意味着它的取值在本查询中是唯一的。（注意：这只
+ *		应出于统计目的而信任，因为我们既不检查 indimmediate，也不验证所
+ *		用的相等定义是否完全相同。）
+ *	acl_ok: 如果当前用户拥有读取 pg_statistic 项底层列的所有表行的权限，
+ *		则为 true。statistic_proc_security_check() 会查阅它。
  *
- * Caller is responsible for doing ReleaseVariableStats() before exiting.
+ * 调用方负责在退出前调用 ReleaseVariableStats()。
  */
 void
 examine_variable(PlannerInfo *root, Node *node, int varRelid,
@@ -5309,52 +5163,49 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 	Relids		basevarnos;
 	RelOptInfo *onerel;
 
-	/* Make sure we don't return dangling pointers in vardata */
+	/* 确保不会在 vardata 中返回悬空指针 */
 	MemSet(vardata, 0, sizeof(VariableStatData));
 
-	/* Save the exposed type of the expression */
+	/* 保存表达式的暴露类型 */
 	vardata->vartype = exprType(node);
 
 	/*
-	 * PlaceHolderVars are transparent for the purpose of statistics lookup;
-	 * they do not alter the value distribution of the underlying expression.
-	 * However, they can obscure the structure, preventing us from recognizing
-	 * matches to base columns, index expressions, or extended statistics.  So
-	 * strip them out first.
+	 * 就查找统计信息而言，PlaceHolderVar 是透明的；它们不会改变底层表达式
+	 * 的取值分布。然而，它们可能掩盖结构，使我们无法识别出与基列、索引
+	 * 表达式或扩展统计的匹配。所以先把它们剥离出去。
 	 */
 	basenode = strip_all_phvs_deep(root, node);
 
 	/*
-	 * Look inside any binary-compatible relabeling.  We need to handle nested
-	 * RelabelType nodes here, because the prior stripping of PlaceHolderVars
-	 * may have brought separate RelabelTypes into adjacency.
+	 * 查看任何二进制兼容的 relabeling 内部。我们需要在这里处理嵌套的
+	 * RelabelType 节点，因为前面剥离 PlaceHolderVar 后，可能把独立的
+	 * RelabelType 节点变为了相邻。
 	 */
 	while (IsA(basenode, RelabelType))
 		basenode = (Node *) ((RelabelType *) basenode)->arg;
 
-	/* Fast path for a simple Var */
+	/* 简单 Var 的快速路径 */
 	if (IsA(basenode, Var) &&
 		(varRelid == 0 || varRelid == ((Var *) basenode)->varno))
 	{
 		Var		   *var = (Var *) basenode;
 
-		/* Set up result fields other than the stats tuple */
-		vardata->var = basenode;	/* return Var without phvs or relabeling */
+		/* 设置除统计元组以外的其它结果字段 */
+		vardata->var = basenode;	/* 返回去掉 phv 和 relabeling 的 Var */
 		vardata->rel = find_base_rel(root, var->varno);
 		vardata->atttype = var->vartype;
 		vardata->atttypmod = var->vartypmod;
 		vardata->isunique = has_unique_index(vardata->rel, var->varattno);
 
-		/* Try to locate some stats */
+		/* 尝试定位一些统计信息 */
 		examine_simple_variable(root, var, vardata);
 
 		return;
 	}
 
 	/*
-	 * Okay, it's a more complicated expression.  Determine variable
-	 * membership.  Note that when varRelid isn't zero, only vars of that
-	 * relation are considered "real" vars.
+	 * 好，这是一个更复杂的表达式。确定变量的归属。注意，当 varRelid
+	 * 非零时，只有该关系的 Var 才被视为“真正的” Var。
 	 */
 	varnos = pull_varnos(root, basenode);
 	basevarnos = bms_difference(varnos, root->outer_join_rels);
@@ -5363,40 +5214,40 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 
 	if (bms_is_empty(basevarnos))
 	{
-		/* No Vars at all ... must be pseudo-constant clause */
+		/* 完全没有 Var……必定是伪常量子句 */
 	}
 	else
 	{
 		int			relid;
 
-		/* Check if the expression is in vars of a single base relation */
+		/* 检查表达式是否位于单个基关系的 Var 中 */
 		if (bms_get_singleton_member(basevarnos, &relid))
 		{
 			if (varRelid == 0 || varRelid == relid)
 			{
 				onerel = find_base_rel(root, relid);
 				vardata->rel = onerel;
-				node = basenode;	/* strip any phvs or relabeling */
+				node = basenode;	/* 去掉任何 phv 或 relabeling */
 			}
-			/* else treat it as a constant */
+			/* 否则把它当作常量 */
 		}
 		else
 		{
-			/* varnos has multiple relids */
+			/* varnos 包含多个 relid */
 			if (varRelid == 0)
 			{
-				/* treat it as a variable of a join relation */
+				/* 把它当作连接关系的一个变量 */
 				vardata->rel = find_join_rel(root, varnos);
-				node = basenode;	/* strip any phvs or relabeling */
+				node = basenode;	/* 去掉任何 phv 或 relabeling */
 			}
 			else if (bms_is_member(varRelid, varnos))
 			{
-				/* ignore the vars belonging to other relations */
+				/* 忽略属于其它关系的 Var */
 				vardata->rel = find_base_rel(root, varRelid);
-				node = basenode;	/* strip any phvs or relabeling */
-				/* note: no point in expressional-index search here */
+				node = basenode;	/* 去掉任何 phv 或 relabeling */
+				/* 注意：这里没有表达式索引搜索的意义 */
 			}
-			/* else treat it as a constant */
+			/* 否则把它当作常量 */
 		}
 	}
 
@@ -5408,26 +5259,22 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 
 	if (onerel)
 	{
-		/*
-		 * We have an expression in vars of a single relation.  Try to match
-		 * it to expressional index columns, in hopes of finding some
-		 * statistics.
-		 *
-		 * Note that we consider all index columns including INCLUDE columns,
-		 * since there could be stats for such columns.  But the test for
-		 * uniqueness needs to be warier.
-		 *
-		 * XXX it's conceivable that there are multiple matches with different
-		 * index opfamilies; if so, we need to pick one that matches the
-		 * operator we are estimating for.  FIXME later.
-		 */
-		ListCell   *ilist;
+	/*
+	 * 我们有一个由单关系 Var 构成的表达式。尝试把它与表达式索引列匹配，
+	 * 希望能够找到一些统计信息。
+	 *
+	 * 注意，我们考虑所有索引列，包括 INCLUDE 列，因为这类列上可能有
+	 * 统计信息。但对唯一性的检查需要更谨慎。
+	 *
+	 * XXX 有可能存在多个匹配、但对应不同索引操作符族的情况；如果是这样，
+	 * 我们需要挑选一个与我们正在估计的操作符匹配的。以后再修（FIXME）。
+	 */
+	ListCell   *ilist;
 		ListCell   *slist;
 
 		/*
-		 * The nullingrels bits within the expression could prevent us from
-		 * matching it to expressional index columns or to the expressions in
-		 * extended statistics.  So strip them out first.
+		 * 表达式中的 nullingrels 位可能会妨碍我们把它与表达式索引列或
+		 * 扩展统计中的表达式匹配。所以先把它们剥离出去。
 		 */
 		if (bms_overlap(varnos, root->outer_join_rels))
 			node = remove_nulling_relids(node, root->outer_join_rels, NULL);
@@ -5438,9 +5285,9 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 			ListCell   *indexpr_item;
 			int			pos;
 
-			indexpr_item = list_head(index->indexprs);
-			if (indexpr_item == NULL)
-				continue;		/* no expressions here... */
+		indexpr_item = list_head(index->indexprs);
+		if (indexpr_item == NULL)
+			continue;		/* 这里没有表达式…… */
 
 			for (pos = 0; pos < index->ncolumns; pos++)
 			{
@@ -5455,37 +5302,33 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 						indexkey = (Node *) ((RelabelType *) indexkey)->arg;
 					if (equal(node, indexkey))
 					{
-						/*
-						 * Found a match ... is it a unique index? Tests here
-						 * should match has_unique_index().
-						 */
-						if (index->unique &&
+					/*
+					 * 找到了匹配……它是唯一索引吗？这里的检查应当与
+					 * has_unique_index() 一致。
+					 */
+					if (index->unique &&
 							index->nkeycolumns == 1 &&
 							pos == 0 &&
 							(index->indpred == NIL || index->predOK))
 							vardata->isunique = true;
 
+					/*
+					 * 它有统计信息吗？我们只考虑非部分索引的统计，因为
+					 * 部分索引大概不能反映整个关系的统计；上面关于唯一性的
+					 * 检查是我们从部分索引获取的唯一信息。
+					 *
+					 * 不过，索引统计钩子必须自己决定如何处理部分索引。
+					 */
+					if (get_index_stats_hook &&
+						(*get_index_stats_hook) (root, index->indexoid,
+												 pos + 1, vardata))
+					{
 						/*
-						 * Has it got stats?  We only consider stats for
-						 * non-partial indexes, since partial indexes probably
-						 * don't reflect whole-relation statistics; the above
-						 * check for uniqueness is the only info we take from
-						 * a partial index.
-						 *
-						 * An index stats hook, however, must make its own
-						 * decisions about what to do with partial indexes.
+						 * 钩子接管了获取统计元组的职责。如果它确实提供了
+						 * 元组，那它最好也提供一个 freefunc。
 						 */
-						if (get_index_stats_hook &&
-							(*get_index_stats_hook) (root, index->indexoid,
-													 pos + 1, vardata))
-						{
-							/*
-							 * The hook took control of acquiring a stats
-							 * tuple.  If it did supply a tuple, it'd better
-							 * have supplied a freefunc.
-							 */
-							if (HeapTupleIsValid(vardata->statsTuple) &&
-								!vardata->freefunc)
+						if (HeapTupleIsValid(vardata->statsTuple) &&
+							!vardata->freefunc)
 								elog(ERROR, "no function provided to release variable stats with");
 						}
 						else if (index->indpred == NIL)
@@ -5499,38 +5342,29 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 
 							if (HeapTupleIsValid(vardata->statsTuple))
 							{
-								/*
-								 * Test if user has permission to access all
-								 * rows from the index's table.
-								 *
-								 * For simplicity, we insist on the whole
-								 * table being selectable, rather than trying
-								 * to identify which column(s) the index
-								 * depends on.
-								 *
-								 * Note that for an inheritance child,
-								 * permissions are checked on the inheritance
-								 * root parent, and whole-table select
-								 * privilege on the parent doesn't quite
-								 * guarantee that the user could read all
-								 * columns of the child.  But in practice it's
-								 * unlikely that any interesting security
-								 * violation could result from allowing access
-								 * to the expression index's stats, so we
-								 * allow it anyway.  See similar code in
-								 * examine_simple_variable() for additional
-								 * comments.
-								 */
-								vardata->acl_ok =
+							/*
+							 * 测试用户是否有权限访问该索引表的所有行。
+							 *
+							 * 为简单起见，我们要求整张表都是可查询的，而
+							 * 不是去判断该索引依赖于哪些列。
+							 *
+							 * 注意，对于继承子表，权限是在继承的根父表上检查
+							 * 的，而父表上整表可查询的权限并不能完全保证用户
+							 * 能读到子表的所有列。但实际上，允许访问表达式
+							 * 索引的统计信息不太可能造成任何值得关注的安全
+							 * 违规，因此我们仍然允许。更多说明参见
+							 * examine_simple_variable() 中的类似代码。
+							 */
+							vardata->acl_ok =
 									all_rows_selectable(root,
 														index->rel->relid,
 														NULL);
 							}
-							else
-							{
-								/* suppress leakproofness checks later */
-								vardata->acl_ok = true;
-							}
+						else
+						{
+							/* 抑制后续对 leakproofness 的检查 */
+							vardata->acl_ok = true;
+						}
 						}
 						if (vardata->statsTuple)
 							break;
@@ -5543,10 +5377,9 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 		}
 
 		/*
-		 * Search extended statistics for one with a matching expression.
-		 * There might be multiple ones, so just grab the first one. In the
-		 * future, we might consider the statistics target (and pick the most
-		 * accurate statistics) and maybe some other parameters.
+		 * 在扩展统计中搜索包含匹配表达式的那一个。可能存在多个，所以这里
+		 * 只取第一个。将来，我们或许会考虑统计目标（并挑选最精确的统计），
+		 * 以及其它一些参数。
 		 */
 		foreach(slist, onerel->statlist)
 		{
@@ -5556,17 +5389,17 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 			int			pos;
 
 			/*
-			 * Stop once we've found statistics for the expression (either
-			 * from extended stats, or for an index in the preceding loop).
+			 * 一旦已经为该表达式找到统计信息（无论是来自扩展统计，还是来自
+			 * 前面循环中的索引），就停止。
 			 */
 			if (vardata->statsTuple)
 				break;
 
-			/* skip stats without per-expression stats */
+			/* 跳过没有逐表达式统计的统计对象 */
 			if (info->kind != STATS_EXT_EXPRESSIONS)
 				continue;
 
-			/* skip stats with mismatching stxdinherit value */
+			/* 跳过 stxdinherit 值不匹配的统计 */
 			if (info->inherit != rte->inh)
 				continue;
 
@@ -5577,18 +5410,18 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 
 				Assert(expr);
 
-				/* strip RelabelType before comparing it */
-				if (expr && IsA(expr, RelabelType))
-					expr = (Node *) ((RelabelType *) expr)->arg;
+			/* 比较前先去掉 RelabelType */
+			if (expr && IsA(expr, RelabelType))
+				expr = (Node *) ((RelabelType *) expr)->arg;
 
-				/* found a match, see if we can extract pg_statistic row */
-				if (equal(node, expr))
+			/* 找到匹配，看看能否提取出 pg_statistic 行 */
+			if (equal(node, expr))
 				{
-					/*
-					 * XXX Not sure if we should cache the tuple somewhere.
-					 * Now we just create a new copy every time.
-					 */
-					vardata->statsTuple =
+				/*
+				 * XXX 不确定是否应该把这个元组缓存到某处。目前我们只是
+				 * 每次都新建一份副本。
+				 */
+				vardata->statsTuple =
 						statext_expressions_load(info->statOid, rte->inh, pos);
 
 					/* Nothing to release if no data found */
@@ -5598,22 +5431,16 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 					}
 
 					/*
-					 * Test if user has permission to access all rows from the
-					 * table.
+					 * 测试用户是否有权限访问该表的所有行。
 					 *
-					 * For simplicity, we insist on the whole table being
-					 * selectable, rather than trying to identify which
-					 * column(s) the statistics object depends on.
+					 * 为简单起见，我们要求整张表都是可查询的，而不是去判断
+					 * 统计对象依赖于哪些列。
 					 *
-					 * Note that for an inheritance child, permissions are
-					 * checked on the inheritance root parent, and whole-table
-					 * select privilege on the parent doesn't quite guarantee
-					 * that the user could read all columns of the child.  But
-					 * in practice it's unlikely that any interesting security
-					 * violation could result from allowing access to the
-					 * expression stats, so we allow it anyway.  See similar
-					 * code in examine_simple_variable() for additional
-					 * comments.
+					 * 注意，对于继承子表，权限是在继承的根父表上检查的，而
+					 * 父表上整表可查询的权限并不能完全保证用户能读到子表的
+					 * 所有列。但实际上，允许访问表达式统计信息不太可能造成
+					 * 任何值得关注的安全违规，因此我们仍然允许。更多说明
+					 * 参见 examine_simple_variable() 中的类似代码。
 					 */
 					vardata->acl_ok = all_rows_selectable(root,
 														  onerel->relid,
@@ -5632,17 +5459,17 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 
 /*
  * strip_all_phvs_deep
- *		Deeply strip all PlaceHolderVars in an expression.
+ *		深度剥离一个表达式中的所有 PlaceHolderVar。
 
- * As a performance optimization, we first use a lightweight walker to check
- * for the presence of any PlaceHolderVars.  The expensive mutator is invoked
- * only if a PlaceHolderVar is found, avoiding unnecessary memory allocation
- * and tree copying in the common case where no PlaceHolderVars are present.
+ * 作为一种性能优化，我们首先用一个轻量的 walker 检查是否存在任何
+ * PlaceHolderVar。只有在确实找到了 PlaceHolderVar 时，才会调用开销较大的
+ * mutator，从而在没有 PlaceHolderVar 的常见情况下避免不必要的内存分配
+ * 和树拷贝。
  */
 static Node *
 strip_all_phvs_deep(PlannerInfo *root, Node *node)
 {
-	/* If there are no PHVs anywhere, we needn't work hard */
+	/* 如果任何地方都没有 PHV，我们就无需费力 */
 	if (root->glob->lastPHId == 0)
 		return node;
 
@@ -5653,8 +5480,7 @@ strip_all_phvs_deep(PlannerInfo *root, Node *node)
 
 /*
  * contain_placeholder_walker
- *		Lightweight walker to check if an expression contains any
- *		PlaceHolderVars
+ *		轻量 walker，用于检查一个表达式是否包含任何 PlaceHolderVar
  */
 static bool
 contain_placeholder_walker(Node *node, void *context)
@@ -5669,7 +5495,7 @@ contain_placeholder_walker(Node *node, void *context)
 
 /*
  * strip_all_phvs_mutator
- *		Mutator to deeply strip all PlaceHolderVars
+ *		深度剥离所有 PlaceHolderVar 的 mutator
  */
 static Node *
 strip_all_phvs_mutator(Node *node, void *context)
@@ -5678,7 +5504,7 @@ strip_all_phvs_mutator(Node *node, void *context)
 		return NULL;
 	if (IsA(node, PlaceHolderVar))
 	{
-		/* Strip it and recurse into its contained expression */
+		/* 剥离它，并递归处理它包含的表达式 */
 		PlaceHolderVar *phv = (PlaceHolderVar *) node;
 
 		return strip_all_phvs_mutator((Node *) phv->phexpr, context);
@@ -5689,12 +5515,12 @@ strip_all_phvs_mutator(Node *node, void *context)
 
 /*
  * examine_simple_variable
- *		Handle a simple Var for examine_variable
+ *		为 examine_variable 处理一个简单的 Var
  *
- * This is split out as a subroutine so that we can recurse to deal with
- * Vars referencing subqueries (either sub-SELECT-in-FROM or CTE style).
+ * 把它拆成子例程，是为了让我们能够递归处理引用了子查询（无论是
+ * FROM 中的子 SELECT，还是 CTE 风格）的 Var。
  *
- * We already filled in all the fields of *vardata except for the stats tuple.
+ * 除了统计元组外，*vardata 的所有字段我们都已经填好了。
  */
 static void
 examine_simple_variable(PlannerInfo *root, Var *var,
@@ -5708,8 +5534,8 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		(*get_relation_stats_hook) (root, rte, var->varattno, vardata))
 	{
 		/*
-		 * The hook took control of acquiring a stats tuple.  If it did supply
-		 * a tuple, it'd better have supplied a freefunc.
+		 * 钩子接管了获取统计元组的职责。如果它确实提供了元组，那它最好
+		 * 也提供了一个 freefunc。
 		 */
 		if (HeapTupleIsValid(vardata->statsTuple) &&
 			!vardata->freefunc)
@@ -5718,8 +5544,7 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 	else if (rte->rtekind == RTE_RELATION)
 	{
 		/*
-		 * Plain table or parent of an inheritance appendrel, so look up the
-		 * column in pg_statistic
+		 * 普通表，或继承 appendrel 的父表，因此在 pg_statistic 中查找该列
 		 */
 		vardata->statsTuple = SearchSysCache3(STATRELATTINH,
 											  ObjectIdGetDatum(rte->relid),
@@ -5730,15 +5555,13 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		if (HeapTupleIsValid(vardata->statsTuple))
 		{
 			/*
-			 * Test if user has permission to read all rows from this column.
+			 * 测试用户是否有权限读取该列的所有行。
 			 *
-			 * This requires that the user has the appropriate SELECT
-			 * privileges and that there are no securityQuals from security
-			 * barrier views or RLS policies.  If that's not the case, then we
-			 * only permit leakproof functions to be passed pg_statistic data
-			 * in vardata, otherwise the functions might reveal data that the
-			 * user doesn't have permission to see --- see
-			 * statistic_proc_security_check().
+			 * 这要求用户具备相应的 SELECT 权限，且不存在来自 security
+			 * barrier 视图或 RLS 策略的 securityQual。若不满足，则我们
+			 * 只允许把 pg_statistic 数据传给 leakproof 函数，否则这些函数
+			 * 可能会泄露用户无权查看的数据——参见
+			 * statistic_proc_security_check()。
 			 */
 			vardata->acl_ok =
 				all_rows_selectable(root, var->varno,
@@ -5746,7 +5569,7 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		}
 		else
 		{
-			/* suppress any possible leakproofness checks later */
+			/* 抑制后续任何可能的 leakproofness 检查 */
 			vardata->acl_ok = true;
 		}
 	}
@@ -5754,11 +5577,10 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 			 (rte->rtekind == RTE_CTE && !rte->self_reference))
 	{
 		/*
-		 * Plain subquery (not one that was converted to an appendrel) or
-		 * non-recursive CTE.  In either case, we can try to find out what the
-		 * Var refers to within the subquery.  We skip this for appendrel and
-		 * recursive-CTE cases because any column stats we did find would
-		 * likely not be very relevant.
+		 * 普通子查询（不是被转换为 appendrel 的那种），或非递归 CTE。
+		 * 这两种情况下，我们都可尝试找出该 Var 在子查询内引用的是什么。
+		 * 对于 appendrel 和递归 CTE 的情况我们跳过，因为即便找到了列
+		 * 统计，大概也并不十分相关。
 		 */
 		PlannerInfo *subroot;
 		Query	   *subquery;
@@ -5766,24 +5588,23 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		TargetEntry *ste;
 
 		/*
-		 * Punt if it's a whole-row var rather than a plain column reference.
+		 * 如果是 whole-row var 而不是普通的列引用，则放弃。
 		 */
 		if (var->varattno == InvalidAttrNumber)
 			return;
 
 		/*
-		 * Otherwise, find the subquery's planner subroot.
+		 * 否则，找到子查询的规划器 subroot。
 		 */
 		if (rte->rtekind == RTE_SUBQUERY)
 		{
 			RelOptInfo *rel;
 
 			/*
-			 * Fetch RelOptInfo for subquery.  Note that we don't change the
-			 * rel returned in vardata, since caller expects it to be a rel of
-			 * the caller's query level.  Because we might already be
-			 * recursing, we can't use that rel pointer either, but have to
-			 * look up the Var's rel afresh.
+			 * 获取子查询的 RelOptInfo。注意，我们不会改变 vardata 中返回的
+			 * rel，因为调用方期望它是调用方查询层级的 rel。由于我们可能
+			 * 已经在递归中了，因此也不能使用那个 rel 指针，而必须重新查找
+			 * 该 Var 的 rel。
 			 */
 			rel = find_base_rel(root, var->varno);
 
@@ -5791,7 +5612,7 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		}
 		else
 		{
-			/* CTE case is more difficult */
+			/* CTE 的情况更棘手 */
 			PlannerInfo *cteroot;
 			Index		levelsup;
 			int			ndx;
@@ -5799,22 +5620,21 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 			ListCell   *lc;
 
 			/*
-			 * Find the referenced CTE, and locate the subroot previously made
-			 * for it.
+			 * 找到被引用的 CTE，并定位之前为它创建的 subroot。
 			 */
 			levelsup = rte->ctelevelsup;
 			cteroot = root;
 			while (levelsup-- > 0)
 			{
 				cteroot = cteroot->parent_root;
-				if (!cteroot)	/* shouldn't happen */
+				if (!cteroot)	/* 不应发生 */
 					elog(ERROR, "bad levelsup for CTE \"%s\"", rte->ctename);
 			}
 
 			/*
-			 * Note: cte_plan_ids can be shorter than cteList, if we are still
-			 * working on planning the CTEs (ie, this is a side-reference from
-			 * another CTE).  So we mustn't use forboth here.
+			 * 注意：如果我们仍在规划 CTE（即，这是来自另一个 CTE 的侧向
+			 * 引用），cte_plan_ids 可能比 cteList 更短。所以我们这里不能用
+			 * forboth。
 			 */
 			ndx = 0;
 			foreach(lc, cteroot->parse->cteList)
@@ -5825,7 +5645,7 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 					break;
 				ndx++;
 			}
-			if (lc == NULL)		/* shouldn't happen */
+			if (lc == NULL)		/* 不应发生 */
 				elog(ERROR, "could not find CTE \"%s\"", rte->ctename);
 			if (ndx >= list_length(cteroot->cte_plan_ids))
 				elog(ERROR, "could not find plan for CTE \"%s\"", rte->ctename);
@@ -5835,34 +5655,31 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 			subroot = list_nth(root->glob->subroots, plan_id - 1);
 		}
 
-		/* If the subquery hasn't been planned yet, we have to punt */
+		/* 如果子查询尚未被规划，我们只能放弃 */
 		if (subroot == NULL)
 			return;
 		Assert(IsA(subroot, PlannerInfo));
 
 		/*
-		 * We must use the subquery parsetree as mangled by the planner, not
-		 * the raw version from the RTE, because we need a Var that will refer
-		 * to the subroot's live RelOptInfos.  For instance, if any subquery
-		 * pullup happened during planning, Vars in the targetlist might have
-		 * gotten replaced, and we need to see the replacement expressions.
+		 * 我们必须使用被规划器改动过的子查询 parsetree，而不是来自 RTE 的
+		 * 原始版本，因为我们需要一个能引用 subroot 的活动 RelOptInfo 的
+		 * Var。例如，如果规划过程中发生了任何子查询上拉，目标列表中的 Var
+		 * 可能已被替换，而我们需要看到那些替换后的表达式。
 		 */
 		subquery = subroot->parse;
 		Assert(IsA(subquery, Query));
 
 		/*
-		 * Punt if subquery uses set operations or grouping sets, as these
-		 * will mash underlying columns' stats beyond recognition.  (Set ops
-		 * are particularly nasty; if we forged ahead, we would return stats
-		 * relevant to only the leftmost subselect...)	DISTINCT is also
-		 * problematic, but we check that later because there is a possibility
-		 * of learning something even with it.
+		 * 如果子查询使用了集合操作或分组集，则放弃，因为它们会把底层列的
+		 * 统计搅得面目全非。（集合操作尤其讨厌；如果我们硬来，只会返回
+		 * 只与最左侧子查询相关的统计……）DISTINCT 同样成问题，但我们稍后
+		 * 再检查它，因为即便在有 DISTINCT 的情况下也仍有可能了解到一些信息。
 		 */
 		if (subquery->setOperations ||
 			subquery->groupingSets)
 			return;
 
-		/* Get the subquery output expression referenced by the upper Var */
+		/* 获取上层 Var 所引用的子查询输出表达式 */
 		if (subquery->returningList)
 			subtlist = subquery->returningList;
 		else
@@ -5874,56 +5691,50 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		var = (Var *) ste->expr;
 
 		/*
-		 * If subquery uses DISTINCT, we can't make use of any stats for the
-		 * variable ... but, if it's the only DISTINCT column, we are entitled
-		 * to consider it unique.  We do the test this way so that it works
-		 * for cases involving DISTINCT ON.
+		 * 如果子查询使用了 DISTINCT，我们就无法利用该变量的任何统计……
+		 * 但如果它是唯一的 DISTINCT 列，我们则有权认为它是唯一的。我们
+		 * 这样测试，是为了让它在涉及 DISTINCT ON 的情况下也能生效。
 		 */
 		if (subquery->distinctClause)
 		{
 			if (list_length(subquery->distinctClause) == 1 &&
 				targetIsInSortList(ste, InvalidOid, subquery->distinctClause))
 				vardata->isunique = true;
-			/* cannot go further */
+			/* 无法继续深入 */
 			return;
 		}
 
-		/* The same idea as with DISTINCT clause works for a GROUP-BY too */
+		/* 与 DISTINCT 子句同样的思路，对 GROUP-BY 同样适用 */
 		if (subquery->groupClause)
 		{
 			if (list_length(subquery->groupClause) == 1 &&
 				targetIsInSortList(ste, InvalidOid, subquery->groupClause))
 				vardata->isunique = true;
-			/* cannot go further */
+			/* 无法继续深入 */
 			return;
 		}
 
 		/*
-		 * If the sub-query originated from a view with the security_barrier
-		 * attribute, we must not look at the variable's statistics, though it
-		 * seems all right to notice the existence of a DISTINCT clause. So
-		 * stop here.
+		 * 如果子查询源自带有 security_barrier 属性的视图，我们就不能查看
+		 * 该变量的统计信息，不过注意到 DISTINCT 子句的存在似乎并无大碍。
+		 * 所以到此为止。
 		 *
-		 * This is probably a harsher restriction than necessary; it's
-		 * certainly OK for the selectivity estimator (which is a C function,
-		 * and therefore omnipotent anyway) to look at the statistics.  But
-		 * many selectivity estimators will happily *invoke the operator
-		 * function* to try to work out a good estimate - and that's not OK.
-		 * So for now, don't dig down for stats.
+		 * 这个限制可能比必要的更严格；对于选择性估计函数（它本身就是 C
+		 * 函数，因而无论如何都无所不能）来说，查看统计信息当然没问题。
+		 * 但许多选择性估计函数会很乐意*调用操作符函数*来试图得出一个好的
+		 * 估计——这就不行了。所以目前，我们不深入去挖掘统计信息。
 		 */
 		if (rte->security_barrier)
 			return;
 
-		/* Can only handle a simple Var of subquery's query level */
+		/* 只能处理子查询查询层级上的简单 Var */
 		if (var && IsA(var, Var) &&
 			var->varlevelsup == 0)
 		{
 			/*
-			 * OK, recurse into the subquery.  Note that the original setting
-			 * of vardata->isunique (which will surely be false) is left
-			 * unchanged in this situation.  That's what we want, since even
-			 * if the underlying column is unique, the subquery may have
-			 * joined to other tables in a way that creates duplicates.
+			 * 好，递归进入子查询。注意，此时 vardata->isunique 的原始设置
+			 * （必然为 false）保持不变。这正是我们想要的，因为即便底层列是
+			 * 唯一的，子查询也可能以某种方式连接了其它表，从而产生重复。
 			 */
 			examine_simple_variable(subroot, var, vardata);
 		}
@@ -5931,46 +5742,39 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 	else
 	{
 		/*
-		 * Otherwise, the Var comes from a FUNCTION or VALUES RTE.  (We won't
-		 * see RTE_JOIN here because join alias Vars have already been
-		 * flattened.)	There's not much we can do with function outputs, but
-		 * maybe someday try to be smarter about VALUES.
+		 * 否则，该 Var 来自 FUNCTION 或 VALUES 类型的 RTE。（这里不会看到
+		 * RTE_JOIN，因为连接别名 Var 已经被展平了。）对于函数的输出我们
+		 * 能做的非常有限，但也许将来会对 VALUES 变得更聪明些。
 		 */
 	}
 }
 
 /*
  * all_rows_selectable
- *		Test whether the user has permission to select all rows from a given
- *		relation.
+ *		测试用户是否有权限从一个给定关系中选取所有行。
  *
- * Inputs:
- *	root: the planner info
- *	varno: the index of the relation (assumed to be an RTE_RELATION)
- *	varattnos: the attributes for which permission is required, or NULL if
- *		whole-table access is required
+ * 输入：
+ *	root: 规划器信息
+ *	varno: 该关系的索引（假定为 RTE_RELATION）
+ *	varattnos: 需要权限的属性集合；若需要整表访问则为 NULL
  *
- * Returns true if the user has the required select permissions, and there are
- * no securityQuals from security barrier views or RLS policies.
+ * 如果用户具备所需的 SELECT 权限，并且不存在来自 security barrier 视图
+ * 或 RLS 策略的 securityQual，则返回 true。
  *
- * Note that if the relation is an inheritance child relation, securityQuals
- * and access permissions are checked against the inheritance root parent (the
- * relation actually mentioned in the query) --- see the comments in
- * expand_single_inheritance_child() for an explanation of why it has to be
- * done this way.
+ * 注意，如果该关系是继承子关系，securityQual 和访问权限是针对继承根父表
+ * （即查询中实际提及的关系）检查的——参见 expand_single_inheritance_child()
+ * 中的注释，了解为何必须这样做。
  *
- * If varattnos is non-NULL, its attribute numbers should be offset by
- * FirstLowInvalidHeapAttributeNumber so that system attributes can be
- * checked.  If varattnos is NULL, only table-level SELECT privileges are
- * checked, not any column-level privileges.
+ * 如果 varattnos 非 NULL，其属性号应当按 FirstLowInvalidHeapAttributeNumber
+ * 偏移，以便能够检查系统属性。如果 varattnos 为 NULL，则只检查表级 SELECT
+ * 权限，而不检查任何列级权限。
  *
- * Note: if the relation is accessed via a view, this function actually tests
- * whether the view owner has permission to select from the relation.  To
- * ensure that the current user has permission, it is also necessary to check
- * that the current user has permission to select from the view, which we do
- * at planner-startup --- see subquery_planner().
+ * 注意：如果关系是经由视图访问的，这个函数实际测试的是视图所有者是否
+ * 有权限从该关系选取数据。为了确保当前用户也有权限，还需要检查当前用户
+ * 是否有权限从视图选取数据，那是在规划器启动时完成的——参见
+ * subquery_planner()。
  *
- * This is exported so that other estimation functions can use it.
+ * 此函数被导出，以便其它估计函数可以使用它。
  */
 bool
 all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
@@ -6007,12 +5811,10 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 		userid = GetUserId();
 
 	/*
-	 * Permissions and securityQuals must be checked on the table actually
-	 * mentioned in the query, so if this is an inheritance child, navigate up
-	 * to the inheritance root parent.  If the user can read the whole table
-	 * or the required columns there, then they can read from the child table
-	 * too.  For per-column checks, we must find out which of the root
-	 * parent's attributes the child relation's attributes correspond to.
+	 * 权限和 securityQual 必须在查询中实际提及的表上检查，所以如果这是
+	 * 一个继承子表，就需要向上找到继承根父表。如果用户能在根父表上读到
+	 * 整张表或所需的列，那么他们也能从子表读到数据。对于逐列检查，我们
+	 * 必须弄清楚子关系的各属性对应根父表的哪些属性。
 	 */
 	if (root->append_rel_array != NULL)
 	{
@@ -6021,10 +5823,9 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 		appinfo = root->append_rel_array[varno];
 
 		/*
-		 * Partitions are mapped to their immediate parent, not the root
-		 * parent, so must be ready to walk up multiple AppendRelInfos.  But
-		 * stop if we hit a parent that is not RTE_RELATION --- that's a
-		 * flattened UNION ALL subquery, not an inheritance parent.
+		 * 分区被映射到它们的直接父表而非根父表，因此必须准备向上遍历多个
+		 * AppendRelInfo。但如果遇到一个不是 RTE_RELATION 的父表则停止——
+		 * 那是一个被展平的 UNION ALL 子查询，而非继承父表。
 		 */
 		while (appinfo &&
 			   planner_rt_fetch(appinfo->parent_relid,
@@ -6033,10 +5834,8 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 			Bitmapset  *parent_varattnos = NULL;
 
 			/*
-			 * For each child attribute, find the corresponding parent
-			 * attribute.  In rare cases, the attribute may be local to the
-			 * child table, in which case, we've got to live with having no
-			 * access to this column.
+			 * 对于每个子表属性，找到对应的父表属性。在极少数情况下，该属性
+			 * 可能只属于子表本地，此时我们只能接受无法访问这一列的现实。
 			 */
 			varattno = -1;
 			while ((varattno = bms_next_member(varattnos, varattno)) >= 0)
@@ -6049,8 +5848,7 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 				if (attno == InvalidAttrNumber)
 				{
 					/*
-					 * Whole-row reference, so must map each column of the
-					 * child to the parent table.
+					 * whole-row 引用，因此必须把子表的每一列都映射到父表。
 					 */
 					for (attno = 1; attno <= appinfo->num_child_cols; attno++)
 					{
@@ -6064,64 +5862,61 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 				}
 				else
 				{
-					if (attno < 0)
-					{
-						/* System attnos are the same in all tables */
-						parent_attno = attno;
-					}
-					else
-					{
-						if (attno > appinfo->num_child_cols)
-							return false;	/* safety check */
-						parent_attno = appinfo->parent_colnos[attno - 1];
-						if (parent_attno == 0)
-							return false;	/* attr is local to child */
-					}
+						if (attno < 0)
+						{
+							/* 系统属性号在所有表中都相同 */
+							parent_attno = attno;
+						}
+						else
+						{
+							if (attno > appinfo->num_child_cols)
+								return false;	/* 安全性检查 */
+							parent_attno = appinfo->parent_colnos[attno - 1];
+							if (parent_attno == 0)
+								return false;	/* 属性只属于子表本地 */
+						}
 					parent_varattnos =
 						bms_add_member(parent_varattnos,
 									   parent_attno - FirstLowInvalidHeapAttributeNumber);
 				}
 			}
 
-			/* If the parent is itself a child, continue up */
-			varno = appinfo->parent_relid;
-			varattnos = parent_varattnos;
-			appinfo = root->append_rel_array[varno];
-		}
+		/* 如果父表本身也是子表，则继续向上 */
+		varno = appinfo->parent_relid;
+		varattnos = parent_varattnos;
+		appinfo = root->append_rel_array[varno];
+	}
 
-		/* Perform the access check on this parent rel */
-		rte = planner_rt_fetch(varno, root);
+	/* 在这个父关系上执行访问检查 */
+	rte = planner_rt_fetch(varno, root);
 		Assert(rte->rtekind == RTE_RELATION);
 	}
 
 	/*
-	 * For all rows to be accessible, there must be no securityQuals from
-	 * security barrier views or RLS policies.
+	 * 要让所有行都可读，就不能存在来自 security barrier 视图或 RLS 策略的
+	 * securityQual。
 	 */
 	if (rte->securityQuals != NIL)
 		return false;
 
 	/*
-	 * Test for table-level SELECT privilege.
+	 * 检查表级 SELECT 权限。
 	 *
-	 * If varattnos is non-NULL, this is sufficient to give access to all
-	 * requested attributes, even for a child table, since we have verified
-	 * that all required child columns have matching parent columns.
+	 * 如果 varattnos 非 NULL，这就足以访问所有被请求的属性，即便是子表
+	 * 也不例外，因为我们已经验证过所有必需的子表列都有对应的父表列。
 	 *
-	 * If varattnos is NULL (whole-table access requested), this doesn't
-	 * necessarily guarantee that the user can read all columns of a child
-	 * table, but we allow it anyway (see comments in examine_variable()) and
-	 * don't bother checking any column privileges.
+	 * 如果 varattnos 为 NULL（请求了整表访问），这并不必然保证用户能读到
+	 * 子表的所有列，但我们仍然允许（参见 examine_variable() 中的注释），
+	 * 并且不必再检查任何列级权限。
 	 */
 	if (pg_class_aclcheck(rte->relid, userid, ACL_SELECT) == ACLCHECK_OK)
 		return true;
 
 	if (varattnos == NULL)
-		return false;			/* whole-table access requested */
+		return false;			/* 请求了整表访问 */
 
 	/*
-	 * Don't have table-level SELECT privilege, so check per-column
-	 * privileges.
+	 * 没有表级 SELECT 权限，因此检查逐列权限。
 	 */
 	varattno = -1;
 	while ((varattno = bms_next_member(varattnos, varattno)) >= 0)
@@ -6130,7 +5925,7 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 
 		if (attno == InvalidAttrNumber)
 		{
-			/* Whole-row reference, so must have access to all columns */
+			/* whole-row 引用，因此必须能访问所有列 */
 			if (pg_attribute_aclcheck_all(rte->relid, userid, ACL_SELECT,
 										  ACLMASK_ALL) != ACLCHECK_OK)
 				return false;
@@ -6143,29 +5938,28 @@ all_rows_selectable(PlannerInfo *root, Index varno, Bitmapset *varattnos)
 		}
 	}
 
-	/* If we reach here, have all required column privileges */
+	/* 如果能执行到这里，说明已具备所有必需的列权限 */
 	return true;
 }
 
 /*
  * examine_indexcol_variable
- *		Try to look up statistical data about an index column/expression.
- *		Fill in a VariableStatData struct to describe the column.
+ *		尝试查找关于某个索引列/表达式的统计信息。填充一个
+ *		VariableStatData 结构来描述该列。
  *
- * Inputs:
- *	root: the planner info
- *	index: the index whose column we're interested in
- *	indexcol: 0-based index column number (subscripts index->indexkeys[])
+ * 输入：
+ *	root: 规划器信息
+ *	index: 我们感兴趣的列所属的索引
+ *	indexcol: 从 0 开始的索引列编号（下标为 index->indexkeys[]）
  *
- * Outputs: *vardata is filled as follows:
- *	var: the input expression (with any binary relabeling stripped, if
- *		it is or contains a variable; but otherwise the type is preserved)
- *	rel: RelOptInfo for table relation containing variable.
- *	statsTuple: the pg_statistic entry for the variable, if one exists;
- *		otherwise NULL.
- *	freefunc: pointer to a function to release statsTuple with.
+ * 输出：*vardata 按如下方式填充：
+ *	var: 输入表达式（如果它本身是或包含变量，则去掉任何二进制 relabeling；
+ *		否则类型保持不变）
+ *	rel: 包含该变量的表关系的 RelOptInfo。
+ *	statsTuple: 该变量的 pg_statistic 项，若存在则为其；否则为 NULL。
+ *	freefunc: 用于释放 statsTuple 的函数指针。
  *
- * Caller is responsible for doing ReleaseVariableStats() before exiting.
+ * 调用方负责在退出前调用 ReleaseVariableStats()。
  */
 static void
 examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
@@ -6176,7 +5970,7 @@ examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
 
 	if (index->indexkeys[indexcol] != 0)
 	{
-		/* Simple variable --- look to stats for the underlying table */
+		/* 简单变量——查看底层表的统计 */
 		RangeTblEntry *rte = planner_rt_fetch(index->rel->relid, root);
 
 		Assert(rte->rtekind == RTE_RELATION);
@@ -6189,8 +5983,8 @@ examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
 			(*get_relation_stats_hook) (root, rte, colnum, vardata))
 		{
 			/*
-			 * The hook took control of acquiring a stats tuple.  If it did
-			 * supply a tuple, it'd better have supplied a freefunc.
+			 * 钩子接管了获取统计元组的职责。如果它确实提供了元组，那它最好
+			 * 也提供了一个 freefunc。
 			 */
 			if (HeapTupleIsValid(vardata->statsTuple) &&
 				!vardata->freefunc)
@@ -6207,7 +6001,7 @@ examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
 	}
 	else
 	{
-		/* Expression --- maybe there are stats for the index itself */
+		/* 表达式——也许索引本身带有统计 */
 		relid = index->indexoid;
 		colnum = indexcol + 1;
 
@@ -6215,8 +6009,8 @@ examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
 			(*get_index_stats_hook) (root, relid, colnum, vardata))
 		{
 			/*
-			 * The hook took control of acquiring a stats tuple.  If it did
-			 * supply a tuple, it'd better have supplied a freefunc.
+			 * 钩子接管了获取统计元组的职责。如果它确实提供了元组，那它最好
+			 * 也提供了一个 freefunc。
 			 */
 			if (HeapTupleIsValid(vardata->statsTuple) &&
 				!vardata->freefunc)
@@ -6234,18 +6028,16 @@ examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
 }
 
 /*
- * Check whether it is permitted to call func_oid passing some of the
- * pg_statistic data in vardata.  We allow this if either of the following
- * conditions is met: (1) the user has SELECT privileges on the table or
- * column underlying the pg_statistic data and there are no securityQuals from
- * security barrier views or RLS policies, or (2) the function is marked
- * leakproof.
+ * 检查是否允许调用 func_oid，并传入 vardata 中的一些 pg_statistic 数据。
+ * 如果满足以下任一条件，我们就允许： (1) 用户对 pg_statistic 数据底层的
+ * 表或列拥有 SELECT 权限，且不存在来自 security barrier 视图或 RLS 策略的
+ * securityQual；或者 (2) 该函数被标记为 leakproof。
  */
 bool
 statistic_proc_security_check(VariableStatData *vardata, Oid func_oid)
 {
 	if (vardata->acl_ok)
-		return true;			/* have SELECT privs and no securityQuals */
+		return true;			/* 拥有 SELECT 权限且无 securityQual */
 
 	if (!OidIsValid(func_oid))
 		return false;
@@ -6261,14 +6053,13 @@ statistic_proc_security_check(VariableStatData *vardata, Oid func_oid)
 
 /*
  * get_variable_numdistinct
- *	  Estimate the number of distinct values of a variable.
+ *	  估计一个变量的不同值数量。
  *
- * vardata: results of examine_variable
- * *isdefault: set to true if the result is a default rather than based on
- * anything meaningful.
+ * vardata: examine_variable 的结果
+ * *isdefault: 如果结果是默认值而非基于有意义的数据得出，则置为 true。
  *
- * NB: be careful to produce a positive integral result, since callers may
- * compare the result to exact integer counts, or might divide by it.
+ * 注意：要小心产生一个正整数结果，因为调用方可能会把结果与精确的整数
+ * 计数比较，或者用它做除法。
  */
 double
 get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
@@ -6280,14 +6071,14 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 	*isdefault = false;
 
 	/*
-	 * Determine the stadistinct value to use.  There are cases where we can
-	 * get an estimate even without a pg_statistic entry, or can get a better
-	 * value than is in pg_statistic.  Grab stanullfrac too if we can find it
-	 * (otherwise, assume no nulls, for lack of any better idea).
+	 * 确定要使用的 stadistinct 值。有些情况下，即便没有 pg_statistic 项，
+	 * 我们也能得到估计值，或者能得到比 pg_statistic 中更好的值。如果能在
+	 * 找到的同时也取一下 stanullfrac（否则，由于缺乏更好的判断而假定没有
+	 * 空值）。
 	 */
 	if (HeapTupleIsValid(vardata->statsTuple))
 	{
-		/* Use the pg_statistic entry */
+		/* 使用 pg_statistic 项 */
 		Form_pg_statistic stats;
 
 		stats = (Form_pg_statistic) GETSTRUCT(vardata->statsTuple);
@@ -6297,29 +6088,27 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 	else if (vardata->vartype == BOOLOID)
 	{
 		/*
-		 * Special-case boolean columns: presumably, two distinct values.
+		 * 对布尔列做特殊处理：大概有两个不同值。
 		 *
-		 * Are there any other datatypes we should wire in special estimates
-		 * for?
+		 * 还有其它数据类型需要我们专门接线估算吗？
 		 */
 		stadistinct = 2.0;
 	}
 	else if (vardata->rel && vardata->rel->rtekind == RTE_VALUES)
 	{
 		/*
-		 * If the Var represents a column of a VALUES RTE, assume it's unique.
-		 * This could of course be very wrong, but it should tend to be true
-		 * in well-written queries.  We could consider examining the VALUES'
-		 * contents to get some real statistics; but that only works if the
-		 * entries are all constants, and it would be pretty expensive anyway.
+		 * 如果该 Var 代表 VALUES 类型 RTE 的一列，就假定它是唯一的。这当然
+		 * 可能非常不准确，但在写得良好的查询中，它大体上应该是成立的。我们
+		 * 可以考虑检查 VALUES 的内容来获得一些真实统计；但那只在所有条目
+		 * 都是常量时才有效，而且无论如何代价都相当高。
 		 */
-		stadistinct = -1.0;		/* unique (and all non null) */
+		stadistinct = -1.0;		/* 唯一（且全非空） */
 	}
 	else
 	{
 		/*
-		 * We don't keep statistics for system columns, but in some cases we
-		 * can infer distinctness anyway.
+		 * 我们不保存系统列的统计，但在某些情况下我们仍然能推断出不同值
+		 * 数量。
 		 */
 		if (vardata->var && IsA(vardata->var, Var))
 		{
@@ -6337,31 +6126,30 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 			}
 		}
 		else
-			stadistinct = 0.0;	/* means "unknown" */
+			stadistinct = 0.0;	/* 表示“未知” */
 
 		/*
-		 * XXX consider using estimate_num_groups on expressions?
+		 * XXX 考虑对表达式使用 estimate_num_groups？
 		 */
 	}
 
 	/*
-	 * If there is a unique index, DISTINCT or GROUP-BY clause for the
-	 * variable, assume it is unique no matter what pg_statistic says; the
-	 * statistics could be out of date, or we might have found a partial
-	 * unique index that proves the var is unique for this query.  However,
-	 * we'd better still believe the null-fraction statistic.
+	 * 如果该变量存在唯一索引、DISTINCT 或 GROUP-BY 子句，就假定它是唯一的，
+	 * 而不管 pg_statistic 怎么说；统计可能已经过时，或者我们可能找到了一个
+	 * 部分唯一索引，能证明该 var 在本查询中是唯一的。不过，我们最好还是
+	 * 仍然相信空值比例统计。
 	 */
 	if (vardata->isunique)
 		stadistinct = -1.0 * (1.0 - stanullfrac);
 
 	/*
-	 * If we had an absolute estimate, use that.
+	 * 如果我们有一个绝对估计值，就使用它。
 	 */
 	if (stadistinct > 0.0)
 		return clamp_row_est(stadistinct);
 
 	/*
-	 * Otherwise we need to get the relation size; punt if not available.
+	 * 否则我们需要取得关系的大小；如果取不到就放弃。
 	 */
 	if (vardata->rel == NULL)
 	{
@@ -6376,15 +6164,15 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 	}
 
 	/*
-	 * If we had a relative estimate, use that.
+	 * 如果我们有一个相对估计值，就使用它。
 	 */
 	if (stadistinct < 0.0)
 		return clamp_row_est(-stadistinct * ntuples);
 
 	/*
-	 * With no data, estimate ndistinct = ntuples if the table is small, else
-	 * use default.  We use DEFAULT_NUM_DISTINCT as the cutoff for "small" so
-	 * that the behavior isn't discontinuous.
+	 * 在没有任何数据时，如果表很小，则估计 ndistinct = ntuples，否则使用
+	 * 默认值。我们用 DEFAULT_NUM_DISTINCT 作为“小”的临界值，这样行为就
+	 * 不会出现不连续。
 	 */
 	if (ntuples < DEFAULT_NUM_DISTINCT)
 		return clamp_row_est(ntuples);
@@ -6395,13 +6183,11 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 
 /*
  * get_variable_range
- *		Estimate the minimum and maximum value of the specified variable.
- *		If successful, store values in *min and *max, and return true.
- *		If no data available, return false.
+ *		估计指定变量的最小值和最大值。成功时把值存入 *min 和 *max，
+ *		并返回 true。如果没有可用数据，则返回 false。
  *
- * sortop is the "<" comparison operator to use.  This should generally
- * be "<" not ">", as only the former is likely to be found in pg_statistic.
- * The collation must be specified too.
+ * sortop 是要使用的 "<" 比较操作符。一般来说应当用 "<" 而非 ">"，因为
+ * pg_statistic 中大概只会存在前者。排序规则（collation）也必须指定。
  */
 static bool
 get_variable_range(PlannerInfo *root, VariableStatData *vardata,
@@ -6418,11 +6204,9 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata,
 	AttStatsSlot sslot;
 
 	/*
-	 * XXX It's very tempting to try to use the actual column min and max, if
-	 * we can get them relatively-cheaply with an index probe.  However, since
-	 * this function is called many times during join planning, that could
-	 * have unpleasant effects on planning speed.  Need more investigation
-	 * before enabling this.
+	 * XXX 用索引探测相对廉价地取得列的实际最小值和最大值，这一点非常诱人。
+	 * 然而，由于这个函数在连接规划期间会被调用很多次，那样可能会对规划
+	 * 速度产生不良影响。在启用它之前还需要更多调查。
 	 */
 #ifdef NOT_USED
 	if (get_actual_variable_range(root, vardata, sortop, collation, min, max))
@@ -6431,28 +6215,27 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata,
 
 	if (!HeapTupleIsValid(vardata->statsTuple))
 	{
-		/* no stats available, so default result */
+		/* 没有可用统计，因此返回默认结果 */
 		return false;
 	}
 
 	/*
-	 * If we can't apply the sortop to the stats data, just fail.  In
-	 * principle, if there's a histogram and no MCVs, we could return the
-	 * histogram endpoints without ever applying the sortop ... but it's
-	 * probably not worth trying, because whatever the caller wants to do with
-	 * the endpoints would likely fail the security check too.
+	 * 如果我们无法把 sortop 应用到统计数据上，就直接失败。原则上，如果有
+	 * 直方图而没有 MCV，我们可以不应用 sortop 就返回直方图端点……但那样
+	 * 大概不值得尝试，因为调用方想用这些端点做的任何事情大概率也会通不过
+	 * 安全检查。
 	 */
 	if (!statistic_proc_security_check(vardata,
 									   (opfuncoid = get_opcode(sortop))))
 		return false;
 
-	opproc.fn_oid = InvalidOid; /* mark this as not looked up yet */
+	opproc.fn_oid = InvalidOid; /* 标记为尚未查找 */
 
 	get_typlenbyval(vardata->atttype, &typLen, &typByVal);
 
 	/*
-	 * If there is a histogram with the ordering we want, grab the first and
-	 * last values.
+	 * 如果存在一个采用我们所需排序方式的直方图，就取它的第一个和最后一个
+	 * 值。
 	 */
 	if (get_attstatsslot(&sslot, vardata->statsTuple,
 						 STATISTIC_KIND_HISTOGRAM, sortop,
@@ -6468,10 +6251,9 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata,
 	}
 
 	/*
-	 * Otherwise, if there is a histogram with some other ordering, scan it
-	 * and get the min and max values according to the ordering we want.  This
-	 * of course may not find values that are really extremal according to our
-	 * ordering, but it beats ignoring available data.
+	 * 否则，如果存在一个采用其它排序方式的直方图，就扫描它，并按照我们
+	 * 所需的排序方式取得最小值和最大值。这当然可能找不到按我们的排序方式
+	 * 真正处于极值位置的值，但总比忽略可用的数据要好。
 	 */
 	if (!have_data &&
 		get_attstatsslot(&sslot, vardata->statsTuple,
@@ -6485,12 +6267,10 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata,
 	}
 
 	/*
-	 * If we have most-common-values info, look for extreme MCVs.  This is
-	 * needed even if we also have a histogram, since the histogram excludes
-	 * the MCVs.  However, if we *only* have MCVs and no histogram, we should
-	 * be pretty wary of deciding that that is a full representation of the
-	 * data.  Proceed only if the MCVs represent the whole table (to within
-	 * roundoff error).
+	 * 如果我们有最常见值（MCV）信息，就查找极端的 MCV。即便我们也拥有
+	 * 直方图，这仍然是必要的，因为直方图不包含 MCV。然而，如果我们*只有*
+	 * MCV 而没有直方图，就不该草率地认定它是对数据的完整表示。只有在 MCV
+	 * 代表了整张表（在舍入误差范围内）时才继续。
 	 */
 	if (get_attstatsslot(&sslot, vardata->statsTuple,
 						 STATISTIC_KIND_MCV, InvalidOid,
@@ -6525,10 +6305,10 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata,
 }
 
 /*
- * get_stats_slot_range: scan sslot for min/max values
+ * get_stats_slot_range: 扫描 sslot 以取得最小值/最大值
  *
- * Subroutine for get_variable_range: update min/max/have_data according
- * to what we find in the statistics array.
+ * get_variable_range 的子例程：根据在统计数组中找到的内容更新
+ * min/max/have_data。
  */
 static void
 get_stats_slot_range(AttStatsSlot *sslot, Oid opfuncoid, FmgrInfo *opproc,
@@ -6541,11 +6321,11 @@ get_stats_slot_range(AttStatsSlot *sslot, Oid opfuncoid, FmgrInfo *opproc,
 	bool		found_tmin = false;
 	bool		found_tmax = false;
 
-	/* Look up the comparison function, if we didn't already do so */
+	/* 如果我们还没查找过比较函数，则查找它 */
 	if (opproc->fn_oid != opfuncoid)
 		fmgr_info(opfuncoid, opproc);
 
-	/* Scan all the slot's values */
+	/* 扫描该 slot 的所有值 */
 	for (int i = 0; i < sslot->nvalues; i++)
 	{
 		if (!have_data)
@@ -6572,7 +6352,7 @@ get_stats_slot_range(AttStatsSlot *sslot, Oid opfuncoid, FmgrInfo *opproc,
 	}
 
 	/*
-	 * Copy the slot's values, if we found new extreme values.
+	 * 如果我们找到了新的极值，就复制该 slot 的值。
 	 */
 	if (found_tmin)
 		*min = datumCopy(tmin, typByVal, typLen);
@@ -6583,15 +6363,14 @@ get_stats_slot_range(AttStatsSlot *sslot, Oid opfuncoid, FmgrInfo *opproc,
 
 /*
  * get_actual_variable_range
- *		Attempt to identify the current *actual* minimum and/or maximum
- *		of the specified variable, by looking for a suitable btree index
- *		and fetching its low and/or high values.
- *		If successful, store values in *min and *max, and return true.
- *		(Either pointer can be NULL if that endpoint isn't needed.)
- *		If unsuccessful, return false.
+ *		尝试通过寻找合适的 btree 索引并取其低值/高值，来识别指定变量当前的
+ *		*实际*最小值和/或最大值。
+ *		成功时把值存入 *min 和 *max，并返回 true。
+ *		（如果不需要某一端，对应指针可以为 NULL。）
+ *		失败时返回 false。
  *
- * sortop is the "<" comparison operator to use.
- * collation is the required collation.
+ * sortop 是要使用的 "<" 比较操作符。
+ * collation 是所需的排序规则。
  */
 static bool
 get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
@@ -6603,55 +6382,54 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 	RangeTblEntry *rte;
 	ListCell   *lc;
 
-	/* No hope if no relation or it doesn't have indexes */
+	/* 没有关系或没有关系没有索引，则无望 */
 	if (rel == NULL || rel->indexlist == NIL)
 		return false;
-	/* If it has indexes it must be a plain relation */
+	/* 既然有索引，它必定是一个普通关系 */
 	rte = root->simple_rte_array[rel->relid];
 	Assert(rte->rtekind == RTE_RELATION);
 
-	/* ignore partitioned tables.  Any indexes here are not real indexes */
+	/* 忽略分区表。这里的索引都不是真正的索引 */
 	if (rte->relkind == RELKIND_PARTITIONED_TABLE)
 		return false;
 
-	/* Search through the indexes to see if any match our problem */
+	/* 遍历索引，看是否有能匹配我们问题的 */
 	foreach(lc, rel->indexlist)
 	{
 		IndexOptInfo *index = (IndexOptInfo *) lfirst(lc);
 		ScanDirection indexscandir;
 		StrategyNumber strategy;
 
-		/* Ignore non-ordering indexes */
+		/* 忽略非排序索引 */
 		if (index->sortopfamily == NULL)
 			continue;
 
 		/*
-		 * Ignore partial indexes --- we only want stats that cover the entire
-		 * relation.
+		 * 忽略部分索引——我们只想要覆盖整个关系的统计。
 		 */
 		if (index->indpred != NIL)
 			continue;
 
 		/*
-		 * The index list might include hypothetical indexes inserted by a
-		 * get_relation_info hook --- don't try to access them.
+		 * 索引列表里可能包含由 get_relation_info 钩子插入的假设索引——
+		 * 不要尝试访问它们。
 		 */
 		if (index->hypothetical)
 			continue;
 
 		/*
-		 * get_actual_variable_endpoint uses the index-only-scan machinery, so
-		 * ignore indexes that can't use it on their first column.
+		 * get_actual_variable_endpoint 使用的是仅索引扫描机制，因此忽略
+		 * 那些在第一列上无法使用它的索引。
 		 */
 		if (!index->canreturn[0])
 			continue;
 
 		/*
-		 * The first index column must match the desired variable, sortop, and
-		 * collation --- but we can use a descending-order index.
+		 * 第一个索引列必须匹配所需的变量、sortop 和排序规则——不过我们
+		 * 也可以使用降序索引。
 		 */
 		if (collation != index->indexcollations[0])
-			continue;			/* test first 'cause it's cheapest */
+			continue;			/* 先测这个，因为它最廉价 */
 		if (!match_index_to_operand(vardata->var, 0, index))
 			continue;
 		strategy = get_op_opfamily_strategy(sortop, index->sortopfamily[0]);
@@ -6670,13 +6448,13 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 					indexscandir = BackwardScanDirection;
 				break;
 			default:
-				/* index doesn't match the sortop */
+				/* 索引与 sortop 不匹配 */
 				continue;
 		}
 
 		/*
-		 * Found a suitable index to extract data from.  Set up some data that
-		 * can be used by both invocations of get_actual_variable_endpoint.
+		 * 找到了一个合适的索引来提取数据。设置一些数据，供
+		 * get_actual_variable_endpoint 的两次调用共用。
 		 */
 		{
 			MemoryContext tmpcontext;
@@ -6688,34 +6466,34 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			bool		typByVal;
 			ScanKeyData scankeys[1];
 
-			/* Make sure any cruft gets recycled when we're done */
+			/* 确保任何垃圾在我们完成后都能被回收 */
 			tmpcontext = AllocSetContextCreate(CurrentMemoryContext,
 											   "get_actual_variable_range workspace",
 											   ALLOCSET_DEFAULT_SIZES);
 			oldcontext = MemoryContextSwitchTo(tmpcontext);
 
 			/*
-			 * Open the table and index so we can read from them.  We should
-			 * already have some type of lock on each.
+			 * 打开表和索引，以便从中读取。我们应当已经对它们各自持有某种
+			 * 类型的锁。
 			 */
 			heapRel = table_open(rte->relid, NoLock);
 			indexRel = index_open(index->indexoid, NoLock);
 
-			/* build some stuff needed for indexscan execution */
+			/* 构造索引扫描执行所需的一些东西 */
 			slot = table_slot_create(heapRel, NULL);
 			get_typlenbyval(vardata->atttype, &typLen, &typByVal);
 
-			/* set up an IS NOT NULL scan key so that we ignore nulls */
+			/* 设置一个 IS NOT NULL 扫描键，以便忽略空值 */
 			ScanKeyEntryInitialize(&scankeys[0],
 								   SK_ISNULL | SK_SEARCHNOTNULL,
-								   1,	/* index col to scan */
-								   InvalidStrategy, /* no strategy */
-								   InvalidOid,	/* no strategy subtype */
-								   InvalidOid,	/* no collation */
-								   InvalidOid,	/* no reg proc for this */
-								   (Datum) 0);	/* constant */
+								   1,	/* 要扫描的索引列 */
+								   InvalidStrategy, /* 无策略 */
+								   InvalidOid,	/* 无策略子类型 */
+								   InvalidOid,	/* 无排序规则 */
+								   InvalidOid,	/* 无对应 reg proc */
+								   (Datum) 0);	/* 常量 */
 
-			/* If min is requested ... */
+			/* 如果请求了 min …… */
 			if (min)
 			{
 				have_data = get_actual_variable_endpoint(heapRel,
@@ -6730,14 +6508,14 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			}
 			else
 			{
-				/* If min not requested, still want to fetch max */
+				/* 即便没请求 min，仍然想取 max */
 				have_data = true;
 			}
 
-			/* If max is requested, and we didn't already fail ... */
+			/* 如果请求了 max，且我们之前没有失败…… */
 			if (max && have_data)
 			{
-				/* scan in the opposite direction; all else is the same */
+				/* 朝相反方向扫描；其余都一样 */
 				have_data = get_actual_variable_endpoint(heapRel,
 														 indexRel,
 														 -indexscandir,
@@ -6749,7 +6527,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 														 max);
 			}
 
-			/* Clean everything up */
+			/* 清理一切 */
 			ExecDropSingleTupleTableSlot(slot);
 
 			index_close(indexRel, NoLock);
@@ -6758,7 +6536,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(tmpcontext);
 
-			/* And we're done */
+			/* 大功告成 */
 			break;
 		}
 	}
@@ -6767,20 +6545,17 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 }
 
 /*
- * Get one endpoint datum (min or max depending on indexscandir) from the
- * specified index.  Return true if successful, false if not.
- * On success, endpoint value is stored to *endpointDatum (and copied into
- * outercontext).
+ * 从指定索引取得一个端点值（min 或 max，取决于 indexscandir）。成功时
+ * 返回 true，否则返回 false。成功时，端点值会被存入 *endpointDatum（并
+ * 复制到 outercontext 中）。
  *
- * scankeys is a 1-element scankey array set up to reject nulls.
- * typLen/typByVal describe the datatype of the index's first column.
- * tableslot is a slot suitable to hold table tuples, in case we need
- * to probe the heap.
- * (We could compute these values locally, but that would mean computing them
- * twice when get_actual_variable_range needs both the min and the max.)
+ * scankeys 是一个单元素的扫描键数组，被设置为拒绝空值。
+ * typLen/typByVal 描述索引第一列的数据类型。
+ * tableslot 是一个适合存放表元组的 slot，以防我们需要探查堆。
+ * （这些值是可以在本地计算的，但那样的话当 get_actual_variable_range 同时
+ * 需要 min 和 max 时就得计算两次。）
  *
- * Failure occurs either when the index is empty, or we decide that it's
- * taking too long to find a suitable tuple.
+ * 失败发生在索引为空时，或者我们判定寻找一个合适元组耗时过长时。
  */
 static bool
 get_actual_variable_endpoint(Relation heapRel,
@@ -6805,48 +6580,40 @@ get_actual_variable_endpoint(Relation heapRel,
 	MemoryContext oldcontext;
 
 	/*
-	 * We use the index-only-scan machinery for this.  With mostly-static
-	 * tables that's a win because it avoids a heap visit.  It's also a win
-	 * for dynamic data, but the reason is less obvious; read on for details.
+	 * 我们对这个操作使用仅索引扫描机制。对于大体静态的表，这是有利的，
+	 * 因为它避免了访问堆。对于动态数据它同样有利，只是原因不那么明显；
+	 * 详见下文。
 	 *
-	 * In principle, we should scan the index with our current active
-	 * snapshot, which is the best approximation we've got to what the query
-	 * will see when executed.  But that won't be exact if a new snap is taken
-	 * before running the query, and it can be very expensive if a lot of
-	 * recently-dead or uncommitted rows exist at the beginning or end of the
-	 * index (because we'll laboriously fetch each one and reject it).
-	 * Instead, we use SnapshotNonVacuumable.  That will accept recently-dead
-	 * and uncommitted rows as well as normal visible rows.  On the other
-	 * hand, it will reject known-dead rows, and thus not give a bogus answer
-	 * when the extreme value has been deleted (unless the deletion was quite
-	 * recent); that case motivates not using SnapshotAny here.
+	 * 原则上，我们应当用当前活动的快照来扫描索引，那是我们对查询执行时
+	 * 所会看到内容的最佳近似。但如果在运行查询前又取了新快照，那就不
+	 * 精确了；并且，如果在索引的开头或结尾存在大量最近死亡或未提交的
+	 * 行，这可能非常昂贵（因为我们会费劲地逐个取出并拒绝它们）。因此，
+	 * 我们使用 SnapshotNonVacuumable。它会接受最近死亡的、未提交的以及
+	 * 正常可见的行。另一方面，它会拒绝已知死亡（known-dead）的行，因此
+	 * 当极值被删除时，它不会给出一个虚假答案（除非删除操作非常近）；
+	 * 这种情况就是这里不使用 SnapshotAny 的原因。
 	 *
-	 * A crucial point here is that SnapshotNonVacuumable, with
-	 * GlobalVisTestFor(heapRel) as horizon, yields the inverse of the
-	 * condition that the indexscan will use to decide that index entries are
-	 * killable (see heap_hot_search_buffer()).  Therefore, if the snapshot
-	 * rejects a tuple (or more precisely, all tuples of a HOT chain) and we
-	 * have to continue scanning past it, we know that the indexscan will mark
-	 * that index entry killed.  That means that the next
-	 * get_actual_variable_endpoint() call will not have to re-consider that
-	 * index entry.  In this way we avoid repetitive work when this function
-	 * is used a lot during planning.
+	 * 这里关键的一点是：以 GlobalVisTestFor(heapRel) 为界限的
+	 * SnapshotNonVacuumable，恰好是索引扫描用来判定索引项是否可被杀死
+	 * （killable）的条件之逆（参见 heap_hot_search_buffer()）。因此，如果
+	 * 快照拒绝了一个元组（更准确地说，是拒绝了 HOT 链上的所有元组），
+	 * 而我们必须继续扫描越过它，我们就知道索引扫描会把那个索引项标记为
+	 * 已杀死。这意味着下一次 get_actual_variable_endpoint() 调用就不必
+	 * 再考虑那个索引项。通过这种方式，当这个函数在规划期间被大量使用时，
+	 * 我们避免了重复劳动。
 	 *
-	 * But using SnapshotNonVacuumable creates a hazard of its own.  In a
-	 * recently-created index, some index entries may point at "broken" HOT
-	 * chains in which not all the tuple versions contain data matching the
-	 * index entry.  The live tuple version(s) certainly do match the index,
-	 * but SnapshotNonVacuumable can accept recently-dead tuple versions that
-	 * don't match.  Hence, if we took data from the selected heap tuple, we
-	 * might get a bogus answer that's not close to the index extremal value,
-	 * or could even be NULL.  We avoid this hazard because we take the data
-	 * from the index entry not the heap.
+	 * 但使用 SnapshotNonVacuumable 也会带来它自身的风险。在最近创建的
+	 * 索引中，某些索引项可能指向“破损的” HOT 链，其中并非所有元组版本
+	 * 都包含与索引项匹配的数据。存活的元组版本当然与索引匹配，但
+	 * SnapshotNonVacuumable 可能接受不匹配的最近死亡元组版本。因此，如果
+	 * 我们从选中的堆元组取数据，就可能得到一个不接近索引极值、甚至可能
+	 * 为 NULL 的虚假答案。我们之所以能规避这个风险，是因为我们从索引项
+	 * 而非堆中取数据。
 	 *
-	 * Despite all this care, there are situations where we might find many
-	 * non-visible tuples near the end of the index.  We don't want to expend
-	 * a huge amount of time here, so we give up once we've read too many heap
-	 * pages.  When we fail for that reason, the caller will end up using
-	 * whatever extremal value is recorded in pg_statistic.
+	 * 尽管如此小心，仍会有这样的情况：我们可能在索引末尾附近发现许多
+	 * 不可见的元组。我们不想在这里耗费大量时间，因此一旦读取了过多堆
+	 * 页面，就放弃。当我们因这个原因失败时，调用方最终会使用记录在
+	 * pg_statistic 中的那个极值。
 	 */
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
@@ -6854,11 +6621,11 @@ get_actual_variable_endpoint(Relation heapRel,
 	index_scan = index_beginscan(heapRel, indexRel,
 								 &SnapshotNonVacuumable, NULL,
 								 1, 0);
-	/* Set it up for index-only scan */
+	/* 为仅索引扫描作好设置 */
 	index_scan->xs_want_itup = true;
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
-	/* Fetch first/next tuple in specified direction */
+	/* 沿指定方向取第一个/下一个元组 */
 	while ((tid = index_getnext_tid(index_scan, indexscandir)) != NULL)
 	{
 		BlockNumber block = ItemPointerGetBlockNumber(tid);
@@ -6867,18 +6634,16 @@ get_actual_variable_endpoint(Relation heapRel,
 							block,
 							&vmbuffer))
 		{
-			/* Rats, we have to visit the heap to check visibility */
+			/* 糟了，我们得访问堆来检查可见性 */
 			if (!index_fetch_heap(index_scan, tableslot))
 			{
 				/*
-				 * No visible tuple for this index entry, so we need to
-				 * advance to the next entry.  Before doing so, count heap
-				 * page fetches and give up if we've done too many.
+				 * 这个索引项没有可见元组，因此我们需要前进到下一个项。
+				 * 在这样做之前，统计堆页面的访问次数，如果做得太多就放弃。
 				 *
-				 * We don't charge a page fetch if this is the same heap page
-				 * as the previous tuple.  This is on the conservative side,
-				 * since other recently-accessed pages are probably still in
-				 * buffers too; but it's good enough for this heuristic.
+				 * 如果这是与上一个元组相同的堆页面，我们就不计一次页面
+				 * 访问。这是偏保守的做法，因为其它最近访问过的页面大概也
+				 * 还在缓冲区里；但对这个启发式来说已经够好了。
 				 */
 #define VISITED_PAGES_LIMIT 100
 
@@ -6890,42 +6655,41 @@ get_actual_variable_endpoint(Relation heapRel,
 						break;
 				}
 
-				continue;		/* no visible tuple, try next index entry */
+				continue;		/* 无可不见元组，尝试下一个索引项 */
 			}
 
-			/* We don't actually need the heap tuple for anything */
+			/* 我们实际上根本不需要这个堆元组 */
 			ExecClearTuple(tableslot);
 
 			/*
-			 * We don't care whether there's more than one visible tuple in
-			 * the HOT chain; if any are visible, that's good enough.
+			 * 我们不在乎 HOT 链中是否有多于一个可见元组；只要有任何可见
+			 * 的，就足够了。
 			 */
 		}
 
 		/*
-		 * We expect that the index will return data in IndexTuple not
-		 * HeapTuple format.
+		 * 我们期望索引以 IndexTuple 而非 HeapTuple 的格式返回数据。
 		 */
 		if (!index_scan->xs_itup)
 			elog(ERROR, "no data returned for index-only scan");
 
 		/*
-		 * We do not yet support recheck here.
+		 * 这里尚不支持重新检查（recheck）。
 		 */
 		if (index_scan->xs_recheck)
 			break;
 
-		/* OK to deconstruct the index tuple */
+		/* 可以解构索引元组了 */
 		index_deform_tuple(index_scan->xs_itup,
 						   index_scan->xs_itupdesc,
 						   values, isnull);
 
-		/* Shouldn't have got a null, but be careful */
+		/* 本不该得到空值，但要小心 */
 		if (isnull[0])
 			elog(ERROR, "found unexpected null value in index \"%s\"",
 				 RelationGetRelationName(indexRel));
 
-		/* Copy the index column value out to caller's context */
+		/* 把索引列的值复制到调用方的上下文中 */
 		oldcontext = MemoryContextSwitchTo(outercontext);
 		*endpointDatum = datumCopy(values[0], typByVal, typLen);
 		MemoryContextSwitchTo(oldcontext);
@@ -6942,10 +6706,9 @@ get_actual_variable_endpoint(Relation heapRel,
 
 /*
  * find_join_input_rel
- *		Look up the input relation for a join.
+ *		查找一个连接的输入关系。
  *
- * We assume that the input relation's RelOptInfo must have been constructed
- * already.
+ * 我们假定该输入关系的 RelOptInfo 一定已经被构建好了。
  */
 static RelOptInfo *
 find_join_input_rel(PlannerInfo *root, Relids relids)
@@ -6971,13 +6734,13 @@ find_join_input_rel(PlannerInfo *root, Relids relids)
 
 /*-------------------------------------------------------------------------
  *
- * Index cost estimation functions
+ * 索引代价估算函数
  *
  *-------------------------------------------------------------------------
  */
 
 /*
- * Extract the actual indexquals (as RestrictInfos) from an IndexClause list
+ * 从一个 IndexClause 列表中提取出实际的索引条件（以 RestrictInfo 形式）
  */
 List *
 get_quals_from_indexclauses(List *indexclauses)
@@ -7001,13 +6764,12 @@ get_quals_from_indexclauses(List *indexclauses)
 }
 
 /*
- * Compute the total evaluation cost of the comparison operands in a list
- * of index qual expressions.  Since we know these will be evaluated just
- * once per scan, there's no need to distinguish startup from per-row cost.
+ * 计算一个索引条件表达式列表中各比较操作数求值的总代价。由于我们知道它们
+ * 每次扫描只会被求值一次，因此无需区分启动代价与每行代价。
  *
- * This can be used either on the result of get_quals_from_indexclauses(),
- * or directly on an indexorderbys list.  In both cases, we expect that the
- * index key expression is on the left side of binary clauses.
+ * 这既可以用于 get_quals_from_indexclauses() 的结果，也可以直接用于一个
+ * indexorderbys 列表。在这两种情况下，我们都期望索引键表达式位于二元子句
+ * 的左侧。
  */
 Cost
 index_other_operands_eval_cost(PlannerInfo *root, List *indexquals)
@@ -7022,8 +6784,8 @@ index_other_operands_eval_cost(PlannerInfo *root, List *indexquals)
 		QualCost	index_qual_cost;
 
 		/*
-		 * Index quals will have RestrictInfos, indexorderbys won't.  Look
-		 * through RestrictInfo if present.
+		 * 索引条件会带有 RestrictInfo，而 indexorderbys 不会。如果存在
+		 * RestrictInfo，则看穿它。
 		 */
 		if (IsA(clause, RestrictInfo))
 			clause = ((RestrictInfo *) clause)->clause;
@@ -7054,7 +6816,7 @@ index_other_operands_eval_cost(PlannerInfo *root, List *indexquals)
 		{
 			elog(ERROR, "unsupported indexqual type: %d",
 				 (int) nodeTag(clause));
-			other_operand = NULL;	/* keep compiler quiet */
+			other_operand = NULL;	/* 避免编译器告警 */
 		}
 
 		cost_qual_eval_node(&index_qual_cost, other_operand, root);
@@ -7088,16 +6850,14 @@ genericcostestimate(PlannerInfo *root,
 	ListCell   *l;
 
 	/*
-	 * If the index is partial, AND the index predicate with the explicitly
-	 * given indexquals to produce a more accurate idea of the index
-	 * selectivity.
+	 * 如果索引是部分索引，就把索引谓词与显式给出的索引条件做 AND，以得到
+	 * 对索引选择性更准确的认识。
 	 */
 	selectivityQuals = add_predicate_to_index_quals(index, indexQuals);
 
 	/*
-	 * If caller didn't give us an estimate for ScalarArrayOpExpr index scans,
-	 * just assume that the number of index descents is the number of distinct
-	 * combinations of array elements from all of the scan's SAOP clauses.
+	 * 如果调用方没有为 ScalarArrayOpExpr 索引扫描提供估计，就假定索引
+	 * 下降次数等于该扫描所有 SAOP 子句中数组元素的不同组合数。
 	 */
 	num_sa_scans = costs->num_sa_scans;
 	if (num_sa_scans < 1)
@@ -7118,16 +6878,15 @@ genericcostestimate(PlannerInfo *root,
 		}
 	}
 
-	/* Estimate the fraction of main-table tuples that will be visited */
+	/* 估计将被访问的主表元组的比例 */
 	indexSelectivity = clauselist_selectivity(root, selectivityQuals,
 											  index->rel->relid,
 											  JOIN_INNER,
 											  NULL);
 
 	/*
-	 * If caller didn't give us an estimate, estimate the number of index
-	 * tuples that will be visited.  We do it in this rather peculiar-looking
-	 * way in order to get the right answer for partial indexes.
+	 * 如果调用方没有给我们估计值，就估计将被访问的索引元组数量。我们采用
+	 * 这种看起来相当特别的方式，是为了对部分索引得到正确的答案。
 	 */
 	numIndexTuples = costs->numIndexTuples;
 	if (numIndexTuples <= 0.0)
@@ -7135,19 +6894,17 @@ genericcostestimate(PlannerInfo *root,
 		numIndexTuples = indexSelectivity * index->rel->tuples;
 
 		/*
-		 * The above calculation counts all the tuples visited across all
-		 * scans induced by ScalarArrayOpExpr nodes.  We want to consider the
-		 * average per-indexscan number, so adjust.  This is a handy place to
-		 * round to integer, too.  (If caller supplied tuple estimate, it's
-		 * responsible for handling these considerations.)
+		 * 上面的计算统计了由 ScalarArrayOpExpr 节点引发的所有扫描所访问的
+		 * 全部元组。我们想要的是每次索引扫描的平均值，因此要调整。这也是
+		 * 一个顺手把结果取整的好地方。（如果调用方提供了元组估计，那处理
+		 * 这些考量的责任就在调用方。）
 		 */
 		numIndexTuples = rint(numIndexTuples / num_sa_scans);
 	}
 
 	/*
-	 * We can bound the number of tuples by the index size in any case. Also,
-	 * always estimate at least one tuple is touched, even when
-	 * indexSelectivity estimate is tiny.
+	 * 无论如何，我们都可以用索引大小来限制元组数量的上界。另外，即便
+	 * indexSelectivity 估计极小，也始终估计至少访问一个元组。
 	 */
 	if (numIndexTuples > index->tuples)
 		numIndexTuples = index->tuples;
@@ -7155,43 +6912,38 @@ genericcostestimate(PlannerInfo *root,
 		numIndexTuples = 1.0;
 
 	/*
-	 * Estimate the number of index pages that will be retrieved.
+	 * 估计将被检索的索引页面数量。
 	 *
-	 * We use the simplistic method of taking a pro-rata fraction of the total
-	 * number of index pages.  In effect, this counts only leaf pages and not
-	 * any overhead such as index metapage or upper tree levels.
+	 * 我们使用朴素的方法：取索引页面总数中按比例的分数。实际上，这只统计
+	 * 了叶子页面，而没有统计诸如索引元页面或上层树节点之类的任何开销。
 	 *
-	 * In practice access to upper index levels is often nearly free because
-	 * those tend to stay in cache under load; moreover, the cost involved is
-	 * highly dependent on index type.  We therefore ignore such costs here
-	 * and leave it to the caller to add a suitable charge if needed.
+	 * 在实践中，访问索引上层往往几乎是免费的，因为它们在负载下往往留在
+	 * 缓存中；此外，所涉及的开销高度依赖索引类型。因此我们忽略这些开销，
+	 * 把它留给调用方在需要时加上合适的代价。
 	 */
 	if (index->pages > 1 && index->tuples > 1)
 		numIndexPages = ceil(numIndexTuples * index->pages / index->tuples);
 	else
 		numIndexPages = 1.0;
 
-	/* fetch estimated page cost for tablespace containing index */
+	/* 取得包含该索引的表空间的估计页面代价 */
 	get_tablespace_page_costs(index->reltablespace,
 							  &spc_random_page_cost,
 							  NULL);
 
 	/*
-	 * Now compute the disk access costs.
+	 * 现在计算磁盘访问代价。
 	 *
-	 * The above calculations are all per-index-scan.  However, if we are in a
-	 * nestloop inner scan, we can expect the scan to be repeated (with
-	 * different search keys) for each row of the outer relation.  Likewise,
-	 * ScalarArrayOpExpr quals result in multiple index scans.  This creates
-	 * the potential for cache effects to reduce the number of disk page
-	 * fetches needed.  We want to estimate the average per-scan I/O cost in
-	 * the presence of caching.
+	 * 上面的所有计算都是按每次索引扫描来做的。然而，如果我们处于嵌套循环
+	 * 的内表扫描中，就可以预期该扫描会为外表每一行重复进行（使用不同的
+	 * 搜索键）。类似地，ScalarArrayOpExpr 条件会导致多次索引扫描。这就产生了
+	 * 缓存效应减少所需磁盘页面读取次数的可能。我们想要在存在缓存的情况下
+	 * 估计每次扫描的平均 I/O 代价。
 	 *
-	 * We use the Mackert-Lohman formula (see costsize.c for details) to
-	 * estimate the total number of page fetches that occur.  While this
-	 * wasn't what it was designed for, it seems a reasonable model anyway.
-	 * Note that we are counting pages not tuples anymore, so we take N = T =
-	 * index size, as if there were one "tuple" per page.
+	 * 我们使用 Mackert-Lohman 公式（详见 costsize.c）来估计发生的页面读取
+	 * 总次数。虽然这不是它被设计出来的用途，但作为一个模型似乎也还合理。
+	 * 注意，我们现在统计的是页面而非元组，因此取 N = T = 索引大小，就好像
+	 * 每页有一个“元组”。
 	 */
 	num_outer_scans = loop_count;
 	num_scans = num_sa_scans * num_outer_scans;
@@ -7200,19 +6952,19 @@ genericcostestimate(PlannerInfo *root,
 	{
 		double		pages_fetched;
 
-		/* total page fetches ignoring cache effects */
+		/* 忽略缓存效应时的总页面读取次数 */
 		pages_fetched = numIndexPages * num_scans;
 
-		/* use Mackert and Lohman formula to adjust for cache effects */
+		/* 使用 Mackert-Lohman 公式对缓存效应进行调整 */
 		pages_fetched = index_pages_fetched(pages_fetched,
 											index->pages,
 											(double) index->pages,
 											root);
 
 		/*
-		 * Now compute the total disk access cost, and then report a pro-rated
-		 * share for each outer scan.  (Don't pro-rate for ScalarArrayOpExpr,
-		 * since that's internal to the indexscan.)
+		 * 现在计算磁盘访问总代价，然后为每次外表扫描报告一个按比例分摊的
+		 * 份额。（不要为 ScalarArrayOpExpr 按比例分摊，因为它属于索引扫描
+		 * 内部。）
 		 */
 		indexTotalCost = (pages_fetched * spc_random_page_cost)
 			/ num_outer_scans;
@@ -7220,25 +6972,22 @@ genericcostestimate(PlannerInfo *root,
 	else
 	{
 		/*
-		 * For a single index scan, we just charge spc_random_page_cost per
-		 * page touched.
+		 * 对于单次索引扫描，我们只需按每个被触及的页面收取
+		 * spc_random_page_cost。
 		 */
 		indexTotalCost = numIndexPages * spc_random_page_cost;
 	}
 
 	/*
-	 * CPU cost: any complex expressions in the indexquals will need to be
-	 * evaluated once at the start of the scan to reduce them to runtime keys
-	 * to pass to the index AM (see nodeIndexscan.c).  We model the per-tuple
-	 * CPU costs as cpu_index_tuple_cost plus one cpu_operator_cost per
-	 * indexqual operator.  Because we have numIndexTuples as a per-scan
-	 * number, we have to multiply by num_sa_scans to get the correct result
-	 * for ScalarArrayOpExpr cases.  Similarly add in costs for any index
-	 * ORDER BY expressions.
+	 * CPU 代价：索引条件中的任何复杂表达式都需要在扫描开始时求值一次，
+	 * 把它们化简为传给索引访问方法的运行时键（参见 nodeIndexscan.c）。我们
+	 * 把每个元组的 CPU 代价建模为 cpu_index_tuple_cost 加上每个索引条件
+	 * 操作符一个 cpu_operator_cost。由于 numIndexTuples 是每次扫描的数字，
+	 * 我们必须乘以 num_sa_scans 才能得到 ScalarArrayOpExpr 情况下的正确结果。
+	 * 类似地，这里还要加上任何索引 ORDER BY 表达式的代价。
 	 *
-	 * Note: this neglects the possible costs of rechecking lossy operators.
-	 * Detecting that that might be needed seems more expensive than it's
-	 * worth, though, considering all the other inaccuracies here ...
+	 * 注意：这忽略了重新检查有损（lossy）操作符可能带来的代价。不过，鉴于
+	 * 这里其它种种不准确之处，检测那种可能需要的情况似乎比其价值更费事……
 	 */
 	qual_arg_cost = index_other_operands_eval_cost(root, indexQuals) +
 		index_other_operands_eval_cost(root, indexOrderBys);
@@ -7268,23 +7017,19 @@ genericcostestimate(PlannerInfo *root,
 }
 
 /*
- * If the index is partial, add its predicate to the given qual list.
+ * 如果索引是部分索引，就将其谓词加入到给定的条件列表中。
  *
- * ANDing the index predicate with the explicitly given indexquals produces
- * a more accurate idea of the index's selectivity.  However, we need to be
- * careful not to insert redundant clauses, because clauselist_selectivity()
- * is easily fooled into computing a too-low selectivity estimate.  Our
- * approach is to add only the predicate clause(s) that cannot be proven to
- * be implied by the given indexquals.  This successfully handles cases such
- * as a qual "x = 42" used with a partial index "WHERE x >= 40 AND x < 50".
- * There are many other cases where we won't detect redundancy, leading to a
- * too-low selectivity estimate, which will bias the system in favor of using
- * partial indexes where possible.  That is not necessarily bad though.
+ * 把索引谓词与显式给出的索引条件做 AND，能产生对索引选择性更准确的认识。
+ * 然而，我们必须小心不要插入冗余子句，因为 clauselist_selectivity() 很容易
+ * 被骗去计算出过低的选择性估计。我们的做法是只加入那些无法被证明已由给定
+ * 索引条件所蕴含的谓词子句。这能成功处理诸如条件 “x = 42” 与部分索引
+ * “WHERE x >= 40 AND x < 50” 配合使用的情形。还有很多其它情形我们检测不到
+ * 冗余，导致选择性估计过低，从而使系统偏向于尽可能使用部分索引。不过这
+ * 也不一定就是坏事。
  *
- * Note that indexQuals contains RestrictInfo nodes while the indpred
- * does not, so the output list will be mixed.  This is OK for both
- * predicate_implied_by() and clauselist_selectivity(), but might be
- * problematic if the result were passed to other things.
+ * 注意，indexQuals 包含 RestrictInfo 节点，而 indpred 不包含，因此输出列表
+ * 会是混合的。对于 predicate_implied_by() 和 clauselist_selectivity() 来说
+ * 这没问题，但如果把结果传给其它地方就可能成问题。
  */
 List *
 add_predicate_to_index_quals(IndexOptInfo *index, List *indexQuals)
@@ -7307,15 +7052,13 @@ add_predicate_to_index_quals(IndexOptInfo *index, List *indexQuals)
 }
 
 /*
- * Estimate correlation of btree index's first column.
+ * 估计 btree 索引第一列的相关性。
  *
- * If we can get an estimate of the first column's ordering correlation C
- * from pg_statistic, estimate the index correlation as C for a single-column
- * index, or C * 0.75 for multiple columns.  The idea here is that multiple
- * columns dilute the importance of the first column's ordering, but don't
- * negate it entirely.
+ * 如果我们能从 pg_statistic 得到第一列排序相关性 C 的估计，就把索引相关性
+ * 估计为：单列索引取 C，多列索引取 C * 0.75。这里的思路是，多列会稀释第一
+ * 列排序的重要性，但不会完全抵消它。
  *
- * We already filled in the stats tuple for *vardata when called.
+ * 调用时，*vardata 的统计元组我们已经填好了。
  */
 static double
 btcost_correlation(IndexOptInfo *index, VariableStatData *vardata)
@@ -7378,24 +7121,19 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	ListCell   *lc;
 
 	/*
-	 * For a btree scan, only leading '=' quals plus inequality quals for the
-	 * immediately next attribute contribute to index selectivity (these are
-	 * the "boundary quals" that determine the starting and stopping points of
-	 * the index scan).  Additional quals can suppress visits to the heap, so
-	 * it's OK to count them in indexSelectivity, but they should not count
-	 * for estimating numIndexTuples.  So we must examine the given indexquals
-	 * to find out which ones count as boundary quals.  We rely on the
-	 * knowledge that they are given in index column order.  Note that nbtree
-	 * preprocessing can add skip arrays that act as leading '=' quals in the
-	 * absence of ordinary input '=' quals, so in practice _most_ input quals
-	 * are able to act as index bound quals (which we take into account here).
+	 * 对于 btree 扫描，只有前导的 '=' 条件以及紧接着下一个属性的不等式条件
+	 * 才会贡献给索引选择性（这些就是决定索引扫描起止点的“边界条件”）。
+	 * 额外的条件可以抑制对堆的访问，因此把它们计入 indexSelectivity 是可以
+	 * 的，但它们不应计入对 numIndexTuples 的估计。所以我们必须检查给定的
+	 * 索引条件，以找出哪些能算作边界条件。我们依赖于它们是按索引列顺序给出
+	 * 这一事实。注意，nbtree 预处理可能会加入跳过数组（skip array），在没有
+	 * 普通输入 '=' 条件时，它们可充当前导的 '=' 条件，因此在实践中*大多数*
+	 * 输入条件都能充当索引边界条件（我们在此将其考虑在内）。
 	 *
-	 * For a RowCompareExpr, we consider only the first column, just as
-	 * rowcomparesel() does.
+	 * 对于 RowCompareExpr，我们只考虑第一列，正如 rowcomparesel() 那样。
 	 *
-	 * If there's a SAOP or skip array in the quals, we'll actually perform up
-	 * to N index descents (not just one), but the underlying array key's
-	 * operator can be considered to act the same as it normally does.
+	 * 如果条件中存在 SAOP 或跳过数组，我们实际上会执行多达 N 次索引下降
+	 * （而不只是一次），但底层数组键的操作符可被视为与平常表现相同。
 	 */
 	indexBoundQuals = NIL;
 	indexSkipQuals = NIL;
@@ -7421,36 +7159,33 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			 * arrays that generate their elements procedurally and on demand.
 			 * Given a multi-column index on "(a, b)", and an SQL WHERE clause
 			 * "WHERE b = 42", a skip scan will effectively use an indexqual
-			 * "WHERE a = ANY('{every col a value}') AND b = 42".  (Obviously,
-			 * the array on "a" must also return "IS NULL" matches, since our
-			 * WHERE clause used no strict operator on "a").
+			 * "WHERE a = ANY('{every col a value}') AND b = 42"。（显然，
+			 * "a" 上的数组还必须返回 "IS NULL" 匹配，因为我们的 WHERE 子句
+			 * 对 "a" 没有使用严格操作符）。
 			 *
-			 * Here we consider how nbtree will backfill skip arrays for any
-			 * index columns that lacked an '=' qual.  This maintains our
-			 * num_sa_scans estimate, and determines if this new column (the
-			 * "iclause->indexcol" column, not the prior "indexcol" column)
-			 * can have its RestrictInfos/quals added to indexBoundQuals.
+			 * 这里我们考虑 nbtree 会如何为任何缺少 '=' 条件的索引列回填跳过
+			 * 数组。这维持了我们的 num_sa_scans 估计，并决定了这个新列
+			 * （即 "iclause->indexcol" 列，而非之前的 "indexcol" 列）的
+			 * RestrictInfo/条件能否被加入 indexBoundQuals。
 			 *
-			 * We'll need to handle columns that have inequality quals, where
-			 * the skip array generates values from a range constrained by the
-			 * quals (not every possible value).  We've been maintaining
-			 * indexSkipQuals to help with this; it will now contain all of
-			 * the prior column's quals (that is, indexcol's quals) when they
-			 * might be used for this.
+			 * 我们需要处理带有不等式条件的列，此时跳过数组会从受那些条件
+			 * （而非每个可能的值）约束的范围内生成值。我们一直在维护
+			 * indexSkipQuals 以辅助此事；当它可能被用于此目的时，它现在会
+			 * 包含前一列（即 indexcol 列）的所有条件。
 			 */
 			if (found_row_compare)
 			{
 				/*
-				 * Skip arrays can't be added after a RowCompare input qual
-				 * due to limitations in nbtree
+				 * 由于 nbtree 的限制，在 RowCompare 输入条件之后无法再添加
+				 * 跳过数组
 				 */
 				break;
 			}
 			if (eqQualHere)
 			{
 				/*
-				 * Don't need to add a skip array for an indexcol that already
-				 * has an '=' qual/equality constraint
+				 * 对于一个已经有 '=' 条件/相等约束的 indexcol，无需再添加
+				 * 跳过数组
 				 */
 				indexcol++;
 				indexSkipQuals = NIL;
@@ -7465,9 +7200,8 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				found_array = true;
 
 				/*
-				 * A skipped attribute's ndistinct forms the basis of our
-				 * estimate of the total number of "array elements" used by
-				 * its skip array at runtime.  Look that up first.
+				 * 一个被跳过属性的 ndistinct，构成了我们对运行时其跳过数组
+				 * 所使用的“数组元素”总数的估计基础。先把它查出来。
 				 */
 				examine_indexcol_variable(root, index, indexcol, &vardata);
 				ndistinct = get_variable_numdistinct(&vardata, &isdefault);
@@ -7475,8 +7209,8 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				if (indexcol == 0)
 				{
 					/*
-					 * Get an estimate of the leading column's correlation in
-					 * passing (avoids rereading variable stats below)
+					 * 顺带估计一下前导列的相关性（避免下面重复读取变量
+					 * 统计）
 					 */
 					if (HeapTupleIsValid(vardata.statsTuple))
 						correlation = btcost_correlation(index, &vardata);
@@ -7486,17 +7220,17 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				ReleaseVariableStats(vardata);
 
 				/*
-				 * If ndistinct is a default estimate, conservatively assume
-				 * that no skipping will happen at runtime
+				 * 如果 ndistinct 是一个默认估计，就保守地假定运行时不会发生
+				 * 任何跳过
 				 */
 				if (isdefault)
 				{
 					num_sa_scans = num_sa_scans_prev_cols;
-					break;		/* done building indexBoundQuals */
+					break;		/* 完成 indexBoundQuals 的构建 */
 				}
 
 				/*
-				 * Apply indexcol's indexSkipQuals selectivity to ndistinct
+				 * 把 indexcol 的 indexSkipQuals 选择性应用到 ndistinct 上
 				 */
 				if (indexSkipQuals != NIL)
 				{
@@ -7504,9 +7238,8 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 					Selectivity ndistinctfrac;
 
 					/*
-					 * If the index is partial, AND the index predicate with
-					 * the index-bound quals to produce a more accurate idea
-					 * of the number of distinct values for prior indexcol
+					 * 如果索引是部分索引，就把索引谓词与索引边界条件做 AND，
+					 * 以得到对前一 indexcol 不同值数量更准确的认识
 					 */
 					partialSkipQuals = add_predicate_to_index_quals(index,
 																	indexSkipQuals);
@@ -7517,40 +7250,35 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 														   NULL);
 
 					/*
-					 * If ndistinctfrac is selective (on its own), the scan is
-					 * unlikely to benefit from repositioning itself using
-					 * later quals.  Do not allow iclause->indexcol's quals to
-					 * be added to indexBoundQuals (it would increase descent
-					 * costs, without lowering numIndexTuples costs by much).
+					 * 如果 ndistinctfrac 本身就很具选择性，那么该扫描就不大
+					 * 可能通过用后续条件重新定位自身而获益。不要让
+					 * iclause->indexcol 的条件被加入 indexBoundQuals（那会
+					 * 增加下降代价，而不会让 numIndexTuples 代价降低多少）。
 					 */
 					if (ndistinctfrac < DEFAULT_RANGE_INEQ_SEL)
 					{
 						num_sa_scans = num_sa_scans_prev_cols;
-						break;	/* done building indexBoundQuals */
+						break;	/* 完成 indexBoundQuals 的构建 */
 					}
 
-					/* Adjust ndistinct downward */
+					/* 向下调整 ndistinct */
 					ndistinct = rint(ndistinct * ndistinctfrac);
 					ndistinct = Max(ndistinct, 1);
 				}
 
 				/*
-				 * When there's no inequality quals, account for the need to
-				 * find an initial value by counting -inf/+inf as a value.
+				 * 在没有不等式条件时，通过把 -inf/+inf 也计为一个值，来反映
+				 * 需要找到一个初始值。
 				 *
-				 * We don't charge anything extra for possible next/prior key
-				 * index probes, which are sometimes used to find the next
-				 * valid skip array element (ahead of using the located
-				 * element value to relocate the scan to the next position
-				 * that might contain matching tuples).  It seems hard to do
-				 * better here.  Use of the skip support infrastructure often
-				 * avoids most next/prior key probes.  But even when it can't,
-				 * there's a decent chance that most individual next/prior key
-				 * probes will locate a leaf page whose key space overlaps all
-				 * of the scan's keys (even the lower-order keys) -- which
-				 * also avoids the need for a separate, extra index descent.
-				 * Note also that these probes are much cheaper than non-probe
-				 * primitive index scans: they're reliably very selective.
+				 * 对于可能的 next/prior key 索引探测，我们不另收额外费用；
+				 * 这类探测有时被用来寻找下一个有效的跳过数组元素（在用它
+				 * 定位到的元素值把扫描重定位到下一个可能含有匹配元组的位置
+				 * 之前）。在这里要做得更好似乎很困难。使用跳过支持设施通常
+				 * 能避免大多数 next/prior key 探测。但即便避免不了，也有相当
+				 * 大的可能：大多数单独的 next/prior key 探测会定位到一个叶子
+				 * 页面，其键空间与扫描的所有键（甚至低阶键）都重叠——这也
+				 * 就免去了单独、额外的索引下降的需要。还要注意，这些探测
+				 * 比非探测的基本索引扫描廉价得多：它们确实非常具选择性。
 				 */
 				if (indexSkipQuals == NIL)
 					ndistinct += 1;
@@ -7560,32 +7288,27 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				 *
 				 * We make the pessimistic assumption that there is no
 				 * naturally occurring cross-column correlation.  This is
-				 * often wrong, but it seems best to err on the side of not
-				 * expecting skipping to be helpful...
+				 * 往往是错误的，但似乎最好还是宁可低估跳过带来的好处……
 				 */
 				num_sa_scans *= ndistinct;
 
 				/*
-				 * ...but back out of adding this latest group of 1 or more
-				 * skip arrays when num_sa_scans exceeds the total number of
-				 * index pages (revert to num_sa_scans from before indexcol).
-				 * This causes a sharp discontinuity in cost (as a function of
-				 * the indexcol's ndistinct), but that is representative of
-				 * actual runtime costs.
+				 * ……但当 num_sa_scans 超过索引页面总数时，撤销加入最新这一组
+				 * 1 个或多个跳过数组（回退到 indexcol 之前的 num_sa_scans）。
+				 * 这会造成代价上（作为 indexcol 的 ndistinct 的函数）的剧烈
+				 * 不连续，但那正代表了实际的运行时代价。
 				 *
-				 * Note that skipping is helpful when each primitive index
-				 * scan only manages to skip over 1 or 2 irrelevant leaf pages
-				 * on average.  Skip arrays bring savings in CPU costs due to
-				 * the scan not needing to evaluate indexquals against every
-				 * tuple, which can greatly exceed any savings in I/O costs.
-				 * This test is a test of whether num_sa_scans implies that
-				 * we're past the point where the ability to skip ceases to
-				 * lower the scan's costs (even qual evaluation CPU costs).
+				 * 注意，当每次基本索引扫描平均只跳过 1 或 2 个无关的叶子页面
+				 * 时，跳过是有帮助的。跳过数组能节省 CPU 代价，因为扫描无需
+				 * 对每个元组求值索引条件，这可能大大超过在 I/O 代价上节省的
+				 * 部分。这个测试检验的是：num_sa_scans 是否意味着我们已经越过了
+				 * “跳过能力不再能降低扫描代价（甚至条件求值的 CPU 代价）”的
+				 * 临界点。
 				 */
 				if (index->pages < num_sa_scans)
 				{
 					num_sa_scans = num_sa_scans_prev_cols;
-					break;		/* done building indexBoundQuals */
+					break;		/* 完成 indexBoundQuals 的构建 */
 				}
 
 				indexcol++;
@@ -7593,21 +7316,20 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			}
 
 			/*
-			 * Finished considering the need to add skip arrays to bridge an
-			 * initial eqQualHere gap between the old and new index columns
-			 * (or there was no initial eqQualHere gap in the first place).
+			 * 考虑是否需要添加跳过数组，以弥合旧索引列与新索引列之间最初的
+			 * eqQualHere 缺口（或者一开始就不存在这样的缺口）。
 			 *
-			 * If an initial gap could not be bridged, then new column's quals
-			 * (i.e. iclause->indexcol's quals) won't go into indexBoundQuals,
-			 * and so won't affect our final numIndexTuples estimate.
+			 * 如果最初的缺口无法被弥合，那么新列的条件（即
+			 * iclause->indexcol 的条件）就不会进入 indexBoundQuals，因而
+			 * 也不会影响我们最终的 numIndexTuples 估计。
 			 */
 			if (indexcol != iclause->indexcol)
-				break;			/* done building indexBoundQuals */
+				break;			/* 完成 indexBoundQuals 的构建 */
 		}
 
 		Assert(indexcol == iclause->indexcol);
 
-		/* Examine each indexqual associated with this index clause */
+		/* 检查与该索引子句关联的每一个索引条件 */
 		foreach(lc2, iclause->indexquals)
 		{
 			RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc2);
@@ -7636,7 +7358,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
 				clause_op = saop->opno;
 				found_array = true;
-				/* estimate SA descents by indexBoundQuals only */
+				/* 仅按 indexBoundQuals 估计 SA 下降次数 */
 				if (alength > 1)
 					num_sa_scans *= alength;
 			}
@@ -7647,7 +7369,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				if (nt->nulltesttype == IS_NULL)
 				{
 					found_is_null_op = true;
-					/* IS NULL is like = for selectivity/skip scan purposes */
+					/* 就选择性/跳过扫描而言，IS NULL 类似于 = */
 					eqQualHere = true;
 				}
 			}
@@ -7655,12 +7377,12 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				elog(ERROR, "unsupported indexqual type: %d",
 					 (int) nodeTag(clause));
 
-			/* check for equality operator */
+			/* 检查是否为相等操作符 */
 			if (OidIsValid(clause_op))
 			{
 				op_strategy = get_op_opfamily_strategy(clause_op,
 													   index->opfamily[indexcol]);
-				Assert(op_strategy != 0);	/* not a member of opfamily?? */
+				Assert(op_strategy != 0);	/* 不是操作符族的成员？？ */
 				if (op_strategy == BTEqualStrategyNumber)
 					eqQualHere = true;
 			}
@@ -7668,9 +7390,9 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			indexBoundQuals = lappend(indexBoundQuals, rinfo);
 
 			/*
-			 * We apply inequality selectivities to estimate index descent
-			 * costs with scans that use skip arrays.  Save this indexcol's
-			 * RestrictInfos if it looks like they'll be needed for that.
+			 * 对于使用跳过数组的扫描，我们用不等式选择性来估计索引下降
+			 * 代价。如果看起来这些 RestrictInfo 会用于此，就保存本 indexcol
+			 * 的它们。
 			 */
 			if (!eqQualHere && !found_row_compare &&
 				indexcol < index->nkeycolumns - 1)
@@ -7679,10 +7401,9 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	}
 
 	/*
-	 * If index is unique and we found an '=' clause for each column, we can
-	 * just assume numIndexTuples = 1 and skip the expensive
-	 * clauselist_selectivity calculations.  However, an array or NullTest
-	 * always invalidates that theory (even when eqQualHere has been set).
+	 * 如果索引是唯一的，并且我们为每个列都找到了 '=' 子句，就可以直接假定
+	 * numIndexTuples = 1，并跳过昂贵的 clauselist_selectivity 计算。不过，
+	 * 数组或 NullTest 总是会使这种推断失效（即便 eqQualHere 已被置位）。
 	 */
 	if (index->unique &&
 		indexcol == index->nkeycolumns - 1 &&
@@ -7696,9 +7417,8 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		Selectivity btreeSelectivity;
 
 		/*
-		 * If the index is partial, AND the index predicate with the
-		 * index-bound quals to produce a more accurate idea of the number of
-		 * rows covered by the bound conditions.
+		 * 如果索引是部分索引，就把索引谓词与索引边界条件做 AND，以得到对
+		 * 边界条件所覆盖行数更准确的认识。
 		 */
 		selectivityQuals = add_predicate_to_index_quals(index, indexBoundQuals);
 

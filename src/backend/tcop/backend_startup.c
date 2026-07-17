@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * backend_startup.c
- *	  Backend startup code
+ *	  后端启动代码
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -42,18 +42,17 @@
 #include "utils/timeout.h"
 #include "utils/varlena.h"
 
-/* GUCs */
+/* GUC 参数 */
 bool		Trace_connection_negotiation = false;
 uint32		log_connections = 0;
 char	   *log_connections_string = NULL;
 
-/* Other globals */
+/* 其他全局变量 */
 
 /*
- * ConnectionTiming stores timestamps of various points in connection
- * establishment and setup.
- * ready_for_use is initialized to a special value here so we can check if
- * we've already set it before doing so in PostgresMain().
+ * ConnectionTiming 存储连接建立与初始化过程中各个时间点的时间戳。
+ * ready_for_use 在此处初始化为一个特殊值，这样我们就能检查在 PostgresMain()
+ * 中设置它之前是否已经设置过。
  */
 ConnectionTiming conn_timing = {.ready_for_use = TIMESTAMP_MINUS_INFINITY};
 
@@ -67,10 +66,9 @@ static void StartupPacketTimeoutHandler(void);
 static bool validate_log_connections_options(List *elemlist, uint32 *flags);
 
 /*
- * Entry point for a new backend process.
+ * 新后端进程的入口点。
  *
- * Initialize the connection, read the startup packet, authenticate the
- * client, and start the main processing loop.
+ * 初始化连接、读取启动包、对客户端进行认证，并启动主处理循环。
  */
 void
 BackendMain(const void *startup_data, size_t startup_data_len)
@@ -83,16 +81,13 @@ BackendMain(const void *startup_data, size_t startup_data_len)
 #ifdef EXEC_BACKEND
 
 	/*
-	 * Need to reinitialize the SSL library in the backend, since the context
-	 * structures contain function pointers and cannot be passed through the
-	 * parameter file.
+	 * 需要在后端中重新初始化 SSL 库，因为上下文结构包含函数指针，无法
+	 * 通过参数文件传递。
 	 *
-	 * If for some reason reload fails (maybe the user installed broken key
-	 * files), soldier on without SSL; that's better than all connections
-	 * becoming impossible.
+	 * 如果由于某种原因重新加载失败（也许用户安装了损坏的密钥文件），
+	 * 则不使用 SSL 继续运行；这总比所有连接都变得不可能要好。
 	 *
-	 * XXX should we do this in all child processes?  For the moment it's
-	 * enough to do it in backend children.
+	 * XXX 我们应该在所有子进程中都这样做吗？目前只在后端子进程中做就足够了。
 	 */
 #ifdef USE_SSL
 	if (EnableSSL)
@@ -106,18 +101,18 @@ BackendMain(const void *startup_data, size_t startup_data_len)
 #endif
 #endif
 
-	/* Perform additional initialization and collect startup packet */
+	/* 执行额外的初始化并收集启动包 */
 	BackendInitialize(MyClientSocket, bsdata->canAcceptConnections);
 
 	/*
-	 * Create a per-backend PGPROC struct in shared memory.  We must do this
-	 * before we can use LWLocks or access any shared memory.
+	 * 在共享内存中创建一个每个后端独立的 PGPROC 结构体。我们必须先完成
+	 * 这一步，才能使用 LWLocks 或访问任何共享内存。
 	 */
 	InitProcess();
 
 	/*
-	 * Make sure we aren't in PostmasterContext anymore.  (We can't delete it
-	 * just yet, though, because InitPostgres will need the HBA data.)
+	 * 确保我们不再处于 PostmasterContext 中。（不过我们还不能删除它，
+	 * 因为 InitPostgres 还需要 HBA 数据。）
 	 */
 	MemoryContextSwitchTo(TopMemoryContext);
 
@@ -148,58 +143,55 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 	StringInfoData ps_data;
 	MemoryContext oldcontext;
 
-	/* Tell fd.c about the long-lived FD associated with the client_sock */
+	/* 通知 fd.c 与 client_sock 相关的长生命周期 FD */
 	ReserveExternalFD();
 
 	/*
-	 * PreAuthDelay is a debugging aid for investigating problems in the
-	 * authentication cycle: it can be set in postgresql.conf to allow time to
-	 * attach to the newly-forked backend with a debugger.  (See also
-	 * PostAuthDelay, which we allow clients to pass through PGOPTIONS, but it
-	 * is not honored until after authentication.)
+	 * PreAuthDelay 是一个用于调查认证周期中问题的调试辅助手段：它可以在
+	 * postgresql.conf 中设置，以便留出时间用调试器附加到新 fork 出的后端。
+	 * （另见 PostAuthDelay，我们允许客户端通过 PGOPTIONS 传入，但它直到
+	 * 认证之后才会生效。）
 	 */
 	if (PreAuthDelay > 0)
 		pg_usleep(PreAuthDelay * 1000000L);
 
-	/* This flag will remain set until InitPostgres finishes authentication */
-	ClientAuthInProgress = true;	/* limit visibility of log messages */
+	/* 该标志将一直保持设置，直到 InitPostgres 完成认证 */
+	ClientAuthInProgress = true;	/* 限制日志消息的可见性 */
 
 	/*
-	 * Initialize libpq and enable reporting of ereport errors to the client.
-	 * Must do this now because authentication uses libpq to send messages.
+	 * 初始化 libpq，并启用将 ereport 错误报告给客户端。现在必须这样做，
+	 * 因为认证会使用 libpq 来发送消息。
 	 *
-	 * The Port structure and all data structures attached to it are allocated
-	 * in TopMemoryContext, so that they survive into PostgresMain execution.
-	 * We need not worry about leaking this storage on failure, since we
-	 * aren't in the postmaster process anymore.
+	 * Port 结构体以及所有附着于它的数据结构都在 TopMemoryContext 中分配，
+	 * 以便它们能存活到 PostgresMain 执行期间。我们无需担心失败时泄漏这块
+	 * 内存，因为我们已经不在 postmaster 进程中了。
 	 */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 	port = MyProcPort = pq_init(client_sock);
 	MemoryContextSwitchTo(oldcontext);
 
-	whereToSendOutput = DestRemote; /* now safe to ereport to client */
+	whereToSendOutput = DestRemote; /* 现在向客户端报告 ereport 是安全的 */
 
-	/* set these to empty in case they are needed before we set them up */
+	/* 将它们设为空，以防在正式设置之前就需要用到 */
 	port->remote_host = "";
 	port->remote_port = "";
 
 	/*
-	 * We arrange to do _exit(1) if we receive SIGTERM or timeout while trying
-	 * to collect the startup packet; while SIGQUIT results in _exit(2).
-	 * Otherwise the postmaster cannot shutdown the database FAST or IMMED
-	 * cleanly if a buggy client fails to send the packet promptly.
+	 * 我们安排在尝试收集启动包期间，如果收到 SIGTERM 或超时，就执行
+	 * _exit(1)；而 SIGQUIT 则导致 _exit(2)。否则，如果某个有缺陷的客户端
+	 * 未能及时发送数据包，postmaster 将无法干净地以 FAST 或 IMMED 方式
+	 * 关闭数据库。
 	 *
-	 * Exiting with _exit(1) is only possible because we have not yet touched
-	 * shared memory; therefore no outside-the-process state needs to get
-	 * cleaned up.
+	 * 能够用 _exit(1) 退出，仅仅是因为我们尚未触碰共享内存；因此不需要
+	 * 清理任何进程外部的状态。
 	 */
 	pqsignal(SIGTERM, process_startup_packet_die);
-	/* SIGQUIT handler was already set up by InitPostmasterChild */
-	InitializeTimeouts();		/* establishes SIGALRM handler */
+	/* SIGQUIT 处理函数已由 InitPostmasterChild 设置好 */
+	InitializeTimeouts();		/* 建立 SIGALRM 处理函数 */
 	sigprocmask(SIG_SETMASK, &StartupBlockSig, NULL);
 
 	/*
-	 * Get the remote host name and port for logging and status display.
+	 * 获取远程主机名和端口，用于日志和状态显示。
 	 */
 	remote_host[0] = '\0';
 	remote_port[0] = '\0';
@@ -212,13 +204,13 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 								 gai_strerror(ret))));
 
 	/*
-	 * Save remote_host and remote_port in port structure (after this, they
-	 * will appear in log_line_prefix data for log messages).
+	 * 将 remote_host 和 remote_port 保存到 port 结构体中（此后，它们会
+	 * 出现在日志消息的 log_line_prefix 数据中）。
 	 */
 	port->remote_host = MemoryContextStrdup(TopMemoryContext, remote_host);
 	port->remote_port = MemoryContextStrdup(TopMemoryContext, remote_port);
 
-	/* And now we can log that the connection was received, if enabled */
+	/* 现在，如果启用了相关选项，就可以记录连接已收到的日志 */
 	if (log_connections & LOG_CONNECTION_RECEIPT)
 	{
 		if (remote_port[0])
@@ -232,15 +224,14 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 							remote_host)));
 	}
 
-	/* For testing client error handling */
+	/* 用于测试客户端的错误处理 */
 #ifdef USE_INJECTION_POINTS
 	INJECTION_POINT("backend-initialize", NULL);
 	if (IS_INJECTION_POINT_ATTACHED("backend-initialize-v2-error"))
 	{
 		/*
-		 * This simulates an early error from a pre-v14 server, which used the
-		 * version 2 protocol for any errors that occurred before processing
-		 * the startup packet.
+		 * 这模拟了 v14 之前的服务器的早期错误。那时的服务器在处理启动包
+		 * 之前发生的任何错误都使用版本 2 协议。
 		 */
 		FrontendProtocol = PG_PROTOCOL(2, 0);
 		elog(FATAL, "protocol version 2 error triggered");
@@ -248,15 +239,14 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 #endif
 
 	/*
-	 * If we did a reverse lookup to name, we might as well save the results
-	 * rather than possibly repeating the lookup during authentication.
+	 * 如果我们做了反向查找得到名称，不妨把结果保存下来，以免在认证期间
+	 * 可能重复查找。
 	 *
-	 * Note that we don't want to specify NI_NAMEREQD above, because then we'd
-	 * get nothing useful for a client without an rDNS entry.  Therefore, we
-	 * must check whether we got a numeric IPv4 or IPv6 address, and not save
-	 * it into remote_hostname if so.  (This test is conservative and might
-	 * sometimes classify a hostname as numeric, but an error in that
-	 * direction is safe; it only results in a possible extra lookup.)
+	 * 注意，我们不希望在上面指定 NI_NAMEREQD，因为那样对于没有 rDNS 记录
+	 * 的客户端我们会什么都得不到。因此，我们必须检查得到的是否为数字形式
+	 * 的 IPv4 或 IPv6 地址，如果是，则不要保存到 remote_hostname 中。
+	 * （这个测试比较保守，有时可能把主机名误判为数字形式，但这个方向上的
+	 * 误判是安全的；它最多只是导致一次可能的额外查找。）
 	 */
 	if (log_hostname &&
 		ret == 0 &&
@@ -267,37 +257,32 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 	}
 
 	/*
-	 * Ready to begin client interaction.  We will give up and _exit(1) after
-	 * a time delay, so that a broken client can't hog a connection
-	 * indefinitely.  PreAuthDelay and any DNS interactions above don't count
-	 * against the time limit.
+	 * 准备开始与客户端交互。我们会在一段延时后放弃并执行 _exit(1)，以免
+	 * 有缺陷的客户端无限期地占用一个连接。上面的 PreAuthDelay 以及任何
+	 * DNS 交互不计入该时间限制。
 	 *
-	 * Note: AuthenticationTimeout is applied here while waiting for the
-	 * startup packet, and then again in InitPostgres for the duration of any
-	 * authentication operations.  So a hostile client could tie up the
-	 * process for nearly twice AuthenticationTimeout before we kick him off.
+	 * 注意：AuthenticationTimeout 在等待启动包时于此应用，然后在 InitPostgres
+	 * 中针对任何认证操作的持续时间再次应用。因此，一个恶意客户端在我们将其
+	 * 踢掉之前，可能将进程占用接近两倍的 AuthenticationTimeout 时间。
 	 *
-	 * Note: because PostgresMain will call InitializeTimeouts again, the
-	 * registration of STARTUP_PACKET_TIMEOUT will be lost.  This is okay
-	 * since we never use it again after this function.
+	 * 注意：由于 PostgresMain 会再次调用 InitializeTimeouts，STARTUP_PACKET_TIMEOUT
+	 * 的注册会丢失。这没关系，因为本函数之后我们不会再使用它。
 	 */
 	RegisterTimeout(STARTUP_PACKET_TIMEOUT, StartupPacketTimeoutHandler);
 	enable_timeout_after(STARTUP_PACKET_TIMEOUT, AuthenticationTimeout * 1000);
 
-	/* Handle direct SSL handshake */
+	/* 处理直接的 SSL 握手 */
 	status = ProcessSSLStartup(port);
 
 	/*
-	 * Receive the startup packet (which might turn out to be a cancel request
-	 * packet).
+	 * 接收启动包（它最终可能是一个取消请求包）。
 	 */
 	if (status == STATUS_OK)
 		status = ProcessStartupPacket(port, false, false);
 
 	/*
-	 * If we're going to reject the connection due to database state, say so
-	 * now instead of wasting cycles on an authentication exchange. (This also
-	 * allows a pg_ping utility to be written.)
+	 * 如果我们要因数据库状态而拒绝连接，现在就说明，而不是把时间浪费在
+	 * 认证交互上。（这也使得可以编写一个 pg_ping 工具。）
 	 */
 	if (status == STATUS_OK)
 	{
@@ -348,32 +333,30 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 	}
 
 	/*
-	 * Disable the timeout, and prevent SIGTERM again.
+	 * 禁用超时，并再次阻止 SIGTERM。
 	 */
 	disable_timeout(STARTUP_PACKET_TIMEOUT, false);
 	sigprocmask(SIG_SETMASK, &BlockSig, NULL);
 
 	/*
-	 * As a safety check that nothing in startup has yet performed
-	 * shared-memory modifications that would need to be undone if we had
-	 * exited through SIGTERM or timeout above, check that no on_shmem_exit
-	 * handlers have been registered yet.  (This isn't terribly bulletproof,
-	 * since someone might misuse an on_proc_exit handler for shmem cleanup,
-	 * but it's a cheap and helpful check.  We cannot disallow on_proc_exit
-	 * handlers unfortunately, since pq_init() already registered one.)
+	 * 作为一项安全检查，确认启动过程中尚未执行任何共享内存修改（如果之前
+	 * 通过上面的 SIGTERM 或超时退出，这些修改需要被撤销），检查是否还没有
+	 * 注册任何 on_shmem_exit 处理函数。（这并非完全可靠，因为有人可能误用
+	 * on_proc_exit 处理函数来清理共享内存，但这是一个成本低且有帮助的检查。
+	 * 我们不幸无法禁止 on_proc_exit 处理函数，因为 pq_init() 已经注册了一个。）
 	 */
 	check_on_shmem_exit_lists_are_empty();
 
 	/*
-	 * Stop here if it was bad or a cancel packet.  ProcessStartupPacket
-	 * already did any appropriate error reporting.
+	 * 如果它是一个错误包或取消包，则在此停止。ProcessStartupPacket
+	 * 已经完成了任何适当的错误报告。
 	 */
 	if (status != STATUS_OK)
 		proc_exit(0);
 
 	/*
-	 * Now that we have the user and database name, we can set the process
-	 * title for ps.  It's good to do this as early as possible in startup.
+	 * 既然我们已经拿到了用户名和数据库名，就可以设置用于 ps 的进程标题了。
+	 * 在启动过程中尽早这样做是好的。
 	 */
 	initStringInfo(&ps_data);
 	if (am_walsender)
@@ -392,10 +375,10 @@ BackendInitialize(ClientSocket *client_sock, CAC_state cac)
 }
 
 /*
- * Check for a direct SSL connection.
+ * 检查直接的 SSL 连接。
  *
- * This happens before the startup packet so we are careful not to actually
- * read any bytes from the stream if it's not a direct SSL connection.
+ * 这发生在启动包之前，因此我们要小心：如果它不是直接的 SSL 连接，就
+ * 不要真正从流中读取任何字节。
  */
 static int
 ProcessSSLStartup(Port *port)
@@ -410,37 +393,36 @@ ProcessSSLStartup(Port *port)
 	if (firstbyte == EOF)
 	{
 		/*
-		 * Like in ProcessStartupPacket, if we get no data at all, don't
-		 * clutter the log with a complaint.
+		 * 与 ProcessStartupPacket 中一样，如果我们完全没有收到任何数据，
+		 * 不要往日志里塞一条抱怨信息。
 		 */
 		return STATUS_ERROR;
 	}
 
 	if (firstbyte != 0x16)
 	{
-		/* Not an SSL handshake message */
+		/* 不是 SSL 握手消息 */
 		return STATUS_OK;
 	}
 
 	/*
-	 * First byte indicates standard SSL handshake message
+	 * 首字节表示标准的 SSL 握手消息
 	 *
-	 * (It can't be a Postgres startup length because in network byte order
-	 * that would be a startup packet hundreds of megabytes long)
+	 * （它不可能是 Postgres 启动长度，因为在网络字节序下那会是一个长达
+	 * 数百兆字节的启动包）
 	 */
 
 #ifdef USE_SSL
 	if (!LoadedSSL || port->laddr.addr.ss_family == AF_UNIX)
 	{
-		/* SSL not supported */
+		/* 不支持 SSL */
 		goto reject;
 	}
 
 	if (secure_open_server(port) == -1)
 	{
 		/*
-		 * we assume secure_open_server() sent an appropriate TLS alert
-		 * already
+		 * 我们假设 secure_open_server() 已经发送了适当的 TLS 告警
 		 */
 		goto reject;
 	}
@@ -459,7 +441,7 @@ ProcessSSLStartup(Port *port)
 				(errmsg("direct SSL connection accepted")));
 	return STATUS_OK;
 #else
-	/* SSL not supported by this build */
+	/* 此构建不支持 SSL */
 	goto reject;
 #endif
 
@@ -471,22 +453,18 @@ reject:
 }
 
 /*
- * Read a client's startup packet and do something according to it.
+ * 读取客户端的启动包，并根据其内容采取相应的动作。
  *
- * Returns STATUS_OK or STATUS_ERROR, or might call ereport(FATAL) and
- * not return at all.
+ * 返回 STATUS_OK 或 STATUS_ERROR，也可能会调用 ereport(FATAL) 而根本不返回。
  *
- * (Note that ereport(FATAL) stuff is sent to the client, so only use it
- * if that's what you want.  Return STATUS_ERROR if you don't want to
- * send anything to the client, which would typically be appropriate
- * if we detect a communications failure.)
+ * （注意：ereport(FATAL) 的内容会发送给客户端，所以只有在你确实希望如此时
+ * 才使用它。如果你不想向客户端发送任何内容（在检测到通信失败时通常是合适的），
+ * 则返回 STATUS_ERROR。）
  *
- * Set ssl_done and/or gss_done when negotiation of an encrypted layer
- * (currently, TLS or GSSAPI) is completed. A successful negotiation of either
- * encryption layer sets both flags, but a rejected negotiation sets only the
- * flag for that layer, since the client may wish to try the other one. We
- * should make no assumption here about the order in which the client may make
- * requests.
+ * 当加密层（目前为 TLS 或 GSSAPI）的协商完成时，设置 ssl_done 和/或
+ * gss_done。任一加密层的成功协商都会设置这两个标志，但被拒绝的协商只设置
+ * 该层的标志，因为客户端可能希望尝试另一个。我们不应在此对客户端的
+ * 请求顺序做任何假设。
  */
 static int
 ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
@@ -500,29 +478,26 @@ retry:
 	pq_startmsgread();
 
 	/*
-	 * Grab the first byte of the length word separately, so that we can tell
-	 * whether we have no data at all or an incomplete packet.  (This might
-	 * sound inefficient, but it's not really, because of buffering in
-	 * pqcomm.c.)
+	 * 单独读取长度字段的首字节，这样我们就能判断是根本没有数据，还是
+	 * 一个不完整的包。（这听起来可能效率不高，但实际上并非如此，因为
+	 * pqcomm.c 中有缓冲。）
 	 */
 	if (pq_getbytes(&len, 1) == EOF)
 	{
 		/*
-		 * If we get no data at all, don't clutter the log with a complaint;
-		 * such cases often occur for legitimate reasons.  An example is that
-		 * we might be here after responding to NEGOTIATE_SSL_CODE, and if the
-		 * client didn't like our response, it'll probably just drop the
-		 * connection.  Service-monitoring software also often just opens and
-		 * closes a connection without sending anything.  (So do port
-		 * scanners, which may be less benign, but it's not really our job to
-		 * notice those.)
+		 * 如果我们完全没有收到任何数据，不要往日志里塞一条抱怨信息；
+		 * 这类情况常常出于正当原因发生。例如，我们可能是在响应
+		 * NEGOTIATE_SSL_CODE 之后来到这里的，如果客户端不喜欢我们的响应，
+		 * 它很可能只是直接断开连接。服务监控软件也常常只是打开再关闭一个
+		 * 连接而不发送任何内容。（端口扫描器也是如此，它们可能不那么善意，
+		 * 但发现它们并不是我们真正的工作。）
 		 */
 		return STATUS_ERROR;
 	}
 
 	if (pq_getbytes(((char *) &len) + 1, 3) == EOF)
 	{
-		/* Got a partial length word, so bleat about that */
+		/* 只收到了长度字段的一部分，因此报告该问题 */
 		if (!ssl_done && !gss_done)
 			ereport(COMMERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -543,9 +518,8 @@ retry:
 	}
 
 	/*
-	 * Allocate space to hold the startup packet, plus one extra byte that's
-	 * initialized to be zero.  This ensures we will have null termination of
-	 * all strings inside the packet.
+	 * 分配保存启动包的空间，外加一个额外字节并初始化为零。这确保包内
+	 * 所有字符串都以空字符结尾。
 	 */
 	buf = palloc(len + 1);
 	buf[len] = '\0';
@@ -560,15 +534,14 @@ retry:
 	pq_endmsgread();
 
 	/*
-	 * The first field is either a protocol version number or a special
-	 * request code.
+	 * 第一个字段要么是一个协议版本号，要么是一个特殊的请求码。
 	 */
 	port->proto = proto = pg_ntoh32(*((ProtocolVersion *) buf));
 
 	if (proto == CANCEL_REQUEST_CODE)
 	{
 		ProcessCancelRequestPacket(port, buf, len);
-		/* Not really an error, but we don't want to proceed further */
+		/* 这其实不算错误，但我们不想再继续处理 */
 		return STATUS_ERROR;
 	}
 
@@ -579,16 +552,16 @@ retry:
 #ifdef USE_SSL
 
 		/*
-		 * No SSL when disabled or on Unix sockets.
+		 * 在禁用或 Unix 套接字上时不进行 SSL 协商。
 		 *
-		 * Also no SSL negotiation if we already have a direct SSL connection
+		 * 如果我们已经有了一个直接的 SSL 连接，也不再协商 SSL。
 		 */
 		if (!LoadedSSL || port->laddr.addr.ss_family == AF_UNIX || port->ssl_in_use)
 			SSLok = 'N';
 		else
-			SSLok = 'S';		/* Support for SSL */
+			SSLok = 'S';		/* 支持 SSL */
 #else
-		SSLok = 'N';			/* No support for SSL */
+		SSLok = 'N';			/* 不支持 SSL */
 #endif
 
 		if (Trace_connection_negotiation)
@@ -604,11 +577,11 @@ retry:
 		while (secure_write(port, &SSLok, 1) != 1)
 		{
 			if (errno == EINTR)
-				continue;		/* if interrupted, just retry */
+				continue;		/* 如果被中断，直接重试 */
 			ereport(COMMERROR,
 					(errcode_for_socket_access(),
 					 errmsg("failed to send SSL negotiation response: %m")));
-			return STATUS_ERROR;	/* close the connection */
+			return STATUS_ERROR;	/* 关闭连接 */
 		}
 
 #ifdef USE_SSL
@@ -617,10 +590,9 @@ retry:
 #endif
 
 		/*
-		 * At this point we should have no data already buffered.  If we do,
-		 * it was received before we performed the SSL handshake, so it wasn't
-		 * encrypted and indeed may have been injected by a man-in-the-middle.
-		 * We report this case to the client.
+		 * 此时我们不应该有任何已缓冲的数据。如果有，那是在我们执行 SSL
+		 * 握手之前收到的，因此它未被加密，并且确实可能由中间人注入。
+		 * 我们将这种情况报告给客户端。
 		 */
 		if (pq_buffer_remaining_data() > 0)
 			ereport(FATAL,
@@ -629,16 +601,15 @@ retry:
 					 errdetail("This could be either a client-software bug or evidence of an attempted man-in-the-middle attack.")));
 
 		/*
-		 * regular startup packet, cancel, etc packet should follow, but not
-		 * another SSL negotiation request, and a GSS request should only
-		 * follow if SSL was rejected (client may negotiate in either order)
+		 * 接下来应该是普通的启动包、取消包等，但不应是另一个 SSL 协商请求；
+		 * 而 GSS 请求只有在 SSL 被拒绝时才应跟随其后（客户端可以按任意顺序
+		 * 进行协商）
 		 */
 		ssl_done = true;
 		if (SSLok == 'S')
 		{
 			/*
-			 * We are done with SSL and negotiated correctly, so consider the
-			 * same for GSS.
+			 * 我们已完成 SSL 协商且协商正确，因此对 GSS 也做同样处理。
 			 */
 			gss_done = true;
 		}
@@ -649,7 +620,7 @@ retry:
 		char		GSSok = 'N';
 
 #ifdef ENABLE_GSS
-		/* No GSSAPI encryption when on Unix socket */
+		/* 在 Unix 套接字上不进行 GSSAPI 加密 */
 		if (port->laddr.addr.ss_family != AF_UNIX)
 			GSSok = 'G';
 #endif
@@ -671,7 +642,7 @@ retry:
 			ereport(COMMERROR,
 					(errcode_for_socket_access(),
 					 errmsg("failed to send GSSAPI negotiation response: %m")));
-			return STATUS_ERROR;	/* close the connection */
+			return STATUS_ERROR;	/* 关闭连接 */
 		}
 
 #ifdef ENABLE_GSS
@@ -680,10 +651,9 @@ retry:
 #endif
 
 		/*
-		 * At this point we should have no data already buffered.  If we do,
-		 * it was received before we performed the GSS handshake, so it wasn't
-		 * encrypted and indeed may have been injected by a man-in-the-middle.
-		 * We report this case to the client.
+		 * 此时我们不应该有任何已缓冲的数据。如果有，那是在我们执行 GSS
+		 * 握手之前收到的，因此它未被加密，并且确实可能由中间人注入。
+		 * 我们将这种情况报告给客户端。
 		 */
 		if (pq_buffer_remaining_data() > 0)
 			ereport(FATAL,
@@ -692,35 +662,32 @@ retry:
 					 errdetail("This could be either a client-software bug or evidence of an attempted man-in-the-middle attack.")));
 
 		/*
-		 * regular startup packet, cancel, etc packet should follow, but not
-		 * another GSS negotiation request, and an SSL request should only
-		 * follow if GSS was rejected (client may negotiate in either order)
+		 * 接下来应该是普通的启动包、取消包等，但不应是另一个 GSS 协商请求；
+		 * 而 SSL 请求只有在 GSS 被拒绝时才应跟随其后（客户端可以按任意顺序
+		 * 进行协商）
 		 */
 		gss_done = true;
 		if (GSSok == 'G')
 		{
 			/*
-			 * We are done with GSS and negotiated correctly, so consider the
-			 * same for SSL.
+			 * 我们已完成 GSS 协商且协商正确，因此对 SSL 也做同样处理。
 			 */
 			ssl_done = true;
 		}
 		goto retry;
 	}
 
-	/* Could add additional special packet types here */
+	/* 可以在此处添加额外的特殊包类型 */
 
 	/*
-	 * Set FrontendProtocol now so that ereport() knows what format to send if
-	 * we fail during startup. We use the protocol version requested by the
-	 * client unless it's higher than the latest version we support. It's
-	 * possible that error message fields might look different in newer
-	 * protocol versions, but that's something those new clients should be
-	 * able to deal with.
+	 * 现在设置 FrontendProtocol，这样 ereport() 就能知道如果我们在启动期间
+	 * 失败应以何种格式发送。我们使用客户端请求的协议版本，除非它高于我们
+	 * 支持的最新版本。新协议版本中的错误消息字段可能看起来不同，但那些
+	 * 新客户端应该能够处理这一点。
 	 */
 	FrontendProtocol = Min(proto, PG_PROTOCOL_LATEST);
 
-	/* Check that the major protocol version is in range. */
+	/* 检查主协议版本是否在范围内。 */
 	if (PG_PROTOCOL_MAJOR(proto) < PG_PROTOCOL_MAJOR(PG_PROTOCOL_EARLIEST) ||
 		PG_PROTOCOL_MAJOR(proto) > PG_PROTOCOL_MAJOR(PG_PROTOCOL_LATEST))
 		ereport(FATAL,
@@ -732,20 +699,18 @@ retry:
 						PG_PROTOCOL_MINOR(PG_PROTOCOL_LATEST))));
 
 	/*
-	 * Now fetch parameters out of startup packet and save them into the Port
-	 * structure.
+	 * 现在从启动包中取出参数并保存到 Port 结构体中。
 	 */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 
-	/* Handle protocol version 3 startup packet */
+	/* 处理协议版本 3 的启动包 */
 	{
 		int32		offset = sizeof(ProtocolVersion);
 		List	   *unrecognized_protocol_options = NIL;
 
 		/*
-		 * Scan packet body for name/option pairs.  We can assume any string
-		 * beginning within the packet body is null-terminated, thanks to
-		 * zeroing extra byte above.
+		 * 扫描包体中的名称/选项对。由于上面将额外字节清零了，我们可以假设
+		 * 包体内开始的任何字符串都以空字符结尾。
 		 */
 		port->guc_options = NIL;
 
@@ -756,10 +721,10 @@ retry:
 			char	   *valptr;
 
 			if (*nameptr == '\0')
-				break;			/* found packet terminator */
+				break;			/* 找到了包终止符 */
 			valoffset = offset + strlen(nameptr) + 1;
 			if (valoffset >= len)
-				break;			/* missing value, will complain below */
+				break;			/* 缺少值，将在下面报错 */
 			valptr = buf + valoffset;
 
 			if (strcmp(nameptr, "database") == 0)
@@ -770,13 +735,11 @@ retry:
 				port->cmdline_options = pstrdup(valptr);
 			else if (strcmp(nameptr, "replication") == 0)
 			{
-				/*
-				 * Due to backward compatibility concerns the replication
-				 * parameter is a hybrid beast which allows the value to be
-				 * either boolean or the string 'database'. The latter
-				 * connects to a specific database which is e.g. required for
-				 * logical decoding while.
-				 */
+			/*
+			 * 出于向后兼容的考虑，replication 参数是一个混合体，允许其值为
+			 * 布尔值或字符串 'database'。后者会连接到一个特定的数据库，
+			 * 例如逻辑解码就需要这样做。
+			 */
 				if (strcmp(valptr, "database") == 0)
 				{
 					am_walsender = true;
@@ -792,28 +755,26 @@ retry:
 			}
 			else if (strncmp(nameptr, "_pq_.", 5) == 0)
 			{
-				/*
-				 * Any option beginning with _pq_. is reserved for use as a
-				 * protocol-level option, but at present no such options are
-				 * defined.
-				 */
+			/*
+			 * 任何以 _pq_. 开头的选项都保留用作协议级选项，但目前尚未定义
+			 * 此类选项。
+			 */
 				unrecognized_protocol_options =
 					lappend(unrecognized_protocol_options, pstrdup(nameptr));
 			}
 			else
 			{
-				/* Assume it's a generic GUC option */
+				/* 假定它是一个通用的 GUC 选项 */
 				port->guc_options = lappend(port->guc_options,
 											pstrdup(nameptr));
 				port->guc_options = lappend(port->guc_options,
 											pstrdup(valptr));
 
-				/*
-				 * Copy application_name to port if we come across it.  This
-				 * is done so we can log the application_name in the
-				 * connection authorization message.  Note that the GUC would
-				 * be used but we haven't gone through GUC setup yet.
-				 */
+			/*
+			 * 如果遇到 application_name，则将其复制到 port 中。这样做是为了
+			 * 能在连接授权消息中记录 application_name。注意，GUC 本应被使用，
+			 * 但我们尚未经过 GUC 设置阶段。
+			 */
 				if (strcmp(nameptr, "application_name") == 0)
 				{
 					port->application_name = pg_clean_ascii(valptr, 0);
@@ -823,8 +784,7 @@ retry:
 		}
 
 		/*
-		 * If we didn't find a packet terminator exactly at the end of the
-		 * given packet length, complain.
+		 * 如果我们没有在给定包长度的末尾正好找到包终止符，则报错。
 		 */
 		if (offset != len - 1)
 			ereport(FATAL,
@@ -832,29 +792,28 @@ retry:
 					 errmsg("invalid startup packet layout: expected terminator as last byte")));
 
 		/*
-		 * If the client requested a newer protocol version or if the client
-		 * requested any protocol options we didn't recognize, let them know
-		 * the newest minor protocol version we do support and the names of
-		 * any unrecognized options.
+		 * 如果客户端请求了更新的协议版本，或者客户端请求了我们不认识的
+		 * 任何协议选项，就让它知道我们确实支持的最新次协议版本，以及任何
+		 * 未被识别的选项的名称。
 		 */
 		if (PG_PROTOCOL_MINOR(proto) > PG_PROTOCOL_MINOR(PG_PROTOCOL_LATEST) ||
 			unrecognized_protocol_options != NIL)
 			SendNegotiateProtocolVersion(unrecognized_protocol_options);
 	}
 
-	/* Check a user name was given. */
+	/* 检查是否提供了用户名。 */
 	if (port->user_name == NULL || port->user_name[0] == '\0')
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
 				 errmsg("no PostgreSQL user name specified in startup packet")));
 
-	/* The database defaults to the user name. */
+	/* 数据库名默认为用户名。 */
 	if (port->database_name == NULL || port->database_name[0] == '\0')
 		port->database_name = pstrdup(port->user_name);
 
 	/*
-	 * Truncate given database and user names to length of a Postgres name.
-	 * This avoids lookup failures when overlength names are given.
+	 * 将给出的数据库名和用户名截断到 Postgres 名称的长度。这样可以避免
+	 * 在给出超长名称时出现查找失败。
 	 */
 	if (strlen(port->database_name) >= NAMEDATALEN)
 		port->database_name[NAMEDATALEN - 1] = '\0';
@@ -867,18 +826,16 @@ retry:
 		MyBackendType = B_BACKEND;
 
 	/*
-	 * Normal walsender backends, e.g. for streaming replication, are not
-	 * connected to a particular database. But walsenders used for logical
-	 * replication need to connect to a specific database. We allow streaming
-	 * replication commands to be issued even if connected to a database as it
-	 * can make sense to first make a basebackup and then stream changes
-	 * starting from that.
+	 * 普通的 walsender 后端（例如用于流复制的）不连接到特定的数据库。
+	 * 但用于逻辑复制的 walsender 需要连接到一个特定的数据库。我们允许在
+	 * 连接到数据库的情况下也发出流复制命令，因为先做一次基础备份、再从
+	 * 该备份开始流式传输变更是合理的。
 	 */
 	if (am_walsender && !am_db_walsender)
 		port->database_name[0] = '\0';
 
 	/*
-	 * Done filling the Port structure
+	 * 完成 Port 结构体的填充
 	 */
 	MemoryContextSwitchTo(oldcontext);
 
@@ -886,9 +843,8 @@ retry:
 }
 
 /*
- * The client has sent a cancel request packet, not a normal
- * start-a-new-connection packet.  Perform the necessary processing.  Nothing
- * is sent back to the client.
+ * 客户端发送的是一个取消请求包，而不是一个普通的“启动新连接”包。
+ * 执行必要的处理。不会向客户端回送任何内容。
  */
 static void
 ProcessCancelRequestPacket(Port *port, void *pkt, int pktlen)
@@ -917,20 +873,16 @@ ProcessCancelRequestPacket(Port *port, void *pkt, int pktlen)
 }
 
 /*
- * Send a NegotiateProtocolVersion to the client.  This lets the client know
- * that they have either requested a newer minor protocol version than we are
- * able to speak, or at least one protocol option that we don't understand, or
- * possibly both. FrontendProtocol has already been set to the version
- * requested by the client or the highest version we know how to speak,
- * whichever is older. If the highest version that we know how to speak is too
- * old for the client, it can abandon the connection.
+ * 向客户端发送一个 NegotiateProtocolVersion。它让客户端知道，它要么请求了
+ * 一个比我们所能支持的更新的次协议版本，要么请求了至少一个我们不理解的
+ * 协议选项，或者两者皆有。FrontendProtocol 已经被设置为客户端请求的版本
+ * 与我们已知如何支持的最高版本中较旧的那一个。如果我们已知的最高版本对
+ * 客户端来说太旧，它可以放弃该连接。
  *
- * We also include in the response a list of protocol options we didn't
- * understand.  This allows clients to include optional parameters that might
- * be present either in newer protocol versions or third-party protocol
- * extensions without fear of having to reconnect if those options are not
- * understood, while at the same time making certain that the client is aware
- * of which options were actually accepted.
+ * 我们还在响应中包含一份我们不理解的协议选项列表。这样客户端就可以包含
+ * 可能出现在更新协议版本或第三方协议扩展中的可选参数，而不必担心如果那些
+ * 选项不被理解就不得不重新连接；同时又能确保客户端知晓哪些选项真正被
+ * 接受了。
  */
 static void
 SendNegotiateProtocolVersion(List *unrecognized_protocol_options)
@@ -945,22 +897,19 @@ SendNegotiateProtocolVersion(List *unrecognized_protocol_options)
 		pq_sendstring(&buf, lfirst(lc));
 	pq_endmessage(&buf);
 
-	/* no need to flush, some other message will follow */
+	/* 无需刷新，后续会有其他消息 */
 }
 
 
 /*
- * SIGTERM while processing startup packet.
+ * 在处理启动包期间收到 SIGTERM。
  *
- * Running proc_exit() from a signal handler would be quite unsafe.
- * However, since we have not yet touched shared memory, we can just
- * pull the plug and exit without running any atexit handlers.
+ * 在信号处理函数中运行 proc_exit() 是相当不安全的。不过，由于我们尚未
+ * 触碰共享内存，可以直接拔掉插头并退出，而不运行任何 atexit 处理函数。
  *
- * One might be tempted to try to send a message, or log one, indicating
- * why we are disconnecting.  However, that would be quite unsafe in itself.
- * Also, it seems undesirable to provide clues about the database's state
- * to a client that has not yet completed authentication, or even sent us
- * a startup packet.
+ * 有人可能会想尝试发送一条消息或记录一条日志，说明我们为何断开连接。
+ * 然而，这本身也是相当不安全的。此外，向尚未完成认证、甚至可能还没有
+ * 发送启动包的客户端透露数据库状态的线索，似乎也不可取。
  */
 static void
 process_startup_packet_die(SIGNAL_ARGS)
@@ -969,8 +918,8 @@ process_startup_packet_die(SIGNAL_ARGS)
 }
 
 /*
- * Timeout while processing startup packet.
- * As for process_startup_packet_die(), we exit via _exit(1).
+ * 在处理启动包期间超时。与 process_startup_packet_die() 一样，我们通过
+ * _exit(1) 退出。
  */
 static void
 StartupPacketTimeoutHandler(void)
@@ -979,17 +928,15 @@ StartupPacketTimeoutHandler(void)
 }
 
 /*
- * Helper for the log_connections GUC check hook.
+ * log_connections GUC 检查钩子的辅助函数。
  *
- * `elemlist` is a listified version of the string input passed to the
- * log_connections GUC check hook, check_log_connections().
- * check_log_connections() is responsible for cleaning up `elemlist`.
+ * `elemlist` 是传给 log_connections GUC 检查钩子 check_log_connections()
+ * 的字符串输入经列表化后的版本。check_log_connections() 负责清理 `elemlist`。
  *
- * validate_log_connections_options() returns false if an error was
- * encountered and the GUC input could not be validated and true otherwise.
+ * validate_log_connections_options() 在遇到错误且无法验证 GUC 输入时返回
+ * false，否则返回 true。
  *
- * `flags` returns the flags that should be stored in the log_connections GUC
- * by its assign hook.
+ * `flags` 返回应由其 assign 钩子存储到 log_connections GUC 中的标志位。
  */
 static bool
 validate_log_connections_options(List *elemlist, uint32 *flags)
@@ -998,12 +945,12 @@ validate_log_connections_options(List *elemlist, uint32 *flags)
 	char	   *item;
 
 	/*
-	 * For backwards compatibility, we accept these tokens by themselves.
+	 * 出于向后兼容，我们单独接受这些标记。
 	 *
-	 * Prior to PostgreSQL 18, log_connections was a boolean GUC that accepted
-	 * any unambiguous substring of 'true', 'false', 'yes', 'no', 'on', and
-	 * 'off'. Since log_connections became a list of strings in 18, we only
-	 * accept complete option strings.
+	 * 在 PostgreSQL 18 之前，log_connections 是一个布尔型 GUC，接受 'true'、
+	 * 'false'、'yes'、'no'、'on' 和 'off' 中任何无歧义的子串。由于
+	 * log_connections 在 18 中变成了字符串列表，我们现在只接受完整的选项
+	 * 字符串。
 	 */
 	static const struct config_enum_entry compat_options[] = {
 		{"off", 0},
@@ -1018,14 +965,13 @@ validate_log_connections_options(List *elemlist, uint32 *flags)
 
 	*flags = 0;
 
-	/* If an empty string was passed, we're done */
+	/* 如果传入了空字符串，我们就完成了 */
 	if (list_length(elemlist) == 0)
 		return true;
 
 	/*
-	 * Now check for the backwards compatibility options. They must always be
-	 * specified on their own, so we error out if the first option is a
-	 * backwards compatibility option and other options are also specified.
+	 * 现在检查向后兼容选项。它们必须始终单独指定，因此如果第一个选项是
+	 * 一个向后兼容选项，同时又指定了其他选项，我们就报错。
 	 */
 	item = linitial(elemlist);
 
@@ -1047,7 +993,7 @@ validate_log_connections_options(List *elemlist, uint32 *flags)
 		return true;
 	}
 
-	/* Now check the aspect options. The empty string was already handled */
+	/* 现在检查各项（aspect）选项。空字符串已在前面处理过 */
 	foreach(l, elemlist)
 	{
 		static const struct config_enum_entry options[] = {
@@ -1081,7 +1027,7 @@ next:	;
 
 
 /*
- * GUC check hook for log_connections
+ * log_connections 的 GUC 检查钩子
  */
 bool
 check_log_connections(char **newval, void **extra, GucSource source)
@@ -1091,7 +1037,7 @@ check_log_connections(char **newval, void **extra, GucSource source)
 	List	   *elemlist;
 	bool		success;
 
-	/* Need a modifiable copy of string */
+	/* 需要一份可修改的字符串副本 */
 	rawstring = pstrdup(*newval);
 
 	if (!SplitIdentifierString(rawstring, ',', &elemlist))
@@ -1102,10 +1048,10 @@ check_log_connections(char **newval, void **extra, GucSource source)
 		return false;
 	}
 
-	/* Validation logic is all in the helper */
+	/* 验证逻辑全部在辅助函数中 */
 	success = validate_log_connections_options(elemlist, &flags);
 
-	/* Time for cleanup */
+	/* 清理时间到 */
 	pfree(rawstring);
 	list_free(elemlist);
 
@@ -1113,8 +1059,8 @@ check_log_connections(char **newval, void **extra, GucSource source)
 		return false;
 
 	/*
-	 * We succeeded, so allocate `extra` and save the flags there for use by
-	 * assign_log_connections().
+	 * 我们成功了，因此分配 `extra` 并将标志位保存到其中，供
+	 * assign_log_connections() 使用。
 	 */
 	*extra = guc_malloc(LOG, sizeof(int));
 	if (!*extra)
@@ -1125,7 +1071,7 @@ check_log_connections(char **newval, void **extra, GucSource source)
 }
 
 /*
- * GUC assign hook for log_connections
+ * log_connections 的 GUC 赋值钩子
  */
 void
 assign_log_connections(const char *newval, void *extra)

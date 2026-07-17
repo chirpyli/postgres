@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * skipsupport.c
- *	  Support routines for B-Tree skip scan.
+ *	  B-Tree 跳跃扫描（skip scan）的支持例程。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -20,11 +20,10 @@
 #include "utils/skipsupport.h"
 
 /*
- * Fill in SkipSupport given an operator class (opfamily + opcintype).
+ * 根据给定的操作符类（opfamily + opcintype）填充 SkipSupport。
  *
- * On success, returns skip support struct, allocating in caller's memory
- * context.  Otherwise returns NULL, indicating that operator class has no
- * skip support function.
+ * 成功时返回 skip support 结构体，分配在调用者的内存上下文中。
+ * 否则返回 NULL，表示操作符类没有 skip support 函数。
  */
 SkipSupport
 PrepareSkipSupportFromOpclass(Oid opfamily, Oid opcintype, bool reverse)
@@ -32,7 +31,7 @@ PrepareSkipSupportFromOpclass(Oid opfamily, Oid opcintype, bool reverse)
 	Oid			skipSupportFunction;
 	SkipSupport sksup;
 
-	/* Look for a skip support function */
+	/* 查找 skip support 函数 */
 	skipSupportFunction = get_opfamily_proc(opfamily, opcintype, opcintype,
 											BTSKIPSUPPORT_PROC);
 	if (!OidIsValid(skipSupportFunction))
@@ -44,8 +43,8 @@ PrepareSkipSupportFromOpclass(Oid opfamily, Oid opcintype, bool reverse)
 	if (reverse)
 	{
 		/*
-		 * DESC/reverse case: swap low_elem with high_elem, and swap decrement
-		 * with increment
+		 * DESC/反向情形：交换 low_elem 与 high_elem，并交换 decrement
+		 * 与 increment
 		 */
 		Datum		low_elem = sksup->low_elem;
 		SkipSupportIncDec decrement = sksup->decrement;

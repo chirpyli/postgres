@@ -1,23 +1,18 @@
 /*-------------------------------------------------------------------------
  *
  * launch_backend.c
- *	  Functions for launching backends and other postmaster child
- *	  processes.
+ *	  用于启动后端进程及其他 postmaster 子进程的函数。
  *
- * On Unix systems, a new child process is launched with fork().  It inherits
- * all the global variables and data structures that had been initialized in
- * the postmaster.  After forking, the child process closes the file
- * descriptors that are not needed in the child process, and sets up the
- * mechanism to detect death of the parent postmaster process, etc.  After
- * that, it calls the right Main function depending on the kind of child
- * process.
+ * 在 Unix 系统上，新的子进程通过 fork() 启动。它继承了
+ * postmaster 中已初始化的所有全局变量和数据结构。fork 之后，子进程会关闭
+ * 子进程中不需要的文件描述符，并建立检测父 postmaster 进程死亡的机制等。
+ * 之后，它会根据子进程的类型调用相应的 Main 函数。
  *
- * In EXEC_BACKEND mode, which is used on Windows but can be enabled on other
- * platforms for testing, the child process is launched by fork() + exec() (or
- * CreateProcess() on Windows).  It does not inherit the state from the
- * postmaster, so it needs to re-attach to the shared memory, re-initialize
- * global variables, reload the config file etc. to get the process to the
- * same state as after fork() on a Unix system.
+ * 在 EXEC_BACKEND 模式下（用于 Windows，但也可在其他平台上启用以进行测试），
+ * 子进程通过 fork() + exec()（或在 Windows 上通过 CreateProcess()）启动。
+ * 它不会从 postmaster 继承状态，因此需要重新连接到共享内存、重新初始化
+ * 全局变量、重新加载配置文件等，以使进程达到与 Unix 系统上 fork() 之后
+ * 相同的状态。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -71,12 +66,11 @@
 #include "tcop/tcopprot.h"
 #include "utils/injection_point.h"
 
-/* Type for a socket that can be inherited to a client process */
+/* 可继承到客户端进程的套接字类型 */
 #ifdef WIN32
 typedef struct
 {
-	SOCKET		origsocket;		/* Original socket value, or PGINVALID_SOCKET
-								 * if not a socket */
+	SOCKET		origsocket;		/* 原始套接字值；如果不是套接字则为 PGINVALID_SOCKET */
 	WSAPROTOCOL_INFO wsainfo;
 } InheritableSocket;
 #else
@@ -84,7 +78,7 @@ typedef int InheritableSocket;
 #endif
 
 /*
- * Structure contains all variables passed to exec:ed backends
+ * 结构体包含所有传给 exec 启动的后端进程的变量
  */
 typedef struct
 {
@@ -133,16 +127,15 @@ typedef struct
 	int			MyPMChildSlot;
 
 	/*
-	 * These are only used by backend processes, but are here because passing
-	 * a socket needs some special handling on Windows. 'client_sock' is an
-	 * explicit argument to postmaster_child_launch, but is stored in
-	 * MyClientSocket in the child process.
+	 * 这些字段仅由后端进程使用，但放在此处是因为传递套接字在 Windows 上
+	 * 需要一些特殊处理。'client_sock' 是 postmaster_child_launch 的显式参数，
+	 * 但在子进程中存储在 MyClientSocket 里。
 	 */
 	ClientSocket client_sock;
 	InheritableSocket inh_sock;
 
 	/*
-	 * Extra startup data, content depends on the child process.
+	 * 额外的启动数据，内容取决于子进程的类型。
 	 */
 	size_t		startup_data_len;
 	char		startup_data[FLEXIBLE_ARRAY_MEMBER];
@@ -167,7 +160,7 @@ static pid_t internal_forkexec(const char *child_kind, int child_slot,
 #endif							/* EXEC_BACKEND */
 
 /*
- * Information needed to launch different kinds of child processes.
+ * 启动不同种类子进程所需的信息。
  */
 typedef struct
 {
@@ -186,9 +179,9 @@ static child_process_kind child_process_kinds[] = {
 	[B_BG_WORKER] = {"bgworker", BackgroundWorkerMain, true},
 
 	/*
-	 * WAL senders start their life as regular backend processes, and change
-	 * their type after authenticating the client for replication.  We list it
-	 * here for PostmasterChildName() but cannot launch them directly.
+	 * WAL 发送者最初作为普通后端进程启动，并在为复制完成客户端认证后
+	 * 改变其类型。我们在此列出它是为了供 PostmasterChildName() 使用，
+	 * 但不能直接启动它们。
 	 */
 	[B_WAL_SENDER] = {"wal sender", NULL, true},
 	[B_SLOTSYNC_WORKER] = {"slot sync worker", ReplSlotSyncWorkerMain, true},
@@ -214,16 +207,14 @@ PostmasterChildName(BackendType child_type)
 }
 
 /*
- * Start a new postmaster child process.
+ * 启动一个新的 postmaster 子进程。
  *
- * The child process will be restored to roughly the same state whether
- * EXEC_BACKEND is used or not: it will be attached to shared memory if
- * appropriate, and fds and other resources that we've inherited from
- * postmaster that are not needed in a child process have been closed.
+ * 无论是否使用 EXEC_BACKEND，子进程都会被恢复到大致相同的状态：如果合适，
+ * 它会连接到共享内存，并且我们从 postmaster 继承的、在子进程中不需要的
+ * fd 及其他资源都已经被关闭。
  *
- * 'child_slot' is the PMChildFlags array index reserved for the child
- * process.  'startup_data' is an optional contiguous chunk of data that is
- * passed to the child process.
+ * 'child_slot' 是为该子进程保留的 PMChildFlags 数组下标。'startup_data'
+ * 是传给子进程的一段可选的连续数据。
  */
 pid_t
 postmaster_child_launch(BackendType child_type, int child_slot,
@@ -234,19 +225,19 @@ postmaster_child_launch(BackendType child_type, int child_slot,
 
 	Assert(IsPostmasterEnvironment && !IsUnderPostmaster);
 
-	/* Capture time Postmaster initiates process creation for logging */
+	/* 记录 postmaster 发起进程创建的时间，用于日志 */
 	if (IsExternalConnectionBackend(child_type))
 		((BackendStartupData *) startup_data)->fork_started = GetCurrentTimestamp();
 
 #ifdef EXEC_BACKEND
 	pid = internal_forkexec(child_process_kinds[child_type].name, child_slot,
 							startup_data, startup_data_len, client_sock);
-	/* the child process will arrive in SubPostmasterMain */
+	/* 子进程将进入 SubPostmasterMain */
 #else							/* !EXEC_BACKEND */
 	pid = fork_process();
-	if (pid == 0)				/* child */
+	if (pid == 0)				/* 子进程 */
 	{
-		/* Capture and transfer timings that may be needed for logging */
+		/* 记录并传递可能用于日志的计时信息 */
 		if (IsExternalConnectionBackend(child_type))
 		{
 			conn_timing.socket_create =
@@ -256,13 +247,13 @@ postmaster_child_launch(BackendType child_type, int child_slot,
 			conn_timing.fork_end = GetCurrentTimestamp();
 		}
 
-		/* Close the postmaster's sockets */
+		/* 关闭 postmaster 的套接字 */
 		ClosePostmasterPorts(child_type == B_LOGGER);
 
-		/* Detangle from postmaster */
+		/* 与 postmaster 脱离 */
 		InitPostmasterChild();
 
-		/* Detach shared memory if not needed. */
+		/* 如果不需要则断开共享内存。 */
 		if (!child_process_kinds[child_type].shmem_attach)
 		{
 			dsm_detach_all();
@@ -270,10 +261,9 @@ postmaster_child_launch(BackendType child_type, int child_slot,
 		}
 
 		/*
-		 * Enter the Main function with TopMemoryContext.  The startup data is
-		 * allocated in PostmasterContext, so we cannot release it here yet.
-		 * The Main function will do it after it's done handling the startup
-		 * data.
+		 * 以 TopMemoryContext 进入 Main 函数。启动数据是在 PostmasterContext
+		 * 中分配的，因此我们还不能在此处释放它。Main 函数会在处理完启动
+		 * 数据之后释放它。
 		 */
 		MemoryContextSwitchTo(TopMemoryContext);
 
@@ -285,10 +275,10 @@ postmaster_child_launch(BackendType child_type, int child_slot,
 		}
 
 		/*
-		 * Run the appropriate Main function
+		 * 运行相应的 Main 函数
 		 */
 		child_process_kinds[child_type].main_fn(startup_data, startup_data_len);
-		pg_unreachable();		/* main_fn never returns */
+		pg_unreachable();		/* main_fn 永远不会返回 */
 	}
 #endif							/* EXEC_BACKEND */
 	return pid;
@@ -298,10 +288,10 @@ postmaster_child_launch(BackendType child_type, int child_slot,
 #ifndef WIN32
 
 /*
- * internal_forkexec non-win32 implementation
+ * internal_forkexec 非 Win32 平台实现
  *
- * - writes out backend variables to the parameter file
- * - fork():s, and then exec():s the child process
+ * - 将后端变量写入参数文件
+ * - 先 fork()，然后 exec() 子进程
  */
 static pid_t
 internal_forkexec(const char *child_kind, int child_slot,
@@ -317,32 +307,30 @@ internal_forkexec(const char *child_kind, int child_slot,
 	char		forkav[MAXPGPATH];
 
 	/*
-	 * Use palloc0 to make sure padding bytes are initialized, to prevent
-	 * Valgrind from complaining about writing uninitialized bytes to the
-	 * file.  This isn't performance critical, and the win32 implementation
-	 * initializes the padding bytes to zeros, so do it even when not using
-	 * Valgrind.
+	 * 使用 palloc0 以确保填充字节被初始化，防止 Valgrind 抱怨向文件写入
+	 * 未初始化的字节。这不是性能关键路径，而且 win32 实现也会将填充字节
+	 * 初始化为零，因此即使不使用 Valgrind 也这样做。
 	 */
 	paramsz = SizeOfBackendParameters(startup_data_len);
 	param = palloc0(paramsz);
 	if (!save_backend_variables(param, child_slot, client_sock, startup_data, startup_data_len))
 	{
 		pfree(param);
-		return -1;				/* log made by save_backend_variables */
+		return -1;				/* 日志由 save_backend_variables 输出 */
 	}
 
-	/* Calculate name for temp file */
+	/* 计算临时文件名 */
 	snprintf(tmpfilename, MAXPGPATH, "%s/%s.backend_var.%d.%lu",
 			 PG_TEMP_FILES_DIR, PG_TEMP_FILE_PREFIX,
 			 MyProcPid, ++tmpBackendFileNum);
 
-	/* Open file */
+	/* 打开文件 */
 	fp = AllocateFile(tmpfilename, PG_BINARY_W);
 	if (!fp)
 	{
 		/*
-		 * As in OpenTemporaryFileInTablespace, try to make the temp-file
-		 * directory, ignoring errors.
+		 * 与 OpenTemporaryFileInTablespace 中一样，尝试创建临时文件目录，
+		 * 并忽略错误。
 		 */
 		(void) MakePGDirectory(PG_TEMP_FILES_DIR);
 
@@ -369,7 +357,7 @@ internal_forkexec(const char *child_kind, int child_slot,
 	}
 	pfree(param);
 
-	/* Release file */
+	/* 释放文件 */
 	if (FreeFile(fp))
 	{
 		ereport(LOG,
@@ -378,15 +366,15 @@ internal_forkexec(const char *child_kind, int child_slot,
 		return -1;
 	}
 
-	/* set up argv properly */
+	/* 正确设置 argv */
 	argv[0] = "postgres";
 	snprintf(forkav, MAXPGPATH, "--forkchild=%s", child_kind);
 	argv[1] = forkav;
-	/* Insert temp file name after --forkchild argument */
+	/* 在 --forkchild 参数之后插入临时文件名 */
 	argv[2] = tmpfilename;
 	argv[3] = NULL;
 
-	/* Fire off execv in child */
+	/* 在子进程中执行 execv */
 	if ((pid = fork_process()) == 0)
 	{
 		if (execv(postgres_exec_path, argv) < 0)
@@ -394,24 +382,22 @@ internal_forkexec(const char *child_kind, int child_slot,
 			ereport(LOG,
 					(errmsg("could not execute server process \"%s\": %m",
 							postgres_exec_path)));
-			/* We're already in the child process here, can't return */
+			/* 这里已在子进程中，无法返回 */
 			exit(1);
 		}
 	}
 
-	return pid;					/* Parent returns pid, or -1 on fork failure */
+	return pid;					/* 父进程返回 pid；fork 失败时返回 -1 */
 }
 #else							/* WIN32 */
 
 /*
- * internal_forkexec win32 implementation
+ * internal_forkexec 的 Win32 实现
  *
- * - starts backend using CreateProcess(), in suspended state
- * - writes out backend variables to the parameter file
- *	- during this, duplicates handles and sockets required for
- *	  inheritance into the new process
- * - resumes execution of the new process once the backend parameter
- *	 file is complete.
+ * - 使用 CreateProcess() 以挂起状态启动后端
+ * - 将后端变量写入参数文件
+ *	- 在此过程中，复制新进程继承所需的句柄和套接字
+ * - 一旦后端参数文件写完，就恢复新进程的执行。
  */
 static pid_t
 internal_forkexec(const char *child_kind, int child_slot,
@@ -430,10 +416,10 @@ internal_forkexec(const char *child_kind, int child_slot,
 
 	paramsz = SizeOfBackendParameters(startup_data_len);
 
-	/* Resume here if we need to retry */
+	/* 如果需要重试，从这里继续 */
 retry:
 
-	/* Set up shared memory for parameter passing */
+	/* 建立用于传递参数的共享内存 */
 	ZeroMemory(&sa, sizeof(sa));
 	sa.nLength = sizeof(sa);
 	sa.bInheritHandle = TRUE;
@@ -460,7 +446,7 @@ retry:
 		return -1;
 	}
 
-	/* Format the cmd line */
+	/* 构造命令行 */
 #ifdef _WIN64
 	sprintf(paramHandleStr, "%llu", (LONG_PTR) paramHandle);
 #else
@@ -482,8 +468,7 @@ retry:
 	si.cb = sizeof(si);
 
 	/*
-	 * Create the subprocess in a suspended state. This will be resumed later,
-	 * once we have written out the parameter file.
+	 * 以挂起状态创建子进程。待我们写出参数文件之后，再将其恢复运行。
 	 */
 	if (!CreateProcess(NULL, cmdLine, NULL, NULL, TRUE, CREATE_SUSPENDED,
 					   NULL, NULL, &si, &pi))
@@ -501,8 +486,8 @@ retry:
 								startup_data, startup_data_len))
 	{
 		/*
-		 * log made by save_backend_variables, but we have to clean up the
-		 * mess with the half-started process
+		 * 日志由 save_backend_variables 输出，但我们必须清理
+		 * 这个半成品进程留下的烂摊子
 		 */
 		if (!TerminateProcess(pi.hProcess, 255))
 			ereport(LOG,
@@ -512,10 +497,10 @@ retry:
 		CloseHandle(pi.hThread);
 		UnmapViewOfFile(param);
 		CloseHandle(paramHandle);
-		return -1;				/* log made by save_backend_variables */
+		return -1;				/* 日志由 save_backend_variables 输出 */
 	}
 
-	/* Drop the parameter shared memory that is now inherited to the backend */
+	/* 释放现在已经继承给后端的参数共享内存 */
 	if (!UnmapViewOfFile(param))
 		ereport(LOG,
 				(errmsg("could not unmap view of backend parameter file: error code %lu",
@@ -526,15 +511,13 @@ retry:
 						GetLastError())));
 
 	/*
-	 * Reserve the memory region used by our main shared memory segment before
-	 * we resume the child process.  Normally this should succeed, but if ASLR
-	 * is active then it might sometimes fail due to the stack or heap having
-	 * gotten mapped into that range.  In that case, just terminate the
-	 * process and retry.
+	 * 在恢复子进程之前，预留我们主共享内存段所使用的内存区域。通常这应当
+	 * 成功，但如果 ASLR 处于活动状态，则有时可能因栈或堆已被映射到该范围
+	 * 而失败。在这种情况下，直接终止该进程并重试。
 	 */
 	if (!pgwin32_ReserveSharedMemoryRegion(pi.hProcess))
 	{
-		/* pgwin32_ReserveSharedMemoryRegion already made a log entry */
+		/* pgwin32_ReserveSharedMemoryRegion 已经记录了日志 */
 		if (!TerminateProcess(pi.hProcess, 255))
 			ereport(LOG,
 					(errmsg_internal("could not terminate process that failed to reserve memory: error code %lu",
@@ -550,9 +533,8 @@ retry:
 	}
 
 	/*
-	 * Now that the backend variables are written out, we start the child
-	 * thread so it can start initializing while we set up the rest of the
-	 * parent state.
+	 * 既然后端变量已经写出，我们启动子线程，使其在我们设置其余父进程
+	 * 状态的同时开始初始化。
 	 */
 	if (ResumeThread(pi.hThread) == -1)
 	{
@@ -573,10 +555,10 @@ retry:
 		return -1;
 	}
 
-	/* Set up notification when the child process dies */
+	/* 在子进程死亡时设置通知 */
 	pgwin32_register_deadchild_callback(pi.hProcess, pi.dwProcessId);
 
-	/* Don't close pi.hProcess, it's owned by the deadchild callback now */
+	/* 不要关闭 pi.hProcess，它现在由 deadchild 回调持有 */
 
 	CloseHandle(pi.hThread);
 
@@ -585,14 +567,12 @@ retry:
 #endif							/* WIN32 */
 
 /*
- * SubPostmasterMain -- Get the fork/exec'd process into a state equivalent
- *			to what it would be if we'd simply forked on Unix, and then
- *			dispatch to the appropriate place.
+ * SubPostmasterMain -- 让经过 fork/exec 的进程进入等同于在 Unix 上直接
+ *			fork 后的状态，然后分派到相应的处理逻辑。
  *
- * The first two command line arguments are expected to be "--forkchild=<name>",
- * where <name> indicates which postmaster child we are to become, and
- * the name of a variables file that we can read to load data that would
- * have been inherited by fork() on Unix.
+ * 前两个命令行参数预期为 "--forkchild=<name>"，其中 <name> 表示我们要
+ * 成为哪种 postmaster 子进程，以及一个变量文件名，我们可以读取该文件
+ * 来加载在 Unix 上本应由 fork() 继承的数据。
  */
 void
 SubPostmasterMain(int argc, char *argv[])
@@ -604,24 +584,24 @@ SubPostmasterMain(int argc, char *argv[])
 	bool		found = false;
 	TimestampTz fork_end;
 
-	/* In EXEC_BACKEND case we will not have inherited these settings */
+	/* 在 EXEC_BACKEND 情况下，我们不会继承这些设置 */
 	IsPostmasterEnvironment = true;
 	whereToSendOutput = DestNone;
 
 	/*
-	 * Capture the end of process creation for logging. We don't include the
-	 * time spent copying data from shared memory and setting up the backend.
+	 * 记录进程创建结束的时间，用于日志。我们不包含从共享内存复制数据
+	 * 以及初始化后端所花费的时间。
 	 */
 	fork_end = GetCurrentTimestamp();
 
-	/* Setup essential subsystems (to ensure elog() behaves sanely) */
+	/* 初始化必要的子系统（以确保 elog() 行为正常） */
 	InitializeGUCOptions();
 
-	/* Check we got appropriate args */
+	/* 检查我们是否拿到了合适的参数 */
 	if (argc != 3)
 		elog(FATAL, "invalid subpostmaster invocation");
 
-	/* Find the entry in child_process_kinds */
+	/* 在 child_process_kinds 中查找对应条目 */
 	if (strncmp(argv[1], "--forkchild=", 12) != 0)
 		elog(FATAL, "invalid subpostmaster invocation (--forkchild argument missing)");
 	child_kind = argv[1] + 12;
@@ -638,40 +618,38 @@ SubPostmasterMain(int argc, char *argv[])
 	if (!found)
 		elog(ERROR, "unknown child kind %s", child_kind);
 
-	/* Read in the variables file */
+	/* 读入变量文件 */
 	read_backend_variables(argv[2], &startup_data, &startup_data_len);
 
-	/* Close the postmaster's sockets (as soon as we know them) */
+	/* 关闭 postmaster 的套接字（一旦知晓就关闭） */
 	ClosePostmasterPorts(child_type == B_LOGGER);
 
-	/* Setup as postmaster child */
+	/* 作为 postmaster 子进程进行初始化 */
 	InitPostmasterChild();
 
 	/*
-	 * If appropriate, physically re-attach to shared memory segment. We want
-	 * to do this before going any further to ensure that we can attach at the
-	 * same address the postmaster used.  On the other hand, if we choose not
-	 * to re-attach, we may have other cleanup to do.
+	 * 如果合适，则以物理方式重新连接到共享内存段。我们希望在继续之前
+	 * 完成这一步，以确保我们能连接到 postmaster 使用的相同地址。另一方面，
+	 * 如果我们选择不重新连接，则可能还需要做其他清理工作。
 	 *
-	 * If testing EXEC_BACKEND on Linux, you should run this as root before
-	 * starting the postmaster:
+	 * 如果在 Linux 上测试 EXEC_BACKEND，应在启动 postmaster 之前以 root
+	 * 身份运行以下命令：
 	 *
 	 * sysctl -w kernel.randomize_va_space=0
 	 *
-	 * This prevents using randomized stack and code addresses that cause the
-	 * child process's memory map to be different from the parent's, making it
-	 * sometimes impossible to attach to shared memory at the desired address.
-	 * Return the setting to its old value (usually '1' or '2') when finished.
+	 * 这样可以避免由于随机化的栈和代码地址导致子进程的内存映射与父进程
+	 * 不同，从而使有时无法在期望的地址上连接共享内存。完成后请将该设置
+	 * 恢复为原来的值（通常为 '1' 或 '2'）。
 	 */
 	if (child_process_kinds[child_type].shmem_attach)
 		PGSharedMemoryReAttach();
 	else
 		PGSharedMemoryNoReAttach();
 
-	/* Read in remaining GUC variables */
+	/* 读入其余的 GUC 变量 */
 	read_nondefault_variables();
 
-	/* Capture and transfer timings that may be needed for log_connections */
+	/* 记录并传递 log_connections 可能需要的计时信息 */
 	if (IsExternalConnectionBackend(child_type))
 	{
 		conn_timing.socket_create =
@@ -682,36 +660,34 @@ SubPostmasterMain(int argc, char *argv[])
 	}
 
 	/*
-	 * Check that the data directory looks valid, which will also check the
-	 * privileges on the data directory and update our umask and file/group
-	 * variables for creating files later.  Note: this should really be done
-	 * before we create any files or directories.
+	 * 检查数据目录看起来是否合法，这也会检查数据目录的权限，并更新我们
+	 * 之后创建文件时使用的 umask 以及文件/组相关变量。注意：这确实应该在
+	 * 我们创建任何文件或目录之前完成。
 	 */
 	checkDataDir();
 
 	/*
-	 * (re-)read control file, as it contains config. The postmaster will
-	 * already have read this, but this process doesn't know about that.
+	 * （重新）读取控制文件，因为它包含配置信息。postmaster 已经读取过，
+	 * 但本进程对此并不知情。
 	 */
 	LocalProcessControlFile(false);
 
 	/*
-	 * Reload any libraries that were preloaded by the postmaster.  Since we
-	 * exec'd this process, those libraries didn't come along with us; but we
-	 * should load them into all child processes to be consistent with the
-	 * non-EXEC_BACKEND behavior.
+	 * 重新加载所有由 postmaster 预加载的库。由于本进程是通过 exec 启动的，
+	 * 那些库并没有跟随我们过来；但为了让行为与非 EXEC_BACKEND 模式一致，
+	 * 我们应该把它们加载到所有子进程中。
 	 */
 	process_shared_preload_libraries();
 
-	/* Restore basic shared memory pointers */
+	/* 恢复基本的共享内存指针 */
 	if (UsedShmemSegAddr != NULL)
 		InitShmemAccess(UsedShmemSegAddr);
 
 	/*
-	 * Run the appropriate Main function
+	 * 运行相应的 Main 函数
 	 */
 	child_process_kinds[child_type].main_fn(startup_data, startup_data_len);
-	pg_unreachable();			/* main_fn never returns */
+	pg_unreachable();			/* main_fn 永远不会返回 */
 }
 
 #ifndef WIN32
@@ -725,7 +701,7 @@ static void read_inheritable_socket(SOCKET *dest, InheritableSocket *src);
 #endif
 
 
-/* Save critical backend variables into the BackendParameters struct */
+/* 将关键的后端变量保存到 BackendParameters 结构体中 */
 static bool
 save_backend_variables(BackendParameters *param,
 					   int child_slot, ClientSocket *client_sock,
@@ -808,8 +784,8 @@ save_backend_variables(BackendParameters *param,
 
 #ifdef WIN32
 /*
- * Duplicate a handle for usage in a child process, and write the child
- * process instance of the handle to the parameter file.
+ * 为在子进程中使用而复制一个句柄，并将该句柄在子进程中的实例写入
+ * 参数文件。
  */
 static bool
 write_duplicated_handle(HANDLE *dest, HANDLE src, HANDLE childProcess)
@@ -835,11 +811,9 @@ write_duplicated_handle(HANDLE *dest, HANDLE src, HANDLE childProcess)
 }
 
 /*
- * Duplicate a socket for usage in a child process, and write the resulting
- * structure to the parameter file.
- * This is required because a number of LSPs (Layered Service Providers) very
- * common on Windows (antivirus, firewalls, download managers etc) break
- * straight socket inheritance.
+ * 为在子进程中使用而复制一个套接字，并将结果结构体写入参数文件。
+ * 这是必需的，因为 Windows 上非常常见的一些 LSP（分层服务提供者，
+ * 如杀毒软件、防火墙、下载管理器等）会破坏直接的套接字继承。
  */
 static bool
 write_inheritable_socket(InheritableSocket *dest, SOCKET src, pid_t childpid)
@@ -847,7 +821,7 @@ write_inheritable_socket(InheritableSocket *dest, SOCKET src, pid_t childpid)
 	dest->origsocket = src;
 	if (src != 0 && src != PGINVALID_SOCKET)
 	{
-		/* Actual socket */
+		/* 实际的套接字 */
 		if (WSADuplicateSocket(src, childpid, &dest->wsainfo) != 0)
 		{
 			ereport(LOG,
@@ -860,7 +834,7 @@ write_inheritable_socket(InheritableSocket *dest, SOCKET src, pid_t childpid)
 }
 
 /*
- * Read a duplicate socket structure back, and get the socket descriptor.
+ * 读回复制的套接字结构体，并获取套接字描述符。
  */
 static void
 read_inheritable_socket(SOCKET *dest, InheritableSocket *src)
@@ -869,12 +843,12 @@ read_inheritable_socket(SOCKET *dest, InheritableSocket *src)
 
 	if (src->origsocket == PGINVALID_SOCKET || src->origsocket == 0)
 	{
-		/* Not a real socket! */
+		/* 不是真正的套接字！ */
 		*dest = src->origsocket;
 	}
 	else
 	{
-		/* Actual socket, so create from structure */
+		/* 实际的套接字，因此从结构体创建 */
 		s = WSASocket(FROM_PROTOCOL_INFO,
 					  FROM_PROTOCOL_INFO,
 					  FROM_PROTOCOL_INFO,
@@ -890,9 +864,8 @@ read_inheritable_socket(SOCKET *dest, InheritableSocket *src)
 		*dest = s;
 
 		/*
-		 * To make sure we don't get two references to the same socket, close
-		 * the original one. (This would happen when inheritance actually
-		 * works..
+		 * 为确保不会得到对同一套接字的两个引用，关闭原来的那个。
+		 * （当继承确实生效时就会发生这种情况。）
 		 */
 		closesocket(src->origsocket);
 	}
@@ -905,10 +878,10 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
 	BackendParameters param;
 
 #ifndef WIN32
-	/* Non-win32 implementation reads from file */
+	/* 非 Win32 实现从文件读取 */
 	FILE	   *fp;
 
-	/* Open file */
+	/* 打开文件 */
 	fp = AllocateFile(id, PG_BINARY_R);
 	if (!fp)
 	{
@@ -922,7 +895,7 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
 		exit(1);
 	}
 
-	/* read startup data */
+	/* 读取启动数据 */
 	*startup_data_len = param.startup_data_len;
 	if (param.startup_data_len > 0)
 	{
@@ -937,7 +910,7 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
 	else
 		*startup_data = NULL;
 
-	/* Release file */
+	/* 释放文件 */
 	FreeFile(fp);
 	if (unlink(id) != 0)
 	{
@@ -945,7 +918,7 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
 		exit(1);
 	}
 #else
-	/* Win32 version uses mapped file */
+	/* Win32 版本使用映射文件 */
 	HANDLE		paramHandle;
 	BackendParameters *paramp;
 
@@ -964,7 +937,7 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
 
 	memcpy(&param, paramp, sizeof(BackendParameters));
 
-	/* read startup data */
+	/* 读取启动数据 */
 	*startup_data_len = param.startup_data_len;
 	if (param.startup_data_len > 0)
 	{
@@ -992,7 +965,7 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
 	restore_backend_variables(&param);
 }
 
-/* Restore critical backend variables from the BackendParameters struct */
+/* 从 BackendParameters 结构体中恢复关键的后端变量 */
 static void
 restore_backend_variables(BackendParameters *param)
 {
@@ -1057,9 +1030,9 @@ restore_backend_variables(BackendParameters *param)
 	strlcpy(pkglib_path, param->pkglib_path, MAXPGPATH);
 
 	/*
-	 * We need to restore fd.c's counts of externally-opened FDs; to avoid
-	 * confusion, be sure to do this after restoring max_safe_fds.  (Note:
-	 * BackendInitialize will handle this for (*client_sock)->sock.)
+	 * 我们需要恢复 fd.c 对外打开的 FD 的计数；为避免混乱，请确保在恢复
+	 * max_safe_fds 之后再执行此操作。（注意：BackendInitialize 会为
+	 * (*client_sock)->sock 处理此事。）
 	 */
 #ifndef WIN32
 	if (postmaster_alive_fds[0] >= 0)
