@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * heapam.h
- *	  POSTGRES heap access method definitions.
+ *		POSTGRES 堆访问方法定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -15,11 +15,11 @@
 #define HEAPAM_H
 
 #include "access/heapam_xlog.h"
-#include "access/relation.h"	/* for backward compatibility */
+#include "access/relation.h"	/* 为向后兼容 */
 #include "access/relscan.h"
 #include "access/sdir.h"
 #include "access/skey.h"
-#include "access/table.h"		/* for backward compatibility */
+#include "access/table.h"		/* 为向后兼容 */
 #include "access/tableam.h"
 #include "nodes/lockoptions.h"
 #include "nodes/primnodes.h"
@@ -32,13 +32,13 @@
 #include "utils/snapshot.h"
 
 
-/* "options" flag bits for heap_insert */
+/* heap_insert 的 "options" 标志位 */
 #define HEAP_INSERT_SKIP_FSM	TABLE_INSERT_SKIP_FSM
 #define HEAP_INSERT_FROZEN		TABLE_INSERT_FROZEN
 #define HEAP_INSERT_NO_LOGICAL	TABLE_INSERT_NO_LOGICAL
 #define HEAP_INSERT_SPECULATIVE 0x0010
 
-/* "options" flag bits for heap_page_prune_and_freeze */
+/* heap_page_prune_and_freeze 的 "options" 标志位 */
 #define HEAP_PAGE_PRUNE_MARK_UNUSED_NOW		(1 << 0)
 #define HEAP_PAGE_PRUNE_FREEZE				(1 << 1)
 
@@ -49,53 +49,53 @@ struct VacuumCutoffs;
 #define MaxLockTupleMode	LockTupleExclusive
 
 /*
- * Descriptor for heap table scans.
+ * 堆表扫描的描述符。
  */
 typedef struct HeapScanDescData
 {
-	TableScanDescData rs_base;	/* AM independent part of the descriptor */
+	TableScanDescData rs_base;	/* 描述符中与访问方法无关的部分 */
 
-	/* state set up at initscan time */
-	BlockNumber rs_nblocks;		/* total number of blocks in rel */
-	BlockNumber rs_startblock;	/* block # to start at */
-	BlockNumber rs_numblocks;	/* max number of blocks to scan */
-	/* rs_numblocks is usually InvalidBlockNumber, meaning "scan whole rel" */
+	/* 在 initscan 时设置的状态 */
+	BlockNumber rs_nblocks;		/* 关系中的总块数 */
+	BlockNumber rs_startblock;	/* 起始块编号 */
+	BlockNumber rs_numblocks;	/* 要扫描的最大块数 */
+	/* rs_numblocks 通常为 InvalidBlockNumber，表示 "扫描整个关系" */
 
-	/* scan current state */
-	bool		rs_inited;		/* false = scan not init'd yet */
-	OffsetNumber rs_coffset;	/* current offset # in non-page-at-a-time mode */
-	BlockNumber rs_cblock;		/* current block # in scan, if any */
-	Buffer		rs_cbuf;		/* current buffer in scan, if any */
-	/* NB: if rs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
+	/* 扫描的当前状态 */
+	bool		rs_inited;		/* false = 扫描尚未初始化 */
+	OffsetNumber rs_coffset;	/* 非逐页模式下的当前偏移量 */
+	BlockNumber rs_cblock;		/* 扫描中的当前块编号（若有） */
+	Buffer		rs_cbuf;		/* 扫描中的当前缓冲区（若有） */
+	/* 注意：若 rs_cbuf 不是 InvalidBuffer，则我们持有该缓冲区的 pin */
 
-	BufferAccessStrategy rs_strategy;	/* access strategy for reads */
+	BufferAccessStrategy rs_strategy;	/* 用于读取的访问策略 */
 
-	HeapTupleData rs_ctup;		/* current tuple in scan, if any */
+	HeapTupleData rs_ctup;		/* 扫描中的当前元组（若有） */
 
-	/* For scans that stream reads */
+	/* 用于以流方式读取的扫描 */
 	ReadStream *rs_read_stream;
 
 	/*
-	 * For sequential scans and TID range scans to stream reads. The read
-	 * stream is allocated at the beginning of the scan and reset on rescan or
-	 * when the scan direction changes. The scan direction is saved each time
-	 * a new page is requested. If the scan direction changes from one page to
-	 * the next, the read stream releases all previously pinned buffers and
-	 * resets the prefetch block.
+	 * 用于顺序扫描和 TID 范围扫描以流式读取。读取
+	 * 流在扫描开始时分配，并在重新扫描或
+	 * 扫描方向改变时重置。每次请求新页面时
+	 * 都会保存扫描方向。如果扫描方向从一页
+	 * 到下一页发生改变，读取流会释放之前所有
+	 * 已 pin 的缓冲区并重置预取块。
 	 */
 	ScanDirection rs_dir;
 	BlockNumber rs_prefetch_block;
 
 	/*
-	 * For parallel scans to store page allocation data.  NULL when not
-	 * performing a parallel scan.
+	 * 用于并行扫描存储页分配数据。非
+	 * 并行扫描时为 NULL。
 	 */
 	ParallelBlockTableScanWorkerData *rs_parallelworkerdata;
 
-	/* these fields only used in page-at-a-time mode and for bitmap scans */
-	uint32		rs_cindex;		/* current tuple's index in vistuples */
-	uint32		rs_ntuples;		/* number of visible tuples on page */
-	OffsetNumber rs_vistuples[MaxHeapTuplesPerPage];	/* their offsets */
+	/* 这些字段仅用于逐页模式和位图扫描 */
+	uint32		rs_cindex;		/* 当前元组在 vistuples 中的索引 */
+	uint32		rs_ntuples;		/* 页面上可见元组的数量 */
+	OffsetNumber rs_vistuples[MaxHeapTuplesPerPage];	/* 它们的偏移量 */
 } HeapScanDescData;
 typedef struct HeapScanDescData *HeapScanDesc;
 
@@ -103,116 +103,116 @@ typedef struct BitmapHeapScanDescData
 {
 	HeapScanDescData rs_heap_base;
 
-	/* Holds no data */
+	/* 不保存任何数据 */
 }			BitmapHeapScanDescData;
 typedef struct BitmapHeapScanDescData *BitmapHeapScanDesc;
 
 /*
- * Descriptor for fetches from heap via an index.
+ * 通过索引从堆中获取数据的描述符。
  */
 typedef struct IndexFetchHeapData
 {
-	IndexFetchTableData xs_base;	/* AM independent part of the descriptor */
+	IndexFetchTableData xs_base;	/* 描述符中与访问方法无关的部分 */
 
-	Buffer		xs_cbuf;		/* current heap buffer in scan, if any */
-	/* NB: if xs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
+	Buffer		xs_cbuf;		/* 扫描中的当前堆缓冲区（若有） */
+	/* 注意：若 xs_cbuf 不是 InvalidBuffer，则我们持有该缓冲区的 pin */
 } IndexFetchHeapData;
 
-/* Result codes for HeapTupleSatisfiesVacuum */
+/* HeapTupleSatisfiesVacuum 的结果码 */
 typedef enum
 {
-	HEAPTUPLE_DEAD,				/* tuple is dead and deletable */
-	HEAPTUPLE_LIVE,				/* tuple is live (committed, no deleter) */
-	HEAPTUPLE_RECENTLY_DEAD,	/* tuple is dead, but not deletable yet */
-	HEAPTUPLE_INSERT_IN_PROGRESS,	/* inserting xact is still in progress */
-	HEAPTUPLE_DELETE_IN_PROGRESS,	/* deleting xact is still in progress */
+	HEAPTUPLE_DEAD,				/* 元组已死亡且可删除 */
+	HEAPTUPLE_LIVE,				/* 元组有效（已提交，无删除者） */
+	HEAPTUPLE_RECENTLY_DEAD,	/* 元组已死亡，但暂不可删除 */
+	HEAPTUPLE_INSERT_IN_PROGRESS,	/* 插入事务仍在进行中 */
+	HEAPTUPLE_DELETE_IN_PROGRESS,	/* 删除事务仍在进行中 */
 } HTSV_Result;
 
 /*
- * heap_prepare_freeze_tuple may request that heap_freeze_execute_prepared
- * check any tuple's to-be-frozen xmin and/or xmax status using pg_xact
+ * heap_prepare_freeze_tuple 可能要求 heap_freeze_execute_prepared
+ * 使用 pg_xact 检查任一元组待冻结的 xmin 和/或 xmax 状态
  */
 #define		HEAP_FREEZE_CHECK_XMIN_COMMITTED	0x01
 #define		HEAP_FREEZE_CHECK_XMAX_ABORTED		0x02
 
-/* heap_prepare_freeze_tuple state describing how to freeze a tuple */
+/* 描述如何冻结元组的 heap_prepare_freeze_tuple 状态 */
 typedef struct HeapTupleFreeze
 {
-	/* Fields describing how to process tuple */
+	/* 描述如何处理元组的字段 */
 	TransactionId xmax;
 	uint16		t_infomask2;
 	uint16		t_infomask;
 	uint8		frzflags;
 
-	/* xmin/xmax check flags */
+	/* xmin/xmax 检查标志 */
 	uint8		checkflags;
-	/* Page offset number for tuple */
+	/* 元组的页内偏移量 */
 	OffsetNumber offset;
 } HeapTupleFreeze;
 
 /*
- * State used by VACUUM to track the details of freezing all eligible tuples
- * on a given heap page.
+ * VACUUM 用来跟踪在给定堆页面上冻结所有
+ * 符合条件元组细节的状态。
  *
- * VACUUM prepares freeze plans for each page via heap_prepare_freeze_tuple
- * calls (every tuple with storage gets its own call).  This page-level freeze
- * state is updated across each call, which ultimately determines whether or
- * not freezing the page is required.
+ * VACUUM 通过调用 heap_prepare_freeze_tuple
+ * （每个带存储的元组都会单独调用）为每个页面准备冻结计划。此页级冻结
+ * 状态在每次调用时更新，最终决定
+ * 是否需要冻结该页面。
  *
- * Aside from the basic question of whether or not freezing will go ahead, the
- * state also tracks the oldest extant XID/MXID in the table as a whole, for
- * the purposes of advancing relfrozenxid/relminmxid values in pg_class later
- * on.  Each heap_prepare_freeze_tuple call pushes NewRelfrozenXid and/or
- * NewRelminMxid back as required to avoid unsafe final pg_class values.  Any
- * and all unfrozen XIDs or MXIDs that remain after VACUUM finishes _must_
- * have values >= the final relfrozenxid/relminmxid values in pg_class.  This
- * includes XIDs that remain as MultiXact members from any tuple's xmax.
+ * 除了是否继续冻结这个基本问题外，该
+ * 状态还跟踪整个表中现存最旧的 XID/MXID，以便
+ * 后续推进 pg_class 中的 relfrozenxid/relminmxid 值。
+ * 每次 heap_prepare_freeze_tuple 调用都会按需回推 NewRelfrozenXid 和/或
+ * NewRelminMxid，以避免最终得到不安全的 pg_class 值。
+ * VACUUM 结束后残留的任何未冻结 XID 或 MXID _必须_
+ * 其值 >= pg_class 中最终的 relfrozenxid/relminmxid 值。这
+ * 包括作为任意元组 xmax 的 MultiXact 成员而残留的 XID。
  *
- * When 'freeze_required' flag isn't set after all tuples are examined, the
- * final choice on freezing is made by vacuumlazy.c.  It can decide to trigger
- * freezing based on whatever criteria it deems appropriate.  However, it is
- * recommended that vacuumlazy.c avoid early freezing when freezing does not
- * enable setting the target page all-frozen in the visibility map afterwards.
+ * 当所有元组检查完毕后未设置 'freeze_required' 标志时，
+ * 最终是否冻结由 vacuumlazy.c 决定。它可以根据
+ * 其认为合适的标准触发冻结。然而，建议
+ * vacuumlazy.c 在冻结无法使目标页面随后在可见性映射中
+ * 被标记为全冻结时，避免过早冻结。
  */
 typedef struct HeapPageFreeze
 {
-	/* Is heap_prepare_freeze_tuple caller required to freeze page? */
+	/* heap_prepare_freeze_tuple 调用者是否需要冻结该页面？ */
 	bool		freeze_required;
 
 	/*
-	 * "Freeze" NewRelfrozenXid/NewRelminMxid trackers.
+	 * "Freeze" 版本的 NewRelfrozenXid/NewRelminMxid 跟踪器。
 	 *
-	 * Trackers used when heap_freeze_execute_prepared freezes, or when there
-	 * are zero freeze plans for a page.  It is always valid for vacuumlazy.c
-	 * to freeze any page, by definition.  This even includes pages that have
-	 * no tuples with storage to consider in the first place.  That way the
-	 * 'totally_frozen' results from heap_prepare_freeze_tuple can always be
-	 * used in the same way, even when no freeze plans need to be executed to
-	 * "freeze the page".  Only the "freeze" path needs to consider the need
-	 * to set pages all-frozen in the visibility map under this scheme.
+	 * 当 heap_freeze_execute_prepared 冻结时，或某页
+	 * 没有任何冻结计划时使用的跟踪器。按定义，vacuumlazy.c
+	 * 冻结任何页面都是合法的。这甚至包括
+	 * 一开始就没有带存储元组的页面。这样，
+	 * 来自 heap_prepare_freeze_tuple 的 'totally_frozen' 结果
+	 * 在任何情况下都可用相同方式处理，即便无需执行任何
+	 * 冻结计划来 "冻结页面"。只有 "freeze" 路径需要考虑
+	 * 在此方案下将页面标记为全冻结的需求。
 	 *
-	 * When we freeze a page, we generally freeze all XIDs < OldestXmin, only
-	 * leaving behind XIDs that are ineligible for freezing, if any.  And so
-	 * you might wonder why these trackers are necessary at all; why should
-	 * _any_ page that VACUUM freezes _ever_ be left with XIDs/MXIDs that
-	 * ratchet back the top-level NewRelfrozenXid/NewRelminMxid trackers?
+	 * 冻结页面时，我们通常冻结所有 XIDs < OldestXmin，仅
+	 * 留下（若有）不符合冻结条件的 XID。因此
+	 * 你可能会疑惑为何需要这些跟踪器；为何 VACUUM
+	 * 冻结的 _任何_ 页面 _都会_ 残留
+	 * 使顶层 NewRelfrozenXid/NewRelminMxid 跟踪器回退的 XID/MXID？
 	 *
-	 * It is useful to use a definition of "freeze the page" that does not
-	 * overspecify how MultiXacts are affected.  heap_prepare_freeze_tuple
-	 * generally prefers to remove Multis eagerly, but lazy processing is used
-	 * in cases where laziness allows VACUUM to avoid allocating a new Multi.
-	 * The "freeze the page" trackers enable this flexibility.
+	 * 使用不过度规定 MultiXact 受影响方式的
+	 * "冻结页面" 定义是有用的。heap_prepare_freeze_tuple
+	 * 通常倾向于立即移除 Multis，但在
+	 * 惰性处理可让 VACUUM 避免分配新 Multi 的情况下会使用惰性方式。
+	 * "freeze the page" 跟踪器正是为了实现这种灵活性。
 	 */
 	TransactionId FreezePageRelfrozenXid;
 	MultiXactId FreezePageRelminMxid;
 
 	/*
-	 * "No freeze" NewRelfrozenXid/NewRelminMxid trackers.
+	 * "No freeze" 版本的 NewRelfrozenXid/NewRelminMxid 跟踪器。
 	 *
-	 * These trackers are maintained in the same way as the trackers used when
-	 * VACUUM scans a page that isn't cleanup locked.  Both code paths are
-	 * based on the same general idea (do less work for this page during the
-	 * ongoing VACUUM, at the cost of having to accept older final values).
+	 * 这些跟踪器的维护方式与 VACUUM 扫描
+	 * 未加 cleanup 锁的页面时使用的跟踪器相同。两条代码路径
+	 * 基于同一总体思路（在本次 VACUUM 期间为该页面
+	 * 做更少的工作，代价是不得不接受较旧的最终值）。
 	 */
 	TransactionId NoFreezePageRelfrozenXid;
 	MultiXactId NoFreezePageRelminMxid;
@@ -220,68 +220,68 @@ typedef struct HeapPageFreeze
 } HeapPageFreeze;
 
 /*
- * Per-page state returned by heap_page_prune_and_freeze()
+ * heap_page_prune_and_freeze() 返回的每页状态
  */
 typedef struct PruneFreezeResult
 {
-	int			ndeleted;		/* Number of tuples deleted from the page */
-	int			nnewlpdead;		/* Number of newly LP_DEAD items */
-	int			nfrozen;		/* Number of tuples we froze */
+	int			ndeleted;		/* 从页面删除的元组数 */
+	int			nnewlpdead;		/* 新出现的 LP_DEAD 项数量 */
+	int			nfrozen;		/* 冻结的元组数 */
 
-	/* Number of live and recently dead tuples on the page, after pruning */
+	/* 剪枝后页面上有效及最近死亡的元组数 */
 	int			live_tuples;
 	int			recently_dead_tuples;
 
 	/*
-	 * all_visible and all_frozen indicate if the all-visible and all-frozen
-	 * bits in the visibility map can be set for this page, after pruning.
+	 * all_visible 和 all_frozen 表示剪枝后
+	 * 可见性映射中的 all-visible 和 all-frozen 位是否可设置。
 	 *
-	 * vm_conflict_horizon is the newest xmin of live tuples on the page.  The
-	 * caller can use it as the conflict horizon when setting the VM bits.  It
-	 * is only valid if we froze some tuples (nfrozen > 0), and all_frozen is
-	 * true.
+	 * vm_conflict_horizon 是页面上有效元组最新的 xmin。调用者
+	 * 可在设置 VM 位时将其作为冲突边界。它
+	 * 仅在冻结了部分元组（nfrozen > 0）且 all_frozen 为
+	 * true 时有效。
 	 *
-	 * These are only set if the HEAP_PRUNE_FREEZE option is set.
+	 * 这些字段仅在设置了 HEAP_PRUNE_FREEZE 选项时才会被设置。
 	 */
 	bool		all_visible;
 	bool		all_frozen;
 	TransactionId vm_conflict_horizon;
 
 	/*
-	 * Whether or not the page makes rel truncation unsafe.  This is set to
-	 * 'true', even if the page contains LP_DEAD items.  VACUUM will remove
-	 * them before attempting to truncate.
+	 * 页面是否会使关系截断不安全。即便页面
+	 * 包含 LP_DEAD 项，此字段也会设为 'true'。VACUUM 会在尝试
+	 * 截断前将其移除。
 	 */
 	bool		hastup;
 
 	/*
-	 * LP_DEAD items on the page after pruning.  Includes existing LP_DEAD
-	 * items.
+	 * 剪枝后页面上的 LP_DEAD 项。包括已有的 LP_DEAD
+	 * 项。
 	 */
 	int			lpdead_items;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 } PruneFreezeResult;
 
-/* 'reason' codes for heap_page_prune_and_freeze() */
+/* heap_page_prune_and_freeze() 的 'reason' 码 */
 typedef enum
 {
-	PRUNE_ON_ACCESS,			/* on-access pruning */
-	PRUNE_VACUUM_SCAN,			/* VACUUM 1st heap pass */
-	PRUNE_VACUUM_CLEANUP,		/* VACUUM 2nd heap pass */
+	PRUNE_ON_ACCESS,			/* 访问时剪枝 */
+	PRUNE_VACUUM_SCAN,			/* VACUUM 第一次堆扫描 */
+	PRUNE_VACUUM_CLEANUP,		/* VACUUM 第二次堆扫描 */
 } PruneReason;
 
 /* ----------------
- *		function prototypes for heap access method
+ *		堆访问方法的函数原型
  *
- * heap_create, heap_create_with_catalog, and heap_drop_with_catalog
- * are declared in catalog/heap.h
+ * heap_create、heap_create_with_catalog 和 heap_drop_with_catalog
+ * 声明在 catalog/heap.h 中
  * ----------------
  */
 
 
 /*
  * HeapScanIsValid
- *		True iff the heap scan is valid.
+ *		当且仅当堆扫描有效时为 true。
  */
 #define HeapScanIsValid(scan) PointerIsValid(scan)
 
@@ -369,7 +369,7 @@ extern void simple_heap_update(Relation relation, ItemPointer otid,
 extern TransactionId heap_index_delete_tuples(Relation rel,
 											  TM_IndexDeleteOp *delstate);
 
-/* in heap/pruneheap.c */
+/* 位于 heap/pruneheap.c */
 struct GlobalVisState;
 extern void heap_page_prune_opt(Relation relation, Buffer buffer);
 extern void heap_page_prune_and_freeze(Relation relation, Buffer buffer,
@@ -395,12 +395,12 @@ extern void log_heap_prune_and_freeze(Relation relation, Buffer buffer,
 									  OffsetNumber *dead, int ndead,
 									  OffsetNumber *unused, int nunused);
 
-/* in heap/vacuumlazy.c */
+/* 位于 heap/vacuumlazy.c */
 struct VacuumParams;
 extern void heap_vacuum_rel(Relation rel,
 							struct VacuumParams *params, BufferAccessStrategy bstrategy);
 
-/* in heap/heapam_visibility.c */
+/* 位于 heap/heapam_visibility.c */
 extern bool HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot,
 										 Buffer buffer);
 extern TM_Result HeapTupleSatisfiesUpdate(HeapTuple htup, CommandId curcid,
@@ -416,8 +416,8 @@ extern bool HeapTupleIsSurelyDead(HeapTuple htup,
 								  struct GlobalVisState *vistest);
 
 /*
- * To avoid leaking too much knowledge about reorderbuffer implementation
- * details this is implemented in reorderbuffer.c not heapam_visibility.c
+ * 为避免泄露过多关于 reorderbuffer 实现的
+ * 细节，此函数实现在 reorderbuffer.c 而非 heapam_visibility.c 中
  */
 struct HTAB;
 extern bool ResolveCminCmaxDuringDecoding(struct HTAB *tuplecid_data,
@@ -430,12 +430,12 @@ extern void HeapCheckForSerializableConflictOut(bool visible, Relation relation,
 
 /*
  * heap_execute_freeze_tuple
- *		Execute the prepared freezing of a tuple with caller's freeze plan.
+ *		使用调用者提供的冻结计划执行元组的预处理冻结。
  *
- * Caller is responsible for ensuring that no other backend can access the
- * storage underlying this tuple, either by holding an exclusive lock on the
- * buffer containing it (which is what lazy VACUUM does), or by having it be
- * in private storage (which is what CLUSTER and friends do).
+ * 调用者负责确保没有其他后端能访问
+ * 该元组底层的存储，方式可以是持有包含该元组的缓冲区上的
+ * 排他锁（lazy VACUUM 采用的方式），或使其位于
+ * 私有存储中（CLUSTER 及其相关操作采用的方式）。
  */
 static inline void
 heap_execute_freeze_tuple(HeapTupleHeader tuple, HeapTupleFreeze *frz)

@@ -23,20 +23,19 @@
 #include "utils/memutils.h"
 
 
-/* GUC variable */
+/* GUC 变量 */
 bool		ignore_checksum_failure = false;
 
 
 /* ----------------------------------------------------------------
- *						Page support functions
+ *						页面支持函数
  * ----------------------------------------------------------------
  */
 
 /*
  * PageInit
- *		Initializes the contents of a page.
- *		Note that we don't calculate an initial checksum here; that's not done
- *		until it's time to write.
+ *		初始化一个页面的内容。
+ *		注意，我们在此并不计算初始校验和；校验和要等到写入时才计算。
  */
 void
 PageInit(Page page, Size pageSize, Size specialSize)
@@ -48,7 +47,7 @@ PageInit(Page page, Size pageSize, Size specialSize)
 	Assert(pageSize == BLCKSZ);
 	Assert(pageSize > specialSize + SizeOfPageHeaderData);
 
-	/* Make sure all fields of page are zero, as well as unused space */
+	/* 确保页面的所有字段以及未使用的空间都为零 */
 	MemSet(p, 0, pageSize);
 
 	p->pd_flags = 0;
@@ -56,39 +55,33 @@ PageInit(Page page, Size pageSize, Size specialSize)
 	p->pd_upper = pageSize - specialSize;
 	p->pd_special = pageSize - specialSize;
 	PageSetPageSizeAndVersion(page, pageSize, PG_PAGE_LAYOUT_VERSION);
-	/* p->pd_prune_xid = InvalidTransactionId;		done by above MemSet */
+	/* p->pd_prune_xid = InvalidTransactionId;		由上面的 MemSet 完成 */
 }
 
 
 /*
  * PageIsVerified
- *		Check that the page header and checksum (if any) appear valid.
+ *		检查页面头部与校验和（如果有）是否看起来有效。
  *
- * This is called when a page has just been read in from disk.  The idea is
- * to cheaply detect trashed pages before we go nuts following bogus line
- * pointers, testing invalid transaction identifiers, etc.
+ * 当一个页面刚从磁盘读入时会调用本函数。其意图是在我们顺着伪造的行指针
+ * 乱跑、测试无效的当事务标识符等之前，廉价地检测出被毁坏的页面。
  *
- * It turns out to be necessary to allow zeroed pages here too.  Even though
- * this routine is *not* called when deliberately adding a page to a relation,
- * there are scenarios in which a zeroed page might be found in a table.
- * (Example: a backend extends a relation, then crashes before it can write
- * any WAL entry about the new page.  The kernel will already have the
- * zeroed page in the file, and it will stay that way after restart.)  So we
- * allow zeroed pages here, and are careful that the page access macros
- * treat such a page as empty and without free space.  Eventually, VACUUM
- * will clean up such a page and make it usable.
+ * 事实证明，这里也有必要允许全零的页面。尽管在刻意给关系添加一个页面时
+ * *不会*调用本例程，但仍存在可能在表中发现全零页面的场景。（例如：一个
+ * 后端扩展了某个关系，然后在还没写出任何关于新页面的 WAL 记录时就崩溃了。
+ * 内核在该文件中已经拥有这个全零页面，并且在重启后它依然保持那样。）因此
+ * 我们在这里允许全零页面，并且小心地让页面访问宏把这样的页面视为空页面、
+ * 没有空闲空间。最终，VACUUM 会清理这类页面并使其可用。
  *
- * If flag PIV_LOG_WARNING/PIV_LOG_LOG is set, a WARNING/LOG message is logged
- * in the event of a checksum failure.
+ * 如果设置了标志 PIV_LOG_WARNING/PIV_LOG_LOG，则在发生校验和失败时会记录
+ * 一条 WARNING/LOG 消息。
  *
- * If flag PIV_IGNORE_CHECKSUM_FAILURE is set, checksum failures will cause a
- * message about the failure to be emitted, but will not cause
- * PageIsVerified() to return false.
+ * 如果设置了标志 PIV_IGNORE_CHECKSUM_FAILURE，校验和失败会导致发出一条关于
+ * 该失败的消息，但不会导致 PageIsVerified() 返回 false。
  *
- * To allow the caller to report statistics about checksum failures,
- * *checksum_failure_p can be passed in. Note that there may be checksum
- * failures even if this function returns true, due to
- * PIV_IGNORE_CHECKSUM_FAILURE.
+ * 为了允许调用者报告关于校验和失败的统计信息，可以传入 *checksum_failure_p。
+ * 注意，即便本函数返回 true，也可能存在校验和失败，原因是
+ * PIV_IGNORE_CHECKSUM_FAILURE。
  */
 bool
 PageIsVerified(PageData *page, BlockNumber blkno, int flags, bool *checksum_failure_p)
@@ -103,7 +96,7 @@ PageIsVerified(PageData *page, BlockNumber blkno, int flags, bool *checksum_fail
 		*checksum_failure_p = false;
 
 	/*
-	 * Don't verify page data unless the page passes basic non-zero test
+	 * 除非页面通过了基本的非零测试，否则不验证页面数据
 	 */
 	if (!PageIsNew(page))
 	{
@@ -120,10 +113,9 @@ PageIsVerified(PageData *page, BlockNumber blkno, int flags, bool *checksum_fail
 		}
 
 		/*
-		 * The following checks don't prove the header is correct, only that
-		 * it looks sane enough to allow into the buffer pool. Later usage of
-		 * the block can still reveal problems, which is why we offer the
-		 * checksum option.
+		 * 以下检查并不能证明头部是正确的，只能说明它看起来足够正常、可以
+		 * 放入缓冲池。该块在后续使用中仍可能暴露出问题，这正是我们提供
+		 * 校验和选项的原因。
 		 */
 		if ((p->pd_flags & ~PD_VALID_FLAG_BITS) == 0 &&
 			p->pd_lower <= p->pd_upper &&
@@ -136,15 +128,15 @@ PageIsVerified(PageData *page, BlockNumber blkno, int flags, bool *checksum_fail
 			return true;
 	}
 
-	/* Check all-zeroes case */
+	/* 检查全零的情况 */
 	pagebytes = (size_t *) page;
 
 	if (pg_memory_is_all_zeros(pagebytes, BLCKSZ))
 		return true;
 
 	/*
-	 * Throw a WARNING/LOG, as instructed by PIV_LOG_*, if the checksum fails,
-	 * but only after we've checked for the all-zeroes case.
+	 * 按照 PIV_LOG_* 的指示，在校验和失败时抛出 WARNING/LOG，但只能在
+	 * 完成全零情况检查之后进行。
 	 */
 	if (checksum_failure)
 	{
@@ -165,29 +157,28 @@ PageIsVerified(PageData *page, BlockNumber blkno, int flags, bool *checksum_fail
 /*
  *	PageAddItemExtended
  *
- *	Add an item to a page.  Return value is the offset at which it was
- *	inserted, or InvalidOffsetNumber if the item is not inserted for any
- *	reason.  A WARNING is issued indicating the reason for the refusal.
+ *	向页面添加一个项。返回值是它插入处的偏移号；如果该项因任何原因未被
+ *	插入，则返回 InvalidOffsetNumber。会发出一条 WARNING 以说明被拒绝的
+ *	原因。
  *
- *	offsetNumber must be either InvalidOffsetNumber to specify finding a
- *	free line pointer, or a value between FirstOffsetNumber and one past
- *	the last existing item, to specify using that particular line pointer.
+ *	offsetNumber 必须为 InvalidOffsetNumber（表示寻找一个空闲的行指针），
+ *	或者是介于 FirstOffsetNumber 与最后一个现存项之后一个之间的值（表示
+ *	使用那个特定的行指针）。
  *
- *	If offsetNumber is valid and flag PAI_OVERWRITE is set, we just store
- *	the item at the specified offsetNumber, which must be either a
- *	currently-unused line pointer, or one past the last existing item.
+ *	如果 offsetNumber 有效且设置了标志 PAI_OVERWRITE，我们就把该项存储在
+ *	指定的 offsetNumber 处，该位置必须是一个当前未使用的行指针，或者是
+ *	最后一个现存项之后的一个位置。
  *
- *	If offsetNumber is valid and flag PAI_OVERWRITE is not set, insert
- *	the item at the specified offsetNumber, moving existing items later
- *	in the array to make room.
+ *	如果 offsetNumber 有效但未设置标志 PAI_OVERWRITE，则在指定的 offsetNumber
+ *	处插入该项，并把数组中现有的项向后移动以腾出空间。
  *
- *	If offsetNumber is not valid, then assign a slot by finding the first
- *	one that is both unused and deallocated.
+ *	如果 offsetNumber 无效，则通过寻找第一个既未使用又已释放的槽位来分配
+ *	一个槽位。
  *
- *	If flag PAI_IS_HEAP is set, we enforce that there can't be more than
- *	MaxHeapTuplesPerPage line pointers on the page.
+ *	如果设置了标志 PAI_IS_HEAP，我们会强制页面上的行指针数量不能超过
+ *	MaxHeapTuplesPerPage。
  *
- *	!!! EREPORT(ERROR) IS DISALLOWED HERE !!!
+ *	!!! 这里禁止使用 EREPORT(ERROR) !!!
  */
 OffsetNumber
 PageAddItemExtended(Page page,
@@ -205,7 +196,7 @@ PageAddItemExtended(Page page,
 	bool		needshuffle = false;
 
 	/*
-	 * Be wary about corrupted page pointers
+	 * 当心损坏的页面指针
 	 */
 	if (phdr->pd_lower < SizeOfPageHeaderData ||
 		phdr->pd_lower > phdr->pd_upper ||
@@ -217,14 +208,14 @@ PageAddItemExtended(Page page,
 						phdr->pd_lower, phdr->pd_upper, phdr->pd_special)));
 
 	/*
-	 * Select offsetNumber to place the new item at
+	 * 选择放置新项的 offsetNumber
 	 */
 	limit = OffsetNumberNext(PageGetMaxOffsetNumber(page));
 
-	/* was offsetNumber passed in? */
+	/* 是否传入了 offsetNumber？ */
 	if (OffsetNumberIsValid(offsetNumber))
 	{
-		/* yes, check it */
+		/* 是，检查它 */
 		if ((flags & PAI_OVERWRITE) != 0)
 		{
 			if (offsetNumber < limit)
@@ -240,33 +231,31 @@ PageAddItemExtended(Page page,
 		else
 		{
 			if (offsetNumber < limit)
-				needshuffle = true; /* need to move existing linp's */
+				needshuffle = true; /* 需要移动现有的 linp */
 		}
 	}
 	else
 	{
-		/* offsetNumber was not passed in, so find a free slot */
-		/* if no free slot, we'll put it at limit (1st open slot) */
+		/* 没有传入 offsetNumber，因此寻找一个空闲槽位 */
+		/* 如果没有空闲槽位，就放到 limit 处（第一个开放槽位） */
 		if (PageHasFreeLinePointers(page))
 		{
 			/*
-			 * Scan line pointer array to locate a "recyclable" (unused)
-			 * ItemId.
+			 * 扫描行指针数组，定位一个"可回收"（未使用）的 ItemId。
 			 *
-			 * Always use earlier items first.  PageTruncateLinePointerArray
-			 * can only truncate unused items when they appear as a contiguous
-			 * group at the end of the line pointer array.
+			 * 总是优先使用更靠前的项。PageTruncateLinePointerArray 只能在
+			 * 未使用的项作为连续的一组出现在行指针数组末尾时，才能将其
+			 * 截断。
 			 */
 			for (offsetNumber = FirstOffsetNumber;
-				 offsetNumber < limit;	/* limit is maxoff+1 */
+				 offsetNumber < limit;	/* limit 即 maxoff+1 */
 				 offsetNumber++)
 			{
 				itemId = PageGetItemId(page, offsetNumber);
 
 				/*
-				 * We check for no storage as well, just to be paranoid;
-				 * unused items should never have storage.  Assert() that the
-				 * invariant is respected too.
+				 * 我们同时检查是否没有存储，只是出于谨慎；未使用的项永远
+				 * 不应该有存储。也用 Assert() 来确认这一不变式得到遵守。
 				 */
 				Assert(ItemIdIsUsed(itemId) || !ItemIdHasStorage(itemId));
 
@@ -275,25 +264,25 @@ PageAddItemExtended(Page page,
 			}
 			if (offsetNumber >= limit)
 			{
-				/* the hint is wrong, so reset it */
-				PageClearHasFreeLinePointers(page);
+			/* 该提示是错误的，因此重置它 */
+			PageClearHasFreeLinePointers(page);
 			}
 		}
 		else
 		{
-			/* don't bother searching if hint says there's no free slot */
+			/* 如果提示说没有空闲槽位，就不必搜索了 */
 			offsetNumber = limit;
 		}
 	}
 
-	/* Reject placing items beyond the first unused line pointer */
+	/* 拒绝把项放置到第一个未使用的行指针之后 */
 	if (offsetNumber > limit)
 	{
 		elog(WARNING, "specified item offset is too large");
 		return InvalidOffsetNumber;
 	}
 
-	/* Reject placing items beyond heap boundary, if heap */
+	/* 若是堆，则拒绝把项放置到堆边界之外 */
 	if ((flags & PAI_IS_HEAP) != 0 && offsetNumber > MaxHeapTuplesPerPage)
 	{
 		elog(WARNING, "can't put more than MaxHeapTuplesPerPage items in a heap page");
@@ -301,10 +290,10 @@ PageAddItemExtended(Page page,
 	}
 
 	/*
-	 * Compute new lower and upper pointers for page, see if it'll fit.
+	 * 计算页面新的 lower 和 upper 指针，看是否能放下。
 	 *
-	 * Note: do arithmetic as signed ints, to avoid mistakes if, say,
-	 * alignedSize > pd_upper.
+	 * 注意：用有符号整数进行运算，以避免诸如 alignedSize > pd_upper 时
+	 * 出错。
 	 */
 	if (offsetNumber == limit || needshuffle)
 		lower = phdr->pd_lower + sizeof(ItemIdData);
@@ -319,7 +308,7 @@ PageAddItemExtended(Page page,
 		return InvalidOffsetNumber;
 
 	/*
-	 * OK to insert the item.  First, shuffle the existing pointers if needed.
+	 * 可以插入该项了。首先，在需要时对现有的指针进行搬移。
 	 */
 	itemId = PageGetItemId(page, offsetNumber);
 
@@ -327,27 +316,26 @@ PageAddItemExtended(Page page,
 		memmove(itemId + 1, itemId,
 				(limit - offsetNumber) * sizeof(ItemIdData));
 
-	/* set the line pointer */
+	/* 设置行指针 */
 	ItemIdSetNormal(itemId, upper, size);
 
 	/*
-	 * Items normally contain no uninitialized bytes.  Core bufpage consumers
-	 * conform, but this is not a necessary coding rule; a new index AM could
-	 * opt to depart from it.  However, data type input functions and other
-	 * C-language functions that synthesize datums should initialize all
-	 * bytes; datumIsEqual() relies on this.  Testing here, along with the
-	 * similar check in printtup(), helps to catch such mistakes.
+	 * 项通常不包含未初始化的字节。核心的 bufpage 使用者都遵守这一点，但这
+	 * 并非一条必需的编码规则；一个新的索引访问方法（AM）可以选择不遵守它。
+	 * 不过，数据类型输入函数以及其他合成 datum 的 C 语言函数应当初始化所有
+	 * 字节；datumIsEqual() 依赖于这一点。这里的检查，连同 printtup() 中类似的
+	 * 检查，有助于捕获此类错误。
 	 *
-	 * Values of the "name" type retrieved via index-only scans may contain
-	 * uninitialized bytes; see comment in btrescan().  Valgrind will report
-	 * this as an error, but it is safe to ignore.
+	 * 通过仅索引扫描（index-only scan）检索到的 "name" 类型的值可能含有未
+	 * 初始化的字节；参见 btrescan() 中的注释。Valgrind 会将此报告为错误，
+	 * 但忽略它是安全的。
 	 */
 	VALGRIND_CHECK_MEM_IS_DEFINED(item, size);
 
-	/* copy the item's data onto the page */
+	/* 将该项的数据复制到页面上 */
 	memcpy((char *) page + upper, item, size);
 
-	/* adjust page header */
+	/* 调整页面头部 */
 	phdr->pd_lower = (LocationIndex) lower;
 	phdr->pd_upper = (LocationIndex) upper;
 
@@ -357,8 +345,8 @@ PageAddItemExtended(Page page,
 
 /*
  * PageGetTempPage
- *		Get a temporary page in local memory for special processing.
- *		The returned page is not initialized at all; caller must do that.
+ *		在本地内存中获取一个临时页面用于特殊处理。
+ *		返回的页面完全未被初始化；调用者必须自行初始化。
  */
 Page
 PageGetTempPage(const PageData *page)
@@ -374,8 +362,8 @@ PageGetTempPage(const PageData *page)
 
 /*
  * PageGetTempPageCopy
- *		Get a temporary page in local memory for special processing.
- *		The page is initialized by copying the contents of the given page.
+ *		在本地内存中获取一个临时页面用于特殊处理。
+ *		该页面通过复制给定页面的内容进行初始化。
  */
 Page
 PageGetTempPageCopy(const PageData *page)
@@ -393,9 +381,9 @@ PageGetTempPageCopy(const PageData *page)
 
 /*
  * PageGetTempPageCopySpecial
- *		Get a temporary page in local memory for special processing.
- *		The page is PageInit'd with the same special-space size as the
- *		given page, and the special space is copied from the given page.
+ *		在本地内存中获取一个临时页面用于特殊处理。
+ *		该页面以与给定页面相同的 special space 大小进行 PageInit，并且
+ *		special space 会从给定页面复制过来。
  */
 Page
 PageGetTempPageCopySpecial(const PageData *page)
@@ -416,8 +404,7 @@ PageGetTempPageCopySpecial(const PageData *page)
 
 /*
  * PageRestoreTempPage
- *		Copy temporary page back to permanent page after special processing
- *		and release the temporary page.
+ *		在特殊处理之后，将临时页面复制回永久页面，并释放临时页面。
  */
 void
 PageRestoreTempPage(Page tempPage, Page oldPage)
@@ -431,43 +418,36 @@ PageRestoreTempPage(Page tempPage, Page oldPage)
 }
 
 /*
- * Tuple defrag support for PageRepairFragmentation and PageIndexMultiDelete
+ * 为 PageRepairFragmentation 和 PageIndexMultiDelete 提供的元组碎片整理支持
  */
 typedef struct itemIdCompactData
 {
-	uint16		offsetindex;	/* linp array index */
-	int16		itemoff;		/* page offset of item data */
-	uint16		alignedlen;		/* MAXALIGN(item data len) */
+	uint16		offsetindex;	/* linp 数组索引 */
+	int16		itemoff;		/* 项数据的页面偏移 */
+	uint16		alignedlen;		/* MAXALIGN(项数据长度) */
 } itemIdCompactData;
 typedef itemIdCompactData *itemIdCompact;
 
 /*
- * After removing or marking some line pointers unused, move the tuples to
- * remove the gaps caused by the removed items and reorder them back into
- * reverse line pointer order in the page.
+ * 在移除或标记部分行指针为未使用之后，移动元组以消除被移除项造成的空隙，
+ * 并将它们重新排序回页面中的逆序行指针顺序。
  *
- * This function can often be fairly hot, so it pays to take some measures to
- * make it as optimal as possible.
+ * 这个函数经常会非常热（hot），因此采取一些措施使其尽可能最优是值得的。
  *
- * Callers may pass 'presorted' as true if the 'itemidbase' array is sorted in
- * descending order of itemoff.  When this is true we can just memmove()
- * tuples towards the end of the page.  This is quite a common case as it's
- * the order that tuples are initially inserted into pages.  When we call this
- * function to defragment the tuples in the page then any new line pointers
- * added to the page will keep that presorted order, so hitting this case is
- * still very common for tables that are commonly updated.
+ * 如果 'itemidbase' 数组是按 itemoff 降序排列的，调用者可以把 'presorted'
+ * 传为 true。当如此时，我们只需把元组 memmove() 向页面末尾方向移动即可。这是
+ * 相当常见的情况，因为元组最初插入页面时就是这个顺序。当我们调用本函数
+ * 来整理页面中的元组碎片时，页面上添加的任何新行指针都会保持该预排序顺序，
+ * 因此对于经常更新的表，命中这种情况依然非常常见。
  *
- * When the 'itemidbase' array is not presorted then we're unable to just
- * memmove() tuples around freely.  Doing so could cause us to overwrite the
- * memory belonging to a tuple we've not moved yet.  In this case, we copy all
- * the tuples that need to be moved into a temporary buffer.  We can then
- * simply memcpy() out of that temp buffer back into the page at the correct
- * location.  Tuples are copied back into the page in the same order as the
- * 'itemidbase' array, so we end up reordering the tuples back into reverse
- * line pointer order.  This will increase the chances of hitting the
- * presorted case the next time around.
+ * 当 'itemidbase' 数组并非预排序时，我们就不能自由地随意 memmove() 元组。
+ * 那样做可能会导致我们覆盖掉尚未移动的元组所属的内存。在这种情况下，我们
+ * 把所有需要移动的元组复制到一个临时缓冲区中。然后我们只需从该临时缓冲区
+ * memcpy() 回页面中的正确位置。元组以与 'itemidbase' 数组相同的顺序被复制回
+ * 页面，因此我们最终把元组重新排序回逆序的行指针顺序。这会增加下一次命中
+ * 预排序情况的几率。
  *
- * Callers must ensure that nitems is > 0
+ * 调用者必须确保 nitems > 0
  */
 static void
 compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorted)
@@ -479,7 +459,7 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 	itemIdCompact itemidptr;
 	int			i;
 
-	/* Code within will not work correctly if nitems == 0 */
+	/* 如果 nitems == 0，下面的代码将无法正确工作 */
 	Assert(nitems > 0);
 
 	if (presorted)
@@ -488,8 +468,7 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 #ifdef USE_ASSERT_CHECKING
 		{
 			/*
-			 * Verify we've not gotten any new callers that are incorrectly
-			 * passing a true presorted value.
+			 * 验证我们没有遇到任何错误地传入 true presorted 值的新调用者。
 			 */
 			Offset		lastoff = phdr->pd_special;
 
@@ -505,15 +484,12 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 #endif							/* USE_ASSERT_CHECKING */
 
 		/*
-		 * 'itemidbase' is already in the optimal order, i.e, lower item
-		 * pointers have a higher offset.  This allows us to memmove() the
-		 * tuples up to the end of the page without having to worry about
-		 * overwriting other tuples that have not been moved yet.
+		 * 'itemidbase' 已经处于最优顺序，即较矮的项指针具有更高的偏移。
+		 * 这使我们能够将元组 memmove() 到页面末尾，而无需担心覆盖那些
+		 * 尚未移动的元组。
 		 *
-		 * There's a good chance that there are tuples already right at the
-		 * end of the page that we can simply skip over because they're
-		 * already in the correct location within the page.  We'll do that
-		 * first...
+		 * 很有可能会有一些元组已经恰好位于页面末尾，我们可以直接跳过它们，
+		 * 因为它们在页面中已经处于正确的位置。我们先做这件事……
 		 */
 		upper = phdr->pd_special;
 		i = 0;
@@ -528,11 +504,10 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 		} while (i < nitems);
 
 		/*
-		 * Now that we've found the first tuple that needs to be moved, we can
-		 * do the tuple compactification.  We try and make the least number of
-		 * memmove() calls and only call memmove() when there's a gap.  When
-		 * we see a gap we just move all tuples after the gap up until the
-		 * point of the last move operation.
+		 * 既然我们已经找到了第一个需要移动的元组，就可以进行元组紧凑化了。
+		 * 我们尽量少做 memmove() 调用，并且只在出现空隙时才调用 memmove()。
+		 * 当发现空隙时，我们就把空隙之后、直到上一次搬移点的所有元组都搬移
+		 * 过去。
 		 */
 		copy_tail = copy_head = itemidptr->itemoff + itemidptr->alignedlen;
 		for (; i < nitems; i++)
@@ -549,22 +524,22 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 						copy_tail - copy_head);
 
 				/*
-				 * We've now moved all tuples already seen, but not the
-				 * current tuple, so we set the copy_tail to the end of this
-				 * tuple so it can be moved in another iteration of the loop.
+				 * 我们现在已经搬移了所有已见过的元组，但还没搬移当前元组，
+				 * 因此把 copy_tail 设为该元组的末尾，以便它在循环的下一次
+				 * 迭代中被搬移。
 				 */
 				copy_tail = itemidptr->itemoff + itemidptr->alignedlen;
 			}
-			/* shift the target offset down by the length of this tuple */
+			/* 把目标偏移向下移动本元组的长度 */
 			upper -= itemidptr->alignedlen;
-			/* point the copy_head to the start of this tuple */
+			/* 把 copy_head 指向本元组的起始位置 */
 			copy_head = itemidptr->itemoff;
 
-			/* update the line pointer to reference the new offset */
+			/* 更新行指针以引用新的偏移 */
 			lp->lp_off = upper;
 		}
 
-		/* move the remaining tuples. */
+		/* 搬移剩余的元组。 */
 		memmove((char *) page + upper,
 				page + copy_head,
 				copy_tail - copy_head);
@@ -575,17 +550,14 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 		char	   *scratchptr = scratch.data;
 
 		/*
-		 * Non-presorted case:  The tuples in the itemidbase array may be in
-		 * any order.  So, in order to move these to the end of the page we
-		 * must make a temp copy of each tuple that needs to be moved before
-		 * we copy them back into the page at the new offset.
+		 * 非预排序情况：itemidbase 数组中的元组可能是任意顺序。因此，为了
+		 * 把它们移动到页面末尾，我们必须先为每个需要移动的元组制作一份
+		 * 临时副本，然后再把它们复制回页面中的新偏移处。
 		 *
-		 * If a large percentage of tuples have been pruned (>75%) then we'll
-		 * copy these into the temp buffer tuple-by-tuple, otherwise, we'll
-		 * just do a single memcpy() for all tuples that need to be moved.
-		 * When so many tuples have been removed there's likely to be a lot of
-		 * gaps and it's unlikely that many non-movable tuples remain at the
-		 * end of the page.
+		 * 如果很大部分（>75%）的元组已被剪枝（pruned），我们就逐个元组地
+		 * 把它们复制到临时缓冲区中；否则，我们就对所有需要移动的元组只做
+		 * 一次 memcpy()。当如此多的元组被移除时，很可能会出现很多空隙，而且
+		 * 页面末尾不太可能剩下很多不可移动的元组。
 		 */
 		if (nitems < PageGetMaxOffsetNumber(page) / 4)
 		{
@@ -598,7 +570,7 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 				i++;
 			} while (i < nitems);
 
-			/* Set things up for the compactification code below */
+			/* 为下面的紧凑化代码做好准备 */
 			i = 0;
 			itemidptr = &itemidbase[0];
 			upper = phdr->pd_special;
@@ -608,11 +580,9 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 			upper = phdr->pd_special;
 
 			/*
-			 * Many tuples are likely to already be in the correct location.
-			 * There's no need to copy these into the temp buffer.  Instead
-			 * we'll just skip forward in the itemidbase array to the position
-			 * that we do need to move tuples from so that the code below just
-			 * leaves these ones alone.
+			 * 很多元组很可能已经处于正确的位置。没有必要把它们复制到临时
+			 * 缓冲区中。相反，我们只需在 itemidbase 数组中向前跳到确实需要
+			 * 从中移动元组的位置，这样下面的代码就会让这些元组保持不动。
 			 */
 			i = 0;
 			do
@@ -625,18 +595,16 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 				i++;
 			} while (i < nitems);
 
-			/* Copy all tuples that need to be moved into the temp buffer */
+			/* 把所有需要移动的元组复制到临时缓冲区中 */
 			memcpy(scratchptr + phdr->pd_upper,
 				   page + phdr->pd_upper,
 				   upper - phdr->pd_upper);
 		}
 
 		/*
-		 * Do the tuple compactification.  itemidptr is already pointing to
-		 * the first tuple that we're going to move.  Here we collapse the
-		 * memcpy calls for adjacent tuples into a single call.  This is done
-		 * by delaying the memcpy call until we find a gap that needs to be
-		 * closed.
+		 * 进行元组紧凑化。itemidptr 已经指向我们要移动的第一个元组。在这里
+		 * 我们把相邻元组的 memcpy 调用合并为一次调用。做法是将 memcpy 调用
+		 * 推迟，直到我们发现需要闭合的空隙为止。
 		 */
 		copy_tail = copy_head = itemidptr->itemoff + itemidptr->alignedlen;
 		for (; i < nitems; i++)
@@ -646,7 +614,7 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 			itemidptr = &itemidbase[i];
 			lp = PageGetItemId(page, itemidptr->offsetindex + 1);
 
-			/* copy pending tuples when we detect a gap */
+			/* 当检测到空隙时，复制待处理的元组 */
 			if (copy_head != itemidptr->itemoff + itemidptr->alignedlen)
 			{
 				memcpy((char *) page + upper,
@@ -654,22 +622,21 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 					   copy_tail - copy_head);
 
 				/*
-				 * We've now copied all tuples already seen, but not the
-				 * current tuple, so we set the copy_tail to the end of this
-				 * tuple.
+				 * 我们现在已经复制了所有已见过的元组，但还没复制当前元组，
+				 * 因此把 copy_tail 设为该元组的末尾。
 				 */
 				copy_tail = itemidptr->itemoff + itemidptr->alignedlen;
 			}
-			/* shift the target offset down by the length of this tuple */
+			/* 把目标偏移向下移动本元组的长度 */
 			upper -= itemidptr->alignedlen;
-			/* point the copy_head to the start of this tuple */
+			/* 把 copy_head 指向本元组的起始位置 */
 			copy_head = itemidptr->itemoff;
 
-			/* update the line pointer to reference the new offset */
+			/* 更新行指针以引用新的偏移 */
 			lp->lp_off = upper;
 		}
 
-		/* Copy the remaining chunk */
+		/* 复制剩余的块 */
 		memcpy((char *) page + upper,
 			   scratchptr + copy_head,
 			   copy_tail - copy_head);
@@ -681,18 +648,17 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 /*
  * PageRepairFragmentation
  *
- * Frees fragmented space on a heap page following pruning.
+ * 在剪枝（pruning）之后，释放堆页面上的碎片空间。
  *
- * This routine is usable for heap pages only, but see PageIndexMultiDelete.
+ * 本例程仅可用于堆页面，但另请参见 PageIndexMultiDelete。
  *
- * This routine removes unused line pointers from the end of the line pointer
- * array.  This is possible when dead heap-only tuples get removed by pruning,
- * especially when there were HOT chains with several tuples each beforehand.
+ * 本例程会从行指针数组的末尾移除未使用的行指针。当只存于堆中的死元组（dead
+ * heap-only tuples）被剪枝移除时，这是可能的，尤其是当之前存在每条链含有
+ * 多个元组的 HOT 链时。
  *
- * Caller had better have a full cleanup lock on page's buffer.  As a side
- * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
- * needed.  Caller might also need to account for a reduction in the length of
- * the line pointer array following array truncation.
+ * 调用者最好持有页面缓冲区上的一个完整清理锁（cleanup lock）。作为副作用，
+ * 页面上的 PD_HAS_FREE_LINES 提示位会按需要被置位或清零。调用者可能还需要
+ * 考虑数组截断后行指针数组长度的减少。
  */
 void
 PageRepairFragmentation(Page page)
@@ -710,14 +676,13 @@ PageRepairFragmentation(Page page)
 	OffsetNumber finalusedlp = InvalidOffsetNumber;
 	int			i;
 	Size		totallen;
-	bool		presorted = true;	/* For now */
+	bool		presorted = true;	/* 暂定 */
 
 	/*
-	 * It's worth the trouble to be more paranoid here than in most places,
-	 * because we are about to reshuffle data in (what is usually) a shared
-	 * disk buffer.  If we aren't careful then corrupted pointers, lengths,
-	 * etc could cause us to clobber adjacent disk buffers, spreading the data
-	 * loss further.  So, check everything.
+	 * 这里比在大多数地方更值得费心保持多疑，因为我们即将（通常是在）一个
+	 * 共享磁盘缓冲区中重新整理数据。如果我们不小心，损坏的指针、长度等等
+	 * 可能会导致我们破坏相邻的磁盘缓冲区，使数据丢失进一步扩散。因此，要
+	 * 检查一切。
 	 */
 	if (pd_lower < SizeOfPageHeaderData ||
 		pd_lower > pd_upper ||
@@ -730,7 +695,7 @@ PageRepairFragmentation(Page page)
 						pd_lower, pd_upper, pd_special)));
 
 	/*
-	 * Run through the line pointer array and collect data about live items.
+	 * 遍历行指针数组，收集关于存活项（live items）的数据。
 	 */
 	nline = PageGetMaxOffsetNumber(page);
 	itemidptr = itemidbase;
@@ -762,12 +727,12 @@ PageRepairFragmentation(Page page)
 				itemidptr++;
 			}
 
-			finalusedlp = i;	/* Could be the final non-LP_UNUSED item */
+			finalusedlp = i;	/* 可能是最后一个非 LP_UNUSED 项 */
 		}
 		else
 		{
-			/* Unused entries should have lp_len = 0, but make sure */
-			Assert(!ItemIdHasStorage(lp));
+		/* 未使用的条目应当 lp_len = 0，但还是要确认一下 */
+		Assert(!ItemIdHasStorage(lp));
 			ItemIdSetUnused(lp);
 			nunused++;
 		}
@@ -776,12 +741,12 @@ PageRepairFragmentation(Page page)
 	nstorage = itemidptr - itemidbase;
 	if (nstorage == 0)
 	{
-		/* Page is completely empty, so just reset it quickly */
+		/* 页面完全为空，因此快速重置它即可 */
 		((PageHeader) page)->pd_upper = pd_special;
 	}
 	else
 	{
-		/* Need to compact the page the hard way */
+		/* 需要费力地紧凑化页面 */
 		if (totallen > (Size) (pd_special - pd_lower))
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
@@ -793,18 +758,18 @@ PageRepairFragmentation(Page page)
 
 	if (finalusedlp != nline)
 	{
-		/* The last line pointer is not the last used line pointer */
+		/* 最后一个行指针并不是最后一个被使用的行指针 */
 		int			nunusedend = nline - finalusedlp;
 
 		Assert(nunused >= nunusedend && nunusedend > 0);
 
-		/* remove trailing unused line pointers from the count */
+		/* 从计数中移除末尾的未使用行指针 */
 		nunused -= nunusedend;
-		/* truncate the line pointer array */
+		/* 截断行指针数组 */
 		((PageHeader) page)->pd_lower -= (sizeof(ItemIdData) * nunusedend);
 	}
 
-	/* Set hint bit for PageAddItemExtended */
+	/* 为 PageAddItemExtended 设置提示位 */
 	if (nunused > 0)
 		PageSetHasFreeLinePointers(page);
 	else
@@ -814,21 +779,17 @@ PageRepairFragmentation(Page page)
 /*
  * PageTruncateLinePointerArray
  *
- * Removes unused line pointers at the end of the line pointer array.
+ * 移除行指针数组末尾未使用的行指针。
  *
- * This routine is usable for heap pages only.  It is called by VACUUM during
- * its second pass over the heap.  We expect at least one LP_UNUSED line
- * pointer on the page (if VACUUM didn't have an LP_DEAD item on the page that
- * it just set to LP_UNUSED then it should not call here).
+ * 本例程仅可用于堆页面。它由 VACUUM 在第二次遍历堆时调用。我们期望页面上
+ * 至少有一个 LP_UNUSED 行指针（如果 VACUUM 在页面上没有 LP_DEAD 项可被它
+ * 置为 LP_UNUSED，那它就不应该调用到这里）。
  *
- * We avoid truncating the line pointer array to 0 items, if necessary by
- * leaving behind a single remaining LP_UNUSED item.  This is a little
- * arbitrary, but it seems like a good idea to avoid leaving a PageIsEmpty()
- * page behind.
+ * 我们避免把行指针数组截断为 0 个项，如有必要，会保留一个剩余的 LP_UNUSED
+ * 项。这有点武断，但为了避免留下一个 PageIsEmpty() 页面，这似乎是个好主意。
  *
- * Caller can have either an exclusive lock or a full cleanup lock on page's
- * buffer.  The page's PD_HAS_FREE_LINES hint bit will be set or unset based
- * on whether or not we leave behind any remaining LP_UNUSED items.
+ * 调用者可以持有页面缓冲区的排他锁或完整的清理锁。页面的 PD_HAS_FREE_LINES
+ * 提示位会根据我们是否留下了任何剩余的 LP_UNUSED 项而被置位或清零。
  */
 void
 PageTruncateLinePointerArray(Page page)
@@ -838,7 +799,7 @@ PageTruncateLinePointerArray(Page page)
 				sethint = false;
 	int			nunusedend = 0;
 
-	/* Scan line pointer array back-to-front */
+	/* 从后向前扫描行指针数组 */
 	for (int i = PageGetMaxOffsetNumber(page); i >= FirstOffsetNumber; i--)
 	{
 		ItemId		lp = PageGetItemId(page, i);
@@ -846,10 +807,9 @@ PageTruncateLinePointerArray(Page page)
 		if (!countdone && i > FirstOffsetNumber)
 		{
 			/*
-			 * Still determining which line pointers from the end of the array
-			 * will be truncated away.  Either count another line pointer as
-			 * safe to truncate, or notice that it's not safe to truncate
-			 * additional line pointers (stop counting line pointers).
+			 * 仍在确定数组末尾的哪些行指针将被截断掉。要么把另一个行指针
+			 * 计为可以安全截断，要么注意到额外的行指针不再能安全截断（停止
+			 * 计数行指针）。
 			 */
 			if (!ItemIdIsUsed(lp))
 				nunusedend++;
@@ -859,15 +819,14 @@ PageTruncateLinePointerArray(Page page)
 		else
 		{
 			/*
-			 * Once we've stopped counting we still need to figure out if
-			 * there are any remaining LP_UNUSED line pointers somewhere more
-			 * towards the front of the array.
+			 * 一旦我们停止计数，仍然需要弄清楚在数组更靠前的位置是否还有
+			 * 任何剩余的 LP_UNUSED 行指针。
 			 */
 			if (!ItemIdIsUsed(lp))
 			{
 				/*
-				 * This is an unused line pointer that we won't be truncating
-				 * away -- so there is at least one.  Set hint on page.
+				 * 这是一个我们不会截断掉的未使用行指针——因此至少有一个。
+				 * 在页面上设置提示。
 				 */
 				sethint = true;
 				break;
@@ -887,7 +846,7 @@ PageTruncateLinePointerArray(Page page)
 	else
 		Assert(sethint);
 
-	/* Set hint bit for PageAddItemExtended */
+	/* 为 PageAddItemExtended 设置提示位 */
 	if (sethint)
 		PageSetHasFreeLinePointers(page);
 	else
@@ -896,11 +855,9 @@ PageTruncateLinePointerArray(Page page)
 
 /*
  * PageGetFreeSpace
- *		Returns the size of the free (allocatable) space on a page,
- *		reduced by the space needed for a new line pointer.
+ *		返回页面上空闲（可分配）空间的大小，扣除了一个新行指针所需的空间。
  *
- * Note: this should usually only be used on index pages.  Use
- * PageGetHeapFreeSpace on heap pages.
+ * 注意：这通常只应被用于索引页面。在堆页面上请使用 PageGetHeapFreeSpace。
  */
 Size
 PageGetFreeSpace(const PageData *page)
@@ -909,8 +866,7 @@ PageGetFreeSpace(const PageData *page)
 	int			space;
 
 	/*
-	 * Use signed arithmetic here so that we behave sensibly if pd_lower >
-	 * pd_upper.
+	 * 这里使用有符号算术，以便在 pd_lower > pd_upper 时行为仍然合理。
 	 */
 	space = (int) phdr->pd_upper - (int) phdr->pd_lower;
 
@@ -923,11 +879,9 @@ PageGetFreeSpace(const PageData *page)
 
 /*
  * PageGetFreeSpaceForMultipleTuples
- *		Returns the size of the free (allocatable) space on a page,
- *		reduced by the space needed for multiple new line pointers.
+ *		返回页面上空闲（可分配）空间的大小，扣除了多个新行指针所需的空间。
  *
- * Note: this should usually only be used on index pages.  Use
- * PageGetHeapFreeSpace on heap pages.
+ * 注意：这通常只应被用于索引页面。在堆页面上请使用 PageGetHeapFreeSpace。
  */
 Size
 PageGetFreeSpaceForMultipleTuples(const PageData *page, int ntups)
@@ -936,8 +890,7 @@ PageGetFreeSpaceForMultipleTuples(const PageData *page, int ntups)
 	int			space;
 
 	/*
-	 * Use signed arithmetic here so that we behave sensibly if pd_lower >
-	 * pd_upper.
+	 * 这里使用有符号算术，以便在 pd_lower > pd_upper 时行为仍然合理。
 	 */
 	space = (int) phdr->pd_upper - (int) phdr->pd_lower;
 
@@ -950,8 +903,7 @@ PageGetFreeSpaceForMultipleTuples(const PageData *page, int ntups)
 
 /*
  * PageGetExactFreeSpace
- *		Returns the size of the free (allocatable) space on a page,
- *		without any consideration for adding/removing line pointers.
+ *		返回页面上空闲（可分配）空间的大小，不考虑添加/移除行指针。
  */
 Size
 PageGetExactFreeSpace(const PageData *page)
@@ -960,8 +912,7 @@ PageGetExactFreeSpace(const PageData *page)
 	int			space;
 
 	/*
-	 * Use signed arithmetic here so that we behave sensibly if pd_lower >
-	 * pd_upper.
+	 * 这里使用有符号算术，以便在 pd_lower > pd_upper 时行为仍然合理。
 	 */
 	space = (int) phdr->pd_upper - (int) phdr->pd_lower;
 
@@ -974,17 +925,14 @@ PageGetExactFreeSpace(const PageData *page)
 
 /*
  * PageGetHeapFreeSpace
- *		Returns the size of the free (allocatable) space on a page,
- *		reduced by the space needed for a new line pointer.
+ *		返回页面上空闲（可分配）空间的大小，扣除了一个新行指针所需的空间。
  *
- * The difference between this and PageGetFreeSpace is that this will return
- * zero if there are already MaxHeapTuplesPerPage line pointers in the page
- * and none are free.  We use this to enforce that no more than
- * MaxHeapTuplesPerPage line pointers are created on a heap page.  (Although
- * no more tuples than that could fit anyway, in the presence of redirected
- * or dead line pointers it'd be possible to have too many line pointers.
- * To avoid breaking code that assumes MaxHeapTuplesPerPage is a hard limit
- * on the number of line pointers, we make this extra check.)
+ * 本函数与 PageGetFreeSpace 的区别在于：如果页面上已经有 MaxHeapTuplesPerPage
+ * 个行指针且没有空闲的，本函数会返回零。我们用它来确保堆页面上创建的
+ * 行指针数量不超过 MaxHeapTuplesPerPage。（尽管无论如何也放不下比那更多的
+ * 元组，但在存在重定向或死行指针的情况下，可能会出现过多的行指针。为了避免
+ * 破坏那些假设 MaxHeapTuplesPerPage 是行指针数量硬上限的代码，我们做了这
+ * 次额外的检查。）
  */
 Size
 PageGetHeapFreeSpace(const PageData *page)
@@ -997,17 +945,17 @@ PageGetHeapFreeSpace(const PageData *page)
 		OffsetNumber offnum,
 					nline;
 
-		/*
-		 * Are there already MaxHeapTuplesPerPage line pointers in the page?
-		 */
+			/*
+			 * 页面上是否已经有 MaxHeapTuplesPerPage 个行指针了？
+			 */
 		nline = PageGetMaxOffsetNumber(page);
 		if (nline >= MaxHeapTuplesPerPage)
 		{
 			if (PageHasFreeLinePointers(page))
 			{
 				/*
-				 * Since this is just a hint, we must confirm that there is
-				 * indeed a free line pointer
+				 * 由于这只是一个提示，我们必须确认那里确实存在一个空闲的
+				 * 行指针
 				 */
 				for (offnum = FirstOffsetNumber; offnum <= nline; offnum = OffsetNumberNext(offnum))
 				{
@@ -1019,19 +967,19 @@ PageGetHeapFreeSpace(const PageData *page)
 
 				if (offnum > nline)
 				{
-					/*
-					 * The hint is wrong, but we can't clear it here since we
-					 * don't have the ability to mark the page dirty.
-					 */
+				/*
+				 * 该提示是错误的，但我们无法在这里清除它，因为我们没有
+				 * 将页面标记为脏的能力。
+				 */
 					space = 0;
 				}
 			}
 			else
 			{
-				/*
-				 * Although the hint might be wrong, PageAddItem will believe
-				 * it anyway, so we must believe it too.
-				 */
+			/*
+			 * 尽管该提示可能是错的，但 PageAddItem 无论如何都会相信它，
+			 * 因此我们也必须相信它。
+			 */
 				space = 0;
 			}
 		}
@@ -1043,9 +991,9 @@ PageGetHeapFreeSpace(const PageData *page)
 /*
  * PageIndexTupleDelete
  *
- * This routine does the work of removing a tuple from an index page.
+ * 本例程完成从索引页面移除一个元组的工作。
  *
- * Unlike heap pages, we compact out the line pointer for the removed tuple.
+ * 与堆页面不同，我们会紧凑化掉被移除元组的行指针。
  */
 void
 PageIndexTupleDelete(Page page, OffsetNumber offnum)
@@ -1060,7 +1008,7 @@ PageIndexTupleDelete(Page page, OffsetNumber offnum)
 	int			nline;
 
 	/*
-	 * As with PageRepairFragmentation, paranoia seems justified.
+	 * 与 PageRepairFragmentation 一样，这里保持多疑是值得的。
 	 */
 	if (phdr->pd_lower < SizeOfPageHeaderData ||
 		phdr->pd_lower > phdr->pd_upper ||
@@ -1076,7 +1024,7 @@ PageIndexTupleDelete(Page page, OffsetNumber offnum)
 	if ((int) offnum <= 0 || (int) offnum > nline)
 		elog(ERROR, "invalid index offnum: %u", offnum);
 
-	/* change offset number to offset index */
+	/* 将偏移号转换为偏移索引 */
 	offidx = offnum - 1;
 
 	tup = PageGetItemId(page, offnum);
@@ -1091,14 +1039,13 @@ PageIndexTupleDelete(Page page, OffsetNumber offnum)
 				 errmsg("corrupted line pointer: offset = %u, size = %u",
 						offset, (unsigned int) size)));
 
-	/* Amount of space to actually be deleted */
+	/* 实际需要删除的空间大小 */
 	size = MAXALIGN(size);
 
 	/*
-	 * First, we want to get rid of the pd_linp entry for the index tuple. We
-	 * copy all subsequent linp's back one slot in the array. We don't use
-	 * PageGetItemId, because we are manipulating the _array_, not individual
-	 * linp's.
+	 * 首先，我们想去掉该索引元组的 pd_linp 条目。我们把数组中所有后续的
+	 * linp 向后挪一个槽位。我们不使用 PageGetItemId，因为我们操纵的是
+	 * _数组_，而不是单个的 linp。
 	 */
 	nbytes = phdr->pd_lower -
 		((char *) &phdr->pd_linp[offidx + 1] - (char *) phdr);
@@ -1109,33 +1056,31 @@ PageIndexTupleDelete(Page page, OffsetNumber offnum)
 				nbytes);
 
 	/*
-	 * Now move everything between the old upper bound (beginning of tuple
-	 * space) and the beginning of the deleted tuple forward, so that space in
-	 * the middle of the page is left free.  If we've just deleted the tuple
-	 * at the beginning of tuple space, then there's no need to do the copy.
+	 * 现在把旧的上界（元组空间的起始位置）与被删除元组的起始位置之间的
+	 * 所有内容向前移动，从而让页面中间的空闲空间留出来。如果我们刚删除的
+	 * 就是元组空间起始处的元组，那就不需要做这次复制。
 	 */
 
-	/* beginning of tuple space */
+	/* 元组空间的起始位置 */
 	addr = (char *) page + phdr->pd_upper;
 
 	if (offset > phdr->pd_upper)
 		memmove(addr + size, addr, offset - phdr->pd_upper);
 
-	/* adjust free space boundary pointers */
+	/* 调整空闲空间的边界指针 */
 	phdr->pd_upper += size;
 	phdr->pd_lower -= sizeof(ItemIdData);
 
 	/*
-	 * Finally, we need to adjust the linp entries that remain.
+	 * 最后，我们需要调整剩余的行指针条目。
 	 *
-	 * Anything that used to be before the deleted tuple's data was moved
-	 * forward by the size of the deleted tuple.
+	 * 任何原本位于被删除元组数据之前的内容，都已向前移动了被删除元组的大小。
 	 */
 	if (!PageIsEmpty(page))
 	{
 		int			i;
 
-		nline--;				/* there's one less than when we started */
+		nline--;				/* 比开始时少了一个 */
 		for (i = 1; i <= nline; i++)
 		{
 			ItemId		ii = PageGetItemId(page, i);
@@ -1151,10 +1096,8 @@ PageIndexTupleDelete(Page page, OffsetNumber offnum)
 /*
  * PageIndexMultiDelete
  *
- * This routine handles the case of deleting multiple tuples from an
- * index page at once.  It is considerably faster than a loop around
- * PageIndexTupleDelete ... however, the caller *must* supply the array
- * of item numbers to be deleted in item number order!
+ * 本例程处理一次性从索引页面删除多个元组的情况。它比围绕 PageIndexTupleDelete
+ * 的循环要快得多……不过，调用者*必须*按项号顺序提供待删除的项号数组！
  */
 void
 PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
@@ -1175,17 +1118,15 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 	unsigned	offset;
 	int			nextitm;
 	OffsetNumber offnum;
-	bool		presorted = true;	/* For now */
+	bool		presorted = true;	/* 暂定 */
 
 	Assert(nitems <= MaxIndexTuplesPerPage);
 
 	/*
-	 * If there aren't very many items to delete, then retail
-	 * PageIndexTupleDelete is the best way.  Delete the items in reverse
-	 * order so we don't have to think about adjusting item numbers for
-	 * previous deletions.
+	 * 如果待删除的项不太多，那么逐条调用 PageIndexTupleDelete 就是最好的
+	 * 方式。以逆序删除各项，这样我们就不必考虑为前面已做的删除调整项号。
 	 *
-	 * TODO: tune the magic number here
+	 * TODO: 调整这里魔法数字
 	 */
 	if (nitems <= 2)
 	{
@@ -1195,7 +1136,7 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 	}
 
 	/*
-	 * As with PageRepairFragmentation, paranoia seems justified.
+	 * 与 PageRepairFragmentation 一样，这里保持多疑是值得的。
 	 */
 	if (pd_lower < SizeOfPageHeaderData ||
 		pd_lower > pd_upper ||
@@ -1208,9 +1149,8 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 						pd_lower, pd_upper, pd_special)));
 
 	/*
-	 * Scan the line pointer array and build a list of just the ones we are
-	 * going to keep.  Notice we do not modify the page yet, since we are
-	 * still validity-checking.
+	 * 扫描行指针数组，构建一个仅包含我们要保留的那些项的列表。注意我们
+	 * 尚未修改页面，因为我们仍在进行有效性检查。
 	 */
 	nline = PageGetMaxOffsetNumber(page);
 	itemidptr = itemidbase;
@@ -1234,12 +1174,12 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 
 		if (nextitm < nitems && offnum == itemnos[nextitm])
 		{
-			/* skip item to be deleted */
+			/* 跳过待删除的项 */
 			nextitm++;
 		}
 		else
 		{
-			itemidptr->offsetindex = nused; /* where it will go */
+			itemidptr->offsetindex = nused; /* 它将被放置的位置 */
 			itemidptr->itemoff = offset;
 
 			if (last_offset > itemidptr->itemoff)
@@ -1255,7 +1195,7 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 		}
 	}
 
-	/* this will catch invalid or out-of-order itemnos[] */
+	/* 这会捕获无效或乱序的 itemnos[] */
 	if (nextitm != nitems)
 		elog(ERROR, "incorrect index offsets supplied");
 
@@ -1266,13 +1206,13 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 						(unsigned int) totallen, pd_special - pd_lower)));
 
 	/*
-	 * Looks good. Overwrite the line pointers with the copy, from which we've
-	 * removed all the unused items.
+	 * 看起来没问题。用这份副本覆盖行指针，其中我们已经移除了所有未使用的
+	 * 项。
 	 */
 	memcpy(phdr->pd_linp, newitemids, nused * sizeof(ItemIdData));
 	phdr->pd_lower = SizeOfPageHeaderData + nused * sizeof(ItemIdData);
 
-	/* and compactify the tuple data */
+	/* 然后紧凑化元组数据 */
 	if (nused > 0)
 		compactify_tuples(itemidbase, nused, page, presorted);
 	else
@@ -1283,12 +1223,11 @@ PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems)
 /*
  * PageIndexTupleDeleteNoCompact
  *
- * Remove the specified tuple from an index page, but set its line pointer
- * to "unused" instead of compacting it out, except that it can be removed
- * if it's the last line pointer on the page.
+ * 从索引页面移除指定的元组，但将其行指针置为"未使用"，而非紧凑化掉它；
+ * 例外情况是，如果它是页面上最后一个行指针，则可以被移除。
  *
- * This is used for index AMs that require that existing TIDs of live tuples
- * remain unchanged, and are willing to allow unused line pointers instead.
+ * 这用于那些要求存活元组的现有 TID 保持不变、并且愿意允许未使用行指针
+ * 的索引访问方法（AM）。
  */
 void
 PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offnum)
@@ -1301,7 +1240,7 @@ PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offnum)
 	int			nline;
 
 	/*
-	 * As with PageRepairFragmentation, paranoia seems justified.
+	 * 与 PageRepairFragmentation 一样，这里保持多疑是值得的。
 	 */
 	if (phdr->pd_lower < SizeOfPageHeaderData ||
 		phdr->pd_lower > phdr->pd_upper ||
@@ -1329,43 +1268,41 @@ PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offnum)
 				 errmsg("corrupted line pointer: offset = %u, size = %u",
 						offset, (unsigned int) size)));
 
-	/* Amount of space to actually be deleted */
+	/* 实际需要删除的空间大小 */
 	size = MAXALIGN(size);
 
 	/*
-	 * Either set the line pointer to "unused", or zap it if it's the last
-	 * one.  (Note: it's possible that the next-to-last one(s) are already
-	 * unused, but we do not trouble to try to compact them out if so.)
+	 * 要么把行指针置为"未使用"，要么如果是最后一个就把它抹掉。（注意：
+	 * 倒数第二个（或多个）可能已经是未使用的，但即便如此我们也不费心
+	 * 去尝试把它们紧凑化掉。）
 	 */
 	if ((int) offnum < nline)
 		ItemIdSetUnused(tup);
 	else
 	{
 		phdr->pd_lower -= sizeof(ItemIdData);
-		nline--;				/* there's one less than when we started */
+		nline--;				/* 比开始时少了一个 */
 	}
 
 	/*
-	 * Now move everything between the old upper bound (beginning of tuple
-	 * space) and the beginning of the deleted tuple forward, so that space in
-	 * the middle of the page is left free.  If we've just deleted the tuple
-	 * at the beginning of tuple space, then there's no need to do the copy.
+	 * 现在把旧的上界（元组空间的起始位置）与被删除元组的起始位置之间的
+	 * 所有内容向前移动，从而让页面中间的空闲空间留出来。如果我们刚删除的
+	 * 就是元组空间起始处的元组，那就不需要做这次复制。
 	 */
 
-	/* beginning of tuple space */
+	/* 元组空间的起始位置 */
 	addr = (char *) page + phdr->pd_upper;
 
 	if (offset > phdr->pd_upper)
 		memmove(addr + size, addr, offset - phdr->pd_upper);
 
-	/* adjust free space boundary pointer */
+	/* 调整空闲空间的边界指针 */
 	phdr->pd_upper += size;
 
 	/*
-	 * Finally, we need to adjust the linp entries that remain.
+	 * 最后，我们需要调整剩余的行指针条目。
 	 *
-	 * Anything that used to be before the deleted tuple's data was moved
-	 * forward by the size of the deleted tuple.
+	 * 任何原本位于被删除元组数据之前的内容，都已向前移动了被删除元组的大小。
 	 */
 	if (!PageIsEmpty(page))
 	{
@@ -1385,20 +1322,16 @@ PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offnum)
 /*
  * PageIndexTupleOverwrite
  *
- * Replace a specified tuple on an index page.
+ * 替换索引页面上的指定元组。
  *
- * The new tuple is placed exactly where the old one had been, shifting
- * other tuples' data up or down as needed to keep the page compacted.
- * This is better than deleting and reinserting the tuple, because it
- * avoids any data shifting when the tuple size doesn't change; and
- * even when it does, we avoid moving the line pointers around.
- * This could be used by an index AM that doesn't want to unset the
- * LP_DEAD bit when it happens to be set.  It could conceivably also be
- * used by an index AM that cares about the physical order of tuples as
- * well as their logical/ItemId order.
+ * 新元组被放置在旧元组原本所在的确切位置，按需将其他元组的数据向上或向下
+ * 移动，以保持页面的紧凑。这比删除再重新插入该元组更好，因为元组大小
+ * 不变时它避免了任何数据搬移；即便大小变了，我们也避免了搬移行指针。
+ * 这可被那些不希望在 LP_DEAD 位被设置时清除它的索引 AM 使用。它或许也能被
+ * 那些既关心元组物理顺序、也关心其逻辑/ItemId 顺序的索引 AM 使用。
  *
- * If there's insufficient space for the new tuple, return false.  Other
- * errors represent data-corruption problems, so we just elog.
+ * 如果没有足够的空间容纳新元组，返回 false。其他错误代表数据损坏问题，
+ * 因此我们只是 elog。
  */
 bool
 PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
@@ -1413,7 +1346,7 @@ PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
 	int			itemcount;
 
 	/*
-	 * As with PageRepairFragmentation, paranoia seems justified.
+	 * 与 PageRepairFragmentation 一样，这里保持多疑是值得的。
 	 */
 	if (phdr->pd_lower < SizeOfPageHeaderData ||
 		phdr->pd_lower > phdr->pd_upper ||
@@ -1442,7 +1375,7 @@ PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
 						offset, (unsigned int) oldsize)));
 
 	/*
-	 * Determine actual change in space requirement, check for page overflow.
+	 * 确定空间需求的实际变化量，检查页面是否溢出。
 	 */
 	oldsize = MAXALIGN(oldsize);
 	alignednewsize = MAXALIGN(newsize);
@@ -1450,12 +1383,10 @@ PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
 		return false;
 
 	/*
-	 * Relocate existing data and update line pointers, unless the new tuple
-	 * is the same size as the old (after alignment), in which case there's
-	 * nothing to do.  Notice that what we have to relocate is data before the
-	 * target tuple, not data after, so it's convenient to express size_diff
-	 * as the amount by which the tuple's size is decreasing, making it the
-	 * delta to add to pd_upper and affected line pointers.
+	 * 重新定位现有数据并更新行指针，除非新元组与旧元组（对齐后）大小相同，
+	 * 那样就没有什么可做的。注意，我们需要重新定位的是目标元组之前的数据，
+	 * 而不是之后的数据，因此把 size_diff 表达为元组大小减少的量是很方便的，
+	 * 这样它就是需要加到 pd_upper 和受影响的行指针上的增量。
 	 */
 	size_diff = oldsize - (int) alignednewsize;
 	if (size_diff != 0)
@@ -1463,28 +1394,28 @@ PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
 		char	   *addr = (char *) page + phdr->pd_upper;
 		int			i;
 
-		/* relocate all tuple data before the target tuple */
+		/* 重新定位目标元组之前的所有元组数据 */
 		memmove(addr + size_diff, addr, offset - phdr->pd_upper);
 
-		/* adjust free space boundary pointer */
+		/* 调整空闲空间的边界指针 */
 		phdr->pd_upper += size_diff;
 
-		/* adjust affected line pointers too */
+		/* 也调整受影响的行指针 */
 		for (i = FirstOffsetNumber; i <= itemcount; i++)
 		{
 			ItemId		ii = PageGetItemId(page, i);
 
-			/* Allow items without storage; currently only BRIN needs that */
+			/* 允许没有存储的项；目前只有 BRIN 需要这样 */
 			if (ItemIdHasStorage(ii) && ItemIdGetOffset(ii) <= offset)
 				ii->lp_off += size_diff;
 		}
 	}
 
-	/* Update the item's tuple length without changing its lp_flags field */
+	/* 更新该项的元组长度，但不改变其 lp_flags 字段 */
 	tupid->lp_off = offset + size_diff;
 	tupid->lp_len = newsize;
 
-	/* Copy new tuple data onto page */
+	/* 将新元组的数据复制到页面上 */
 	memcpy(PageGetItem(page, tupid), newtup, newsize);
 
 	return true;
@@ -1492,33 +1423,29 @@ PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
 
 
 /*
- * Set checksum for a page in shared buffers.
+ * 为共享缓冲区中的一个页面设置校验和。
  *
- * If checksums are disabled, or if the page is not initialized, just return
- * the input.  Otherwise, we must make a copy of the page before calculating
- * the checksum, to prevent concurrent modifications (e.g. setting hint bits)
- * from making the final checksum invalid.  It doesn't matter if we include or
- * exclude hints during the copy, as long as we write a valid page and
- * associated checksum.
+ * 如果校验和已禁用，或者页面尚未初始化，就直接返回输入。否则，在计算校验和
+ * 之前我们必须制作一份页面的副本，以防止并发修改（例如设置提示位）使最终
+ * 的校验和失效。在复制期间我们是否包含或排除提示位都无关紧要，只要写出的是
+ * 一个有效的页面及其关联的校验和即可。
  *
- * Returns a pointer to the block-sized data that needs to be written. Uses
- * statically-allocated memory, so the caller must immediately write the
- * returned page and not refer to it again.
+ * 返回一个指向需要写入的、块大小数据的指针。它使用静态分配的内存，因此
+ * 调用者必须立即写出返回的页面，并且不再引用它。
  */
 char *
 PageSetChecksumCopy(Page page, BlockNumber blkno)
 {
 	static char *pageCopy = NULL;
 
-	/* If we don't need a checksum, just return the passed-in data */
+	/* 如果不需要校验和，就直接返回传入的数据 */
 	if (PageIsNew(page) || !DataChecksumsEnabled())
 		return page;
 
 	/*
-	 * We allocate the copy space once and use it over on each subsequent
-	 * call.  The point of palloc'ing here, rather than having a static char
-	 * array, is first to ensure adequate alignment for the checksumming code
-	 * and second to avoid wasting space in processes that never call this.
+	 * 我们一次性分配这份副本空间，并在之后每次调用时复用它。这里用 palloc
+	 * 分配，而不是用一个静态 char 数组，其目的一是确保校验和代码拥有足够的
+	 * 对齐，二是避免在那些从不调用本函数的进程中浪费空间。
 	 */
 	if (pageCopy == NULL)
 		pageCopy = MemoryContextAllocAligned(TopMemoryContext,
@@ -1532,15 +1459,14 @@ PageSetChecksumCopy(Page page, BlockNumber blkno)
 }
 
 /*
- * Set checksum for a page in private memory.
+ * 为私有内存中的一个页面设置校验和。
  *
- * This must only be used when we know that no other process can be modifying
- * the page buffer.
+ * 这只能在我们确信没有其他进程会修改该页面缓冲区时使用。
  */
 void
 PageSetChecksumInplace(Page page, BlockNumber blkno)
 {
-	/* If we don't need a checksum, just return */
+	/* 如果不需要校验和，就直接返回 */
 	if (PageIsNew(page) || !DataChecksumsEnabled())
 		return;
 

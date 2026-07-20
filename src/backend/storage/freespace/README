@@ -1,112 +1,93 @@
 src/backend/storage/freespace/README
 
-Free Space Map
+空闲空间映射（Free Space Map）
+------------------------------
+
+空闲空间映射的目的是快速定位一个具有足够空闲空间、能够容纳待存储元组的
+页面；或者判断不存在这样的页面，从而需要对关系再扩展一个页面。从
+PostgreSQL 8.4 起，每个关系都拥有自己独立且可扩展的空闲空间映射，存储在该
+关系的一个独立 "fork"（分支）中。这消除了原先固定大小 FSM 的缺点。
+
+让映射保持较小非常重要，这样它才能被快速搜索。因此，我们并不试图记录页面上
+精确的空闲空间大小。我们为每个页面分配一个映射字节，从而能够以页面大小的
+1/256 的粒度记录空闲空间。换句话说，存储的值是空闲空间除以 BLCKSZ/256
+（向下取整）。我们假设空闲空间必须始终小于 BLCKSZ，因为所有页面都有一定的
+开销；因此映射的最大值（map value）是 255。
+
+为了辅助快速搜索，映射并不只是逐页条目的简单数组，而是在这些条目之上还有
+一层树结构。既存在跨页面的树结构，也存在每个页面内部的树结构，如下文所述。
+
+FSM 页面结构
 --------------
 
-The purpose of the free space map is to quickly locate a page with enough
-free space to hold a tuple to be stored; or to determine that no such page
-exists and the relation must be extended by one page.  As of PostgreSQL 8.4
-each relation has its own, extensible free space map stored in a separate
-"fork" of its relation.  This eliminates the disadvantages of the former
-fixed-size FSM.
+在每个 FSM 页面内部，我们使用一棵二叉树结构：叶子节点存储堆页面（或更低层
+FSM 页面，见下文"高层结构"）上的空闲空间大小，每个堆页面对应一个叶子节点。
+非叶子节点存储其所有孩子节点中的最大空闲空间。
 
-It is important to keep the map small so that it can be searched rapidly.
-Therefore, we don't attempt to record the exact free space on a page.
-We allocate one map byte to each page, allowing us to record free space
-at a granularity of 1/256th of a page.  Another way to say it is that
-the stored value is the free space divided by BLCKSZ/256 (rounding down).
-We assume that the free space must always be less than BLCKSZ, since
-all pages have some overhead; so the maximum map value is 255.
-
-To assist in fast searching, the map isn't simply an array of per-page
-entries, but has a tree structure above those entries.  There is a tree
-structure of pages, and a tree structure within each page, as described
-below.
-
-FSM page structure
-------------------
-
-Within each FSM page, we use a binary tree structure where leaf nodes store
-the amount of free space on heap pages (or lower level FSM pages, see
-"Higher-level structure" below), with one leaf node per heap page. A non-leaf
-node stores the max amount of free space on any of its children.
-
-For example:
+例如：
 
     4
  4     2
-3 4   0 2    <- This level represents heap pages
+3 4   0 2    <- 这一层代表堆页面
 
-We need two basic operations: search and update.
+我们需要两个基本操作：搜索和更新。
 
-To search for a page with X amount of free space, traverse down the tree
-along a path where n >= X, until you hit the bottom. If both children of a
-node satisfy the condition, you can pick either one arbitrarily.
+要搜索具有 X 大小空闲空间的页面，沿着 n >= X 的路径向下遍历树，直到抵达
+底部。如果一个节点的两个孩子都满足该条件，你可以任意选择其中任意一个。
 
-To update the amount of free space on a page to X, first update the leaf node
-corresponding to the heap page, then "bubble up" the change to upper nodes,
-by walking up to each parent and recomputing its value as the max of its
-two children.  Repeat until reaching the root or a parent whose value
-doesn't change.
+要将一个页面的空闲空间大小更新为 X，首先更新与该堆页面对应的叶子节点，然后
+通过逐级向上走到每个父节点、并把父节点的值重算为其两个孩子的最大值，将变更
+"冒泡"（bubble up）到上层节点。重复此过程，直到抵达根节点，或者抵达一个值
+未改变的父节点为止。
 
-This data structure has a couple of nice properties:
-- to discover that there is no page with X bytes of free space, you only
-  need to look at the root node
-- by varying which child to traverse to in the search algorithm, when you have
-  a choice, we can implement various strategies, like preferring pages closer
-  to a given page, or spreading the load across the table.
+这种数据结构有几个优良的性质：
+- 要发现不存在具有 X 字节空闲空间的页面，你只需查看根节点
+- 通过在搜索算法中变化选择遍历哪个孩子（当有选择时），我们可以实现各种策略，
+  例如偏好靠近某个给定页面的页面，或将负载分散到整个表中。
 
-Higher-level routines that use FSM pages access them through the fsm_set_avail()
-and fsm_search_avail() functions. The interface to those functions hides the
-page's internal tree structure, treating the FSM page as a black box that has
-a certain number of "slots" for storing free space information.  (However,
-the higher routines have to be aware of the tree structure of the whole map.)
+使用 FSM 页面的高层例程通过 fsm_set_avail() 和 fsm_search_avail() 函数访问
+它们。这些函数的接口隐藏了页面内部的树结构，把 FSM 页面当作一个拥有一定数量
+"槽位"（slots）、用于存储空闲空间信息的黑盒。（不过，高层例程必须了解整张
+映射的树结构。）
 
-The binary tree is stored on each FSM page as an array. Because the page
-header takes some space on a page, the binary tree isn't perfect. That is,
-a few right-most leaf nodes are missing, and there are some useless non-leaf
-nodes at the right. So the tree looks something like this:
+二叉树在每个 FSM 页面上以数组形式存储。由于页头在页面上占用一定空间，这棵
+二叉树并不是完美的。也就是说，最右侧会缺失几个叶子节点，而右侧也会存在一些
+无用的非叶子节点。因此树看起来大致如下：
 
        0
    1       2
  3   4   5   6
 7 8 9 A B
 
-where the numbers denote each node's position in the array.  Note that the
-tree is guaranteed complete above the leaf level; only some leaf nodes are
-missing.  This is reflected in the number of usable "slots" per page not
-being an exact power of 2.
+其中数字表示每个节点在数组中的位置。注意，在叶子层之上，树保证是完整的；
+只是缺失了部分叶子节点。这体现在每个页面可用的"槽位"数量并不是 2 的精确
+整数次幂。
 
-A FSM page also has a next slot pointer, fp_next_slot, that determines where
-to start the next search for free space within that page.  The reason for that
-is to spread out the pages that are returned by FSM searches.  When several
-backends are concurrently inserting into a relation, contention can be avoided
-by having them insert into different pages.  But it is also desirable to fill
-up pages in sequential order, to get the benefit of OS prefetching and batched
-writes.  The FSM is responsible for making that happen, and the next slot
-pointer helps provide the desired behavior.
+FSM 页面还有一个下一槽位指针 fp_next_slot，它决定了在该页面内下一次空闲空间
+搜索从何处开始。这样做的原因是为了将 FSM 搜索所返回的页面分散开。当多个
+后端（backend）并发地往一个关系中插入数据时，让它们插入到不同的页面，可以
+避免争用。但另一方面，按顺序填满页面也是可取的，以便获得操作系统预读和批量
+写入的好处。FSM 负责实现这一点，而下一槽位指针有助于提供期望的行为。
 
-Higher-level structure
-----------------------
+高层结构
+----------
 
-To scale up the data structure described above beyond a single page, we
-maintain a similar tree-structure across pages. Leaf nodes in higher level
-pages correspond to lower level FSM pages. The root node within each page
-has the same value as the corresponding leaf node on its parent page.
+为了将上述数据结构扩展到超过单个页面的规模，我们在跨页面层面也维护类似的
+树结构。高层页面中的叶子节点对应于更低层的 FSM 页面。每个页面内的根节点，
+其值与该页面在父页面上对应叶子节点的值相同。
 
-The root page is always stored at physical block 0.
+根页面始终存储在物理块 0。
 
-For example, assuming each FSM page can hold information about 4 pages (in
-reality, it holds (BLCKSZ - headers) / 2, or ~4000 with default BLCKSZ),
-we get a disk layout like this:
+例如，假设每个 FSM 页面能容纳 4 个页面的信息（实际上，它能容纳 (BLCKSZ -
+headers) / 2，在默认 BLCKSZ 下约为 4000 个），我们会得到如下磁盘布局：
 
- 0     <-- page 0 at level 2 (root page)
-  0     <-- page 0 at level 1
-   0     <-- page 0 at level 0
-   1     <-- page 1 at level 0
+ 0     <-- 第 2 层（根页面）的页面 0
+  0     <-- 第 1 层的页面 0
+   0     <-- 第 0 层的页面 0
+   1     <-- 第 0 层的页面 1
    2     <-- ...
    3
-  1     <-- page 1 at level 1
+  1     <-- 第 1 层的页面 1
    4
    5
    6
@@ -122,85 +103,71 @@ we get a disk layout like this:
    14
    15
 
-where the numbers are page numbers *at that level*, starting from 0.
+其中数字是从 0 开始的、*该层*的页面编号。
 
-To find the physical block # corresponding to leaf page n, we need to
-count the number of leaf and upper-level pages preceding page n.
-This turns out to be
+要找出与叶子页面 n 对应的物理块号，我们需要统计在页面 n 之前的所有叶子层
+和上层页面的数量。结果如下：
 
 y = n + (n / F + 1) + (n / F^2 + 1) + ... + 1
 
-where F is the fanout (4 in the above example). The first term n is the number
-of preceding leaf pages, the second term is the number of pages at level 1,
-and so forth.
+其中 F 是扇出度（fanout，上例中为 4）。第一项 n 是前面的叶子页面数量，第二项
+是第 1 层的页面数量，依此类推。
 
-To keep things simple, the tree is always constant height. To cover the
-maximum relation size of 2^32-1 blocks, three levels is enough with the default
-BLCKSZ (4000^3 > 2^32).
+为了简单起见，树的高度始终固定不变。要覆盖 2^32-1 个块的最大关系大小，在默认
+BLCKSZ 下三层就足够了（4000^3 > 2^32）。
 
-Addressing
+地址寻址
 ----------
 
-The higher-level routines operate on "logical" addresses, consisting of
-- level,
-- logical page number, and
-- slot (if applicable)
+高层例程操作于"逻辑"地址之上，它由以下部分构成：
+- 层（level），
+- 逻辑页面号，以及
+- 槽位（slot，若适用）
 
-Bottom level FSM pages have level of 0, the level above that 1, and root 2.
-As in the diagram above, logical page number is the page number at that level,
-starting from 0.
+最底层的 FSM 页面层为 0，其上一层为 1，根为 2。如上图所示，逻辑页面号就是
+该层的页面编号，从 0 开始。
 
-Locking
--------
+加锁
+-----
 
-When traversing down to search for free space, only one page is locked at a
-time: the parent page is released before locking the child. If the child page
-is concurrently modified, and there no longer is free space on the child page
-when you land on it, you need to start from scratch (after correcting the
-parent page, so that you don't get into an infinite loop).
+当向下遍历以搜索空闲空间时，同一时刻只锁定一个页面：在锁定子页面之前，会先
+释放父页面。如果子页面被并发修改，当你落到它上面时子页面上不再有空闲空间，
+你需要从头重新开始（在修正父页面之后，以免陷入无限循环）。
 
-We use shared buffer locks when searching, but exclusive buffer lock when
-updating a page.  However, the next slot search pointer is updated during
-searches even though we have only a shared lock.  fp_next_slot is just a hint
-and we can easily reset it if it gets corrupted; so it seems better to accept
-some risk of that type than to pay the overhead of exclusive locking.
+搜索时使用共享缓冲区锁，但更新页面时使用排他缓冲区锁。不过，下一槽位搜索指针
+在搜索期间也会被更新，尽管我们当时只持有共享锁。fp_next_slot 仅仅是一个提示，
+即便它损坏了我们也很容易将其重置；因此，接受这种风险似乎比付出排他锁的开销
+要好。
 
-Recovery
---------
+恢复
+------
 
-The FSM is not explicitly WAL-logged. Instead, we rely on a bunch of
-self-correcting measures to repair possible corruption.
+FSM 不会被显式地记入 WAL。相反，我们依赖一系列自我纠正措施来修复可能的损坏。
 
-First of all, whenever a value is set on an FSM page, the root node of the
-page is compared against the new value after bubbling up the change is
-finished. It should be greater than or equal to the value just set, or we
-have a corrupted page, with a parent somewhere with too small a value.
-Secondly, if we detect corrupted pages while we search, traversing down
-the tree. That check will notice if a parent node is set to too high a value.
-In both cases, the upper nodes on the page are immediately rebuilt, fixing
-the corruption so far as that page is concerned.
+首先，每当在 FSM 页面上设置一个值时，在该变更"冒泡"完成后，会将页面的根节点
+与这个新值进行比较。根节点的值应当大于或等于刚刚设置的值，否则我们就有一个
+损坏的页面——某个父节点的值偏小。其次，如果我们在搜索、向下遍历树的过程中
+检测到损坏的页面，该检查会发现某个父节点是否被设置成了过高的值。在这两种
+情况下，页面上的上层节点都会被立即重建，从而就当前页面而言修复了损坏。
 
-VACUUM updates all the bottom-level FSM pages with the correct amount of free
-space on corresponding heap pages, as it proceeds through the heap.  This
-goes through fsm_set_avail(), so that the upper nodes on those pages are
-immediately updated.  Periodically, VACUUM calls FreeSpaceMapVacuum[Range]
-to propagate the new free-space info into the upper pages of the FSM tree.
+VACUUM 在遍历堆的过程中，会用对应堆页面上正确的空闲空间大小更新所有最底层的
+FSM 页面。这会经过 fsm_set_avail()，从而那些页面的上层节点也会立即得到更新。
+VACUUM 会定期调用 FreeSpaceMapVacuum[Range]，将新的空闲空间信息传播到 FSM
+树的上层页面。
 
-As a result when we write to the FSM we treat that as a hint and thus use
-MarkBufferDirtyHint() rather than MarkBufferDirty().  Every read here uses
-RBM_ZERO_ON_ERROR to bypass checksum mismatches and other verification
-failures.  We'd operate correctly without the full page images that
-MarkBufferDirtyHint() provides, but they do decrease the chance of losing slot
-knowledge to RBM_ZERO_ON_ERROR.
+因此，当我们写入 FSM 时，将其视为一个提示（hint），从而使用
+MarkBufferDirtyHint() 而非 MarkBufferDirty()。这里的每次读取都使用
+RBM_ZERO_ON_ERROR 来绕过校验和不匹配以及其他验证失败。即使没有
+MarkBufferDirtyHint() 提供的整页镜像，我们也能正确运行，但这些镜像确实降低了
+因 RBM_ZERO_ON_ERROR 而丢失槽位信息的风险。
 
-Relation extension is not WAL-logged.  Hence, after WAL replay, an on-disk FSM
-slot may indicate free space in PageIsNew() blocks that never reached disk.
-We detect this case by comparing against the actual relation size, and we mark
-the block as full in that case.
+关系扩展不会被记入 WAL。因此，在 WAL 回放之后，磁盘上的某个 FSM 槽位可能会
+指向那些从未真正落盘、处于 PageIsNew() 状态的块中的空闲空间。我们通过与关系的
+实际大小进行比较来检测这种情况，并在这种情况下将该块标记为已满。
 
-TODO
-----
+待办事项（TODO）
+----------------
 
-- fastroot to avoid traversing upper nodes with just 1 child
-- use a different system for tables that fit into one FSM page, with a
-  mechanism to switch to the real thing as it grows.
+- 引入 fastroot，以避免遍历只有一个孩子的上层节点
+- 对于能够放进单个 FSM 页面的表，使用一套不同的机制，并随着其增长提供切换到
+  真实结构的机制。

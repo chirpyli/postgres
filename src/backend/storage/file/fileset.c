@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * fileset.c
- *	  Management of named temporary files.
+ *	  命名临时文件的管理。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -9,12 +9,11 @@
  * IDENTIFICATION
  *	  src/backend/storage/file/fileset.c
  *
- * FileSets provide a temporary namespace (think directory) so that files can
- * be discovered by name.
+ * FileSet 提供了一个临时命名空间（类似于目录），以便可以通过名称来
+ * 查找文件。
  *
- * FileSets can be used by backends when the temporary files need to be
- * opened/closed multiple times and the underlying files need to survive across
- * transactions.
+ * 当临时文件需要多次打开/关闭，且底层文件需要在事务间持续存在时，
+ * 后端可以使用 FileSet。
  *
  *-------------------------------------------------------------------------
  */
@@ -34,19 +33,15 @@ static void FilePath(char *path, FileSet *fileset, const char *name);
 static Oid	ChooseTablespace(const FileSet *fileset, const char *name);
 
 /*
- * Initialize a space for temporary files. This API can be used by shared
- * fileset as well as if the temporary files are used only by single backend
- * but the files need to be opened and closed multiple times and also the
- * underlying files need to survive across transactions.
+ * 初始化一个临时文件空间。此 API 可用于共享 fileset，也可用于临时
+ * 文件仅由单个后端使用、但文件需要多次打开关闭且底层文件需要在事务间
+ * 持续存在的场景。
  *
- * The callers are expected to explicitly remove such files by using
- * FileSetDelete/FileSetDeleteAll.
+ * 调用者需要通过 FileSetDelete/FileSetDeleteAll 显式删除这些文件。
  *
- * Files will be distributed over the tablespaces configured in
- * temp_tablespaces.
+ * 文件将分布在 temp_tablespaces 配置的表空间中。
  *
- * Under the covers the set is one or more directories which will eventually
- * be deleted.
+ * 本质上，该集合是一个或多个最终将被删除的目录。
  */
 void
 FileSetInit(FileSet *fileset)
@@ -57,14 +52,14 @@ FileSetInit(FileSet *fileset)
 	fileset->number = counter;
 	counter = (counter + 1) % INT_MAX;
 
-	/* Capture the tablespace OIDs so that all backends agree on them. */
+	/* 捕获表空间 OID，使所有后端对其达成一致。 */
 	PrepareTempTablespaces();
 	fileset->ntablespaces =
 		GetTempTablespaces(&fileset->tablespaces[0],
 						   lengthof(fileset->tablespaces));
 	if (fileset->ntablespaces == 0)
 	{
-		/* If the GUC is empty, use current database's default tablespace */
+		/* 如果 GUC 为空，使用当前数据库的默认表空间 */
 		fileset->tablespaces[0] = MyDatabaseTableSpace;
 		fileset->ntablespaces = 1;
 	}
@@ -73,9 +68,8 @@ FileSetInit(FileSet *fileset)
 		int			i;
 
 		/*
-		 * An entry of InvalidOid means use the default tablespace for the
-		 * current database.  Replace that now, to be sure that all users of
-		 * the FileSet agree on what to do.
+		 * InvalidOid 条目表示使用当前数据库的默认表空间。现在替换它，
+		 * 以确保 FileSet 的所有使用者对行为达成一致。
 		 */
 		for (i = 0; i < fileset->ntablespaces; i++)
 		{
@@ -86,7 +80,7 @@ FileSetInit(FileSet *fileset)
 }
 
 /*
- * Create a new file in the given set.
+ * 在给定集合中创建一个新文件。
  */
 File
 FileSetCreate(FileSet *fileset, const char *name)
@@ -97,7 +91,7 @@ FileSetCreate(FileSet *fileset, const char *name)
 	FilePath(path, fileset, name);
 	file = PathNameCreateTemporaryFile(path, false);
 
-	/* If we failed, see if we need to create the directory on demand. */
+	/* 如果失败，检查是否需要按需创建目录。 */
 	if (file <= 0)
 	{
 		char		tempdirpath[MAXPGPATH];
@@ -114,7 +108,7 @@ FileSetCreate(FileSet *fileset, const char *name)
 }
 
 /*
- * Open a file that was created with FileSetCreate() */
+ * 打开通过 FileSetCreate() 创建的文件 */
 File
 FileSetOpen(FileSet *fileset, const char *name, int mode)
 {
@@ -128,9 +122,9 @@ FileSetOpen(FileSet *fileset, const char *name, int mode)
 }
 
 /*
- * Delete a file that was created with FileSetCreate().
+ * 删除通过 FileSetCreate() 创建的文件。
  *
- * Return true if the file existed, false if didn't.
+ * 如果文件存在返回 true，不存在返回 false。
  */
 bool
 FileSetDelete(FileSet *fileset, const char *name,
@@ -144,7 +138,7 @@ FileSetDelete(FileSet *fileset, const char *name,
 }
 
 /*
- * Delete all files in the set.
+ * 删除集合中的所有文件。
  */
 void
 FileSetDeleteAll(FileSet *fileset)
@@ -153,9 +147,8 @@ FileSetDeleteAll(FileSet *fileset)
 	int			i;
 
 	/*
-	 * Delete the directory we created in each tablespace.  Doesn't fail
-	 * because we use this in error cleanup paths, but can generate LOG
-	 * message on IO error.
+	 * 删除我们在每个表空间中创建的目录。不会失败，因为我们在错误
+	 * 清理路径中使用此函数，但发生 IO 错误时会生成 LOG 消息。
 	 */
 	for (i = 0; i < fileset->ntablespaces; ++i)
 	{
@@ -165,8 +158,7 @@ FileSetDeleteAll(FileSet *fileset)
 }
 
 /*
- * Build the path for the directory holding the files backing a FileSet in a
- * given tablespace.
+ * 构建给定表空间中存放 FileSet 文件的目录路径。
  */
 static void
 FileSetPath(char *path, FileSet *fileset, Oid tablespace)
@@ -180,7 +172,7 @@ FileSetPath(char *path, FileSet *fileset, Oid tablespace)
 }
 
 /*
- * Sorting has to determine which tablespace a given temporary file belongs in.
+ * 确定给定的临时文件归属于哪个表空间。
  */
 static Oid
 ChooseTablespace(const FileSet *fileset, const char *name)
@@ -191,7 +183,7 @@ ChooseTablespace(const FileSet *fileset, const char *name)
 }
 
 /*
- * Compute the full path of a file in a FileSet.
+ * 计算 FileSet 中文件的完整路径。
  */
 static void
 FilePath(char *path, FileSet *fileset, const char *name)

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * relpath.h
- *		Declarations for GetRelationPath() and friends
+ *		GetRelationPath() 及相关函数的声明
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -14,13 +14,12 @@
 #define RELPATH_H
 
 /*
- *	Required here; note that CppAsString2() does not throw an error if the
- *	symbol is not defined.
+ *	此处需要包含；注意如果符号未定义，CppAsString2() 不会报错。
  */
 #include "catalog/catversion.h"
 
 /*
- * RelFileNumber data type identifies the specific relation file name.
+ * RelFileNumber 数据类型用于标识特定的关系文件名。
  */
 typedef Oid RelFileNumber;
 #define InvalidRelFileNumber		((RelFileNumber) InvalidOid)
@@ -28,30 +27,29 @@ typedef Oid RelFileNumber;
 				((bool) ((relnumber) != InvalidRelFileNumber))
 
 /*
- * Name of major-version-specific tablespace subdirectories
+ * 主版本相关的表空间子目录名称
  */
 #define TABLESPACE_VERSION_DIRECTORY	"PG_" PG_MAJORVERSION "_" \
 									CppAsString2(CATALOG_VERSION_NO)
 
 /*
- * Tablespace path (relative to installation's $PGDATA).
+ * 表空间路径（相对于安装目录的 $PGDATA）。
  *
- * These values should not be changed as many tools rely on it.
+ * 这些值不应被修改，因为许多工具都依赖于它。
  */
 #define PG_TBLSPC_DIR "pg_tblspc"
-#define PG_TBLSPC_DIR_SLASH "pg_tblspc/"	/* required for strings
-											 * comparisons */
+#define PG_TBLSPC_DIR_SLASH "pg_tblspc/"	/* 字符串比较时需要用到 */
 
-/* Characters to allow for an OID in a relation path */
-#define OIDCHARS		10		/* max chars printed by %u */
+/* 关系路径中一个 OID 所占用的字符数 */
+#define OIDCHARS		10		/* %u 所能打印的最大字符数 */
 
 /*
- * Stuff for fork names.
+ * fork 名称相关定义。
  *
- * The physical storage of a relation consists of one or more forks.
- * The main fork is always created, but in addition to that there can be
- * additional forks for storing various metadata. ForkNumber is used when
- * we need to refer to a specific fork in a relation.
+ * 一个关系的物理存储由一个或多个 fork 组成。
+ * 主 fork（main fork）总是会被创建，除此之外还可以有
+ * 额外的 fork 用于存储各种元数据。当我们需要在关系中引用
+ * 某个特定的 fork 时，使用 ForkNumber 来表示。
  */
 typedef enum ForkNumber
 {
@@ -62,15 +60,15 @@ typedef enum ForkNumber
 	INIT_FORKNUM,
 
 	/*
-	 * NOTE: if you add a new fork, change MAX_FORKNUM and possibly
-	 * FORKNAMECHARS below, and update the forkNames array in
-	 * src/common/relpath.c
+	 * 注意：如果新增一个 fork，需要修改下方的 MAX_FORKNUM，
+	 * 可能还要修改 FORKNAMECHARS，并更新 src/common/relpath.c
+	 * 中的 forkNames 数组
 	 */
 } ForkNumber;
 
 #define MAX_FORKNUM		INIT_FORKNUM
 
-#define FORKNAMECHARS	4		/* max chars for a fork name */
+#define FORKNAMECHARS	4		/* fork 名称的最大字符数 */
 
 extern PGDLLIMPORT const char *const forkNames[];
 
@@ -79,20 +77,19 @@ extern int	forkname_chars(const char *str, ForkNumber *fork);
 
 
 /*
- * Unfortunately, there's no easy way to derive PROCNUMBER_CHARS from
- * MAX_BACKENDS. MAX_BACKENDS is 2^18-1. Crosschecked in test_relpath().
+ * 遗憾的是，无法简单地从 MAX_BACKENDS 推导出 PROCNUMBER_CHARS。
+ * MAX_BACKENDS 为 2^18-1。该值在 test_relpath() 中进行了交叉校验。
  */
 #define PROCNUMBER_CHARS	6
 
 /*
- * The longest possible relation path lengths is from the following format:
+ * 关系路径的最大可能长度来源于以下格式：
  * sprintf(rp.path, "%s/%u/%s/%u/t%d_%u",
  *         PG_TBLSPC_DIR, spcOid,
  *         TABLESPACE_VERSION_DIRECTORY,
  *         dbOid, procNumber, relNumber);
  *
- * Note this does *not* include the trailing null-byte, to make it easier to
- * combine it with other lengths.
+ * 注意这里*不*包含结尾的空字节，以便于与其他长度进行拼接。
  */
 #define REL_PATH_STR_MAXLEN \
 	( \
@@ -104,7 +101,7 @@ extern int	forkname_chars(const char *str, ForkNumber *fork);
 		+ sizeof((char)'/') \
 		+ OIDCHARS /* dbOid */ \
 		+ sizeof((char)'/') \
-		+ sizeof((char)'t') /* temporary table indicator */ \
+		+ sizeof((char)'t') /* 临时表标识 */ \
 		+ PROCNUMBER_CHARS /* procNumber */ \
 		+ sizeof((char)'_') \
 		+ OIDCHARS /* relNumber */ \
@@ -113,11 +110,10 @@ extern int	forkname_chars(const char *str, ForkNumber *fork);
 	)
 
 /*
- * String of the exact length required to represent a relation path. We return
- * this struct, instead of char[REL_PATH_STR_MAXLEN + 1], as the pointer would
- * decay to a plain char * too easily, possibly preventing the compiler from
- * detecting invalid references to the on-stack return value of
- * GetRelationPath().
+ * 表示关系路径所需的精确长度的字符串。我们返回这个结构体，
+ * 而不是 char[REL_PATH_STR_MAXLEN + 1]，是因为指针很容易退化为
+ * 普通的 char *，从而可能使编译器无法检测出对 GetRelationPath()
+ * 返回值的栈上引用是否合法。
  */
 typedef struct RelPathStr
 {
@@ -126,7 +122,7 @@ typedef struct RelPathStr
 
 
 /*
- * Stuff for computing filesystem pathnames for relations.
+ * 计算关系文件系统路径名相关定义。
  */
 extern char *GetDatabasePath(Oid dbOid, Oid spcOid);
 
@@ -134,20 +130,20 @@ extern RelPathStr GetRelationPath(Oid dbOid, Oid spcOid, RelFileNumber relNumber
 								  int procNumber, ForkNumber forkNumber);
 
 /*
- * Wrapper macros for GetRelationPath.  Beware of multiple
- * evaluation of the RelFileLocator or RelFileLocatorBackend argument!
+ * GetRelationPath 的包装宏。注意 RelFileLocator 或
+ * RelFileLocatorBackend 参数会被多次求值，使用时需谨慎！
  */
 
-/* First argument is a RelFileLocator */
+/* 第一个参数为 RelFileLocator */
 #define relpathbackend(rlocator, backend, forknum) \
 	GetRelationPath((rlocator).dbOid, (rlocator).spcOid, (rlocator).relNumber, \
 					backend, forknum)
 
-/* First argument is a RelFileLocator */
+/* 第一个参数为 RelFileLocator */
 #define relpathperm(rlocator, forknum) \
 	relpathbackend(rlocator, INVALID_PROC_NUMBER, forknum)
 
-/* First argument is a RelFileLocatorBackend */
+/* 第一个参数为 RelFileLocatorBackend */
 #define relpath(rlocator, forknum) \
 	relpathbackend((rlocator).locator, (rlocator).backend, forknum)
 

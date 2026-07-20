@@ -1,28 +1,23 @@
 /*-------------------------------------------------------------------------
  *
  * bulk_write.c
- *	  Efficiently and reliably populate a new relation
+ *	  高效且可靠地填充一个新关系
  *
- * The assumption is that no other backends access the relation while we are
- * loading it, so we can take some shortcuts.  Pages already present in the
- * indicated fork when the bulk write operation is started are not modified
- * unless explicitly written to.  Do not mix operations through the regular
- * buffer manager and the bulk loading interface!
+ * 这里假设在加载关系期间没有其他后端会访问它，因此我们可以走一些捷径。
+ * 批量写操作启动时所指定的 fork 中已有的页面不会被修改，除非被显式写入。
+ * 不要将经由常规缓冲管理器的操作与批量加载接口混用！
  *
- * We bypass the buffer manager to avoid the locking overhead, and call
- * smgrextend() directly.  A downside is that the pages will need to be
- * re-read into shared buffers on first use after the build finishes.  That's
- * usually a good tradeoff for large relations, and for small relations, the
- * overhead isn't very significant compared to creating the relation in the
- * first place.
+ * 我们绕过缓冲管理器以避免加锁开销，直接调用 smgrextend()。一个缺点是
+ * 这些页面在构建完成后首次使用时需要重新读入共享缓冲区。对于大关系来说，
+ * 这通常是一个不错的权衡；而对于小关系，其开销相对于最初创建关系而言
+ * 也并不十分显著。
  *
- * The pages are WAL-logged if needed.  To save on WAL header overhead, we
- * WAL-log several pages in one record.
+ * 这些页面会在需要时写入 WAL。为了节省 WAL 头部的开销，我们会将若干页面
+ * 合并到一条记录中写入 WAL。
  *
- * One tricky point is that because we bypass the buffer manager, we need to
- * register the relation for fsyncing at the next checkpoint ourselves, and
- * make sure that the relation is correctly fsync'd by us or the checkpointer
- * even if a checkpoint happens concurrently.
+ * 一个棘手之处在于：因为我们绕过了缓冲管理器，所以需要自己把关系注册到
+ * 下一次检查点进行 fsync，并确保即使有检查点并发发生，关系也能被我们或
+ * 检查点进程正确地 fsync。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -46,7 +41,7 @@
 
 #define MAX_PENDING_WRITES XLR_MAX_BLOCK_ID
 
-static const PGIOAlignedBlock zero_buffer = {0};	/* worth BLCKSZ */
+static const PGIOAlignedBlock zero_buffer = {0};	/* 大小等于 BLCKSZ */
 
 typedef struct PendingWrite
 {
@@ -56,23 +51,23 @@ typedef struct PendingWrite
 } PendingWrite;
 
 /*
- * Bulk writer state for one relation fork.
+ * 单个关系 fork 的批量写入器状态。
  */
 struct BulkWriteState
 {
-	/* Information about the target relation we're writing */
+	/* 我们要写入的目标关系的相关信息 */
 	SMgrRelation smgr;
 	ForkNumber	forknum;
 	bool		use_wal;
 
-	/* We keep several writes queued, and WAL-log them in batches */
+	/* 我们将若干次写入排队，并批量地写入 WAL */
 	int			npending;
 	PendingWrite pending_writes[MAX_PENDING_WRITES];
 
-	/* Current size of the relation */
+	/* 关系当前的大小 */
 	BlockNumber relsize;
 
-	/* The RedoRecPtr at the time that the bulk operation started */
+	/* 批量操作启动时刻的 RedoRecPtr */
 	XLogRecPtr	start_RedoRecPtr;
 
 	MemoryContext memcxt;
@@ -81,7 +76,7 @@ struct BulkWriteState
 static void smgr_bulk_flush(BulkWriteState *bulkstate);
 
 /*
- * Start a bulk write operation on a relation fork.
+ * 在某个关系 fork 上启动批量写操作。
  */
 BulkWriteState *
 smgr_bulk_start_rel(Relation rel, ForkNumber forknum)
@@ -92,9 +87,9 @@ smgr_bulk_start_rel(Relation rel, ForkNumber forknum)
 }
 
 /*
- * Start a bulk write operation on a relation fork.
+ * 在某个关系 fork 上启动批量写操作。
  *
- * This is like smgr_bulk_start_rel, but can be used without a relcache entry.
+ * 这与 smgr_bulk_start_rel 类似，但可以在没有 relcache 条目的情况下使用。
  */
 BulkWriteState *
 smgr_bulk_start_smgr(SMgrRelation smgr, ForkNumber forknum, bool use_wal)
@@ -112,8 +107,7 @@ smgr_bulk_start_smgr(SMgrRelation smgr, ForkNumber forknum, bool use_wal)
 	state->start_RedoRecPtr = GetRedoRecPtr();
 
 	/*
-	 * Remember the memory context.  We will use it to allocate all the
-	 * buffers later.
+	 * 记录内存上下文。后续我们将用它来分配所有的缓冲区。
 	 */
 	state->memcxt = CurrentMemoryContext;
 
@@ -121,84 +115,74 @@ smgr_bulk_start_smgr(SMgrRelation smgr, ForkNumber forknum, bool use_wal)
 }
 
 /*
- * Finish bulk write operation.
+ * 结束批量写操作。
  *
- * This WAL-logs and flushes any remaining pending writes to disk, and fsyncs
- * the relation if needed.
+ * 这会将其余所有待写入的页面写入 WAL 并刷新到磁盘，并在需要时 fsync 关系。
  */
 void
 smgr_bulk_finish(BulkWriteState *bulkstate)
 {
-	/* WAL-log and flush any remaining pages */
+	/* 将剩余的页面写入 WAL 并刷新 */
 	smgr_bulk_flush(bulkstate);
 
 	/*
-	 * Fsync the relation, or register it for the next checkpoint, if
-	 * necessary.
+	 * 如有必要，对关系进行 fsync，或将其注册到下一次检查点。
 	 */
 	if (SmgrIsTemp(bulkstate->smgr))
 	{
-		/* Temporary relations don't need to be fsync'd, ever */
+		/* 临时关系永远不需要 fsync */
 	}
 	else if (!bulkstate->use_wal)
 	{
 		/*----------
-		 * This is either an unlogged relation, or a permanent relation but we
-		 * skipped WAL-logging because wal_level=minimal:
+		 * 这可能是未记录日志（unlogged）的关系，也可能是永久关系，但我们因
+		 * wal_level=minimal 而跳过了 WAL 写入：
 		 *
-		 * A) Unlogged relation
+		 * A) 未记录日志的关系
 		 *
-		 *    Unlogged relations will go away on crash, but they need to be
-		 *    fsync'd on a clean shutdown. It's sufficient to call
-		 *    smgrregistersync(), that ensures that the checkpointer will
-		 *    flush it at the shutdown checkpoint. (It will flush it on the
-		 *    next online checkpoint too, which is not strictly necessary.)
+		 *    未记录日志的关系在崩溃后会消失，但它们在干净关闭时仍需要被
+		 *    fsync。调用 smgrregistersync() 即可，它能确保检查点进程会在
+		 *    关闭检查点将其刷新。（在下次在线检查点也会刷新它，但这并非
+		 *    严格必要。）
 		 *
-		 *    Note that the init-fork of an unlogged relation is not
-		 *    considered unlogged for our purposes. It's treated like a
-		 *    regular permanent relation. The callers will pass use_wal=true
-		 *    for the init fork.
+		 *    注意，就我们的目的而言，未记录日志关系的 init fork 不被视作
+		 *    未记录日志，而是当作普通的永久关系处理。调用方会为 init fork
+		 *    传入 use_wal=true。
 		 *
-		 * B) Permanent relation, WAL-logging skipped because wal_level=minimal
+		 * B) 永久关系，因 wal_level=minimal 而跳过了 WAL 写入
 		 *
-		 *    This is a new relation, and we didn't WAL-log the pages as we
-		 *    wrote, but they need to be fsync'd before commit.
+		 *    这是一个新关系，我们在写入时没有将页面写入 WAL，但这些页面
+		 *    在提交前需要被 fsync。
 		 *
-		 *    We don't need to do that here, however. The fsync() is done at
-		 *    commit, by smgrDoPendingSyncs() (*).
+		 *    不过我们不需要在这里完成此事。fsync() 会在提交时由
+		 *    smgrDoPendingSyncs() 完成 (*)。
 		 *
-		 *    (*) smgrDoPendingSyncs() might decide to WAL-log the whole
-		 *    relation at commit instead of fsyncing it, if the relation was
-		 *    very small, but it's smgrDoPendingSyncs() responsibility in any
-		 *    case.
+		 *    (*) 如果关系非常小，smgrDoPendingSyncs() 可能决定在提交时把
+		 *    整个关系写入 WAL，而不是去 fsync 它，但无论如何这都是
+		 *    smgrDoPendingSyncs() 的职责。
 		 *
-		 * We cannot distinguish the two here, so conservatively assume it's
-		 * an unlogged relation. A permanent relation with wal_level=minimal
-		 * would require no actions, see above.
+		 * 这里我们无法区分这两种情况，因此保守地假定它是未记录日志的关系。
+		 * 而 wal_level=minimal 的永久关系其实无需任何操作，见上文。
 		 */
 		smgrregistersync(bulkstate->smgr, bulkstate->forknum);
 	}
 	else
 	{
 		/*
-		 * Permanent relation, WAL-logged normally.
+		 * 永久关系，正常地写入了 WAL。
 		 *
-		 * We already WAL-logged all the pages, so they will be replayed from
-		 * WAL on crash. However, when we wrote out the pages, we passed
-		 * skipFsync=true to avoid the overhead of registering all the writes
-		 * with the checkpointer.  Register the whole relation now.
+		 * 我们已经将所有页面写入了 WAL，因此在崩溃时会从 WAL 重放。然而，
+		 * 在我们写出这些页面时，传入了 skipFsync=true，以避免把所有的写操作
+		 * 都向检查点进程注册的额外开销。现在把整个关系注册一次。
 		 *
-		 * There is one hole in that idea: If a checkpoint occurred while we
-		 * were writing the pages, it already missed fsyncing the pages we had
-		 * written before the checkpoint started.  A crash later on would
-		 * replay the WAL starting from the checkpoint, therefore it wouldn't
-		 * replay our earlier WAL records.  So if a checkpoint started after
-		 * the bulk write, fsync the files now.
+		 * 这个思路有一个漏洞：如果在我们写页面的过程中发生了检查点，它已经
+		 * 错过了对我们检查点启动之前所写页面的 fsync。之后若发生崩溃，会
+		 * 从检查点开始重放 WAL，因此不会重放我们较早的 WAL 记录。所以如果
+		 * 检查点在批量写之后才启动，现在就对文件进行 fsync。
 		 */
 
 		/*
-		 * Prevent a checkpoint from starting between the GetRedoRecPtr() and
-		 * smgrregistersync() calls.
+		 * 防止检查点在 GetRedoRecPtr() 与 smgrregistersync() 调用之间启动。
 		 */
 		Assert((MyProc->delayChkptFlags & DELAY_CHKPT_START) == 0);
 		MyProc->delayChkptFlags |= DELAY_CHKPT_START;
@@ -206,8 +190,8 @@ smgr_bulk_finish(BulkWriteState *bulkstate)
 		if (bulkstate->start_RedoRecPtr != GetRedoRecPtr())
 		{
 			/*
-			 * A checkpoint occurred and it didn't know about our writes, so
-			 * fsync() the relation ourselves.
+			 * 发生了检查点，而它并不知晓我们的写入，因此由我们自己
+			 * 对关系进行 fsync()。
 			 */
 			MyProc->delayChkptFlags &= ~DELAY_CHKPT_START;
 			smgrimmedsync(bulkstate->smgr, bulkstate->forknum);
@@ -227,7 +211,7 @@ buffer_cmp(const void *a, const void *b)
 	const PendingWrite *bufa = (const PendingWrite *) a;
 	const PendingWrite *bufb = (const PendingWrite *) b;
 
-	/* We should not see duplicated writes for the same block */
+	/* 我们不应看到同一个块的重复写入 */
 	Assert(bufa->blkno != bufb->blkno);
 	if (bufa->blkno > bufb->blkno)
 		return 1;
@@ -236,7 +220,7 @@ buffer_cmp(const void *a, const void *b)
 }
 
 /*
- * Finish all the pending writes.
+ * 完成所有待处理的写入。
  */
 static void
 smgr_bulk_flush(BulkWriteState *bulkstate)
@@ -262,10 +246,9 @@ smgr_bulk_flush(BulkWriteState *bulkstate)
 			pages[i] = pending_writes[i].buf->data;
 
 			/*
-			 * If any of the pages use !page_std, we log them all as such.
-			 * That's a bit wasteful, but in practice, a mix of standard and
-			 * non-standard page layout is rare.  None of the built-in AMs do
-			 * that.
+			 * 如果其中任一页面使用了 !page_std，我们就把它们全部按
+			 * 非标准页面记录。这有些浪费，但实际上标准与非标准页面布局
+			 * 混合的情况很罕见，所有内建的访问方法都不会这样做。
 			 */
 			if (!pending_writes[i].page_std)
 				page_std = false;
@@ -284,15 +267,14 @@ smgr_bulk_flush(BulkWriteState *bulkstate)
 		if (blkno >= bulkstate->relsize)
 		{
 			/*
-			 * If we have to write pages nonsequentially, fill in the space
-			 * with zeroes until we come back and overwrite.  This is not
-			 * logically necessary on standard Unix filesystems (unwritten
-			 * space will read as zeroes anyway), but it should help to avoid
-			 * fragmentation.  The dummy pages aren't WAL-logged though.
+			 * 如果我们必须以非顺序的方式写页面，就用零把中间的空间填充满，
+			 * 直到回过头来覆盖。在标准的 Unix 文件系统上，这在逻辑上并非
+			 * 必要（未写入的空间读出来本来就是零），但这有助于避免产生
+			 * 文件碎片。不过这些填充用的空页面不会被写入 WAL。
 			 */
 			while (blkno > bulkstate->relsize)
 			{
-				/* don't set checksum for all-zero page */
+				/* 全零页面不设校验和 */
 				smgrextend(bulkstate->smgr, bulkstate->forknum,
 						   bulkstate->relsize,
 						   &zero_buffer,
@@ -312,12 +294,11 @@ smgr_bulk_flush(BulkWriteState *bulkstate)
 }
 
 /*
- * Queue write of 'buf'.
+ * 将 'buf' 的写入排入队列。
  *
- * NB: this takes ownership of 'buf'!
+ * 注意：这会接管 'buf' 的所有权！
  *
- * You are only allowed to write a given block once as part of one bulk write
- * operation.
+ * 在一次批量写操作中，你只能写入某个给定块一次。
  */
 void
 smgr_bulk_write(BulkWriteState *bulkstate, BlockNumber blocknum, BulkWriteBuffer buf, bool page_std)
@@ -334,14 +315,13 @@ smgr_bulk_write(BulkWriteState *bulkstate, BlockNumber blocknum, BulkWriteBuffer
 }
 
 /*
- * Allocate a new buffer which can later be written with smgr_bulk_write().
+ * 分配一个新的缓冲区，之后可通过 smgr_bulk_write() 写入。
  *
- * There is no function to free the buffer.  When you pass it to
- * smgr_bulk_write(), it takes ownership and frees it when it's no longer
- * needed.
+ * 没有用于释放缓冲区的函数。当你把它传给 smgr_bulk_write() 时，它会接管
+ * 其所有权，并在不再需要时将其释放。
  *
- * This is currently implemented as a simple palloc, but could be implemented
- * using a ring buffer or larger chunks in the future, so don't rely on it.
+ * 目前这只是简单地用 palloc 实现，但将来也可能改用环形缓冲区或更大的
+ * 内存块来实现，因此不要依赖当前的实现方式。
  */
 BulkWriteBuffer
 smgr_bulk_get_buf(BulkWriteState *bulkstate)

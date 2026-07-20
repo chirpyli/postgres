@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * hio.c
- *	  POSTGRES heap access method input/output code.
+ *	  POSTGRES 堆访问方法输入/输出代码。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -25,11 +25,11 @@
 
 
 /*
- * RelationPutHeapTuple - place tuple at specified page
+ * RelationPutHeapTuple - 将元组放置在指定页面
  *
- * !!! EREPORT(ERROR) IS DISALLOWED HERE !!!  Must PANIC on failure!!!
+ * !!! 此函数内禁止 EREPORT(ERROR)!!!  失败时必须 PANIC！！！
  *
- * Note - caller must hold BUFFER_LOCK_EXCLUSIVE on the buffer.
+ * 注意 - 调用者必须持有该缓冲区的 BUFFER_LOCK_EXCLUSIVE 锁。
  */
 void
 RelationPutHeapTuple(Relation relation,
@@ -41,21 +41,18 @@ RelationPutHeapTuple(Relation relation,
 	OffsetNumber offnum;
 
 	/*
-	 * A tuple that's being inserted speculatively should already have its
-	 * token set.
+	 * 正在被推测性插入的元组应当已经设置好了它的 token。
 	 */
 	Assert(!token || HeapTupleHeaderIsSpeculative(tuple->t_data));
 
 	/*
-	 * Do not allow tuples with invalid combinations of hint bits to be placed
-	 * on a page.  This combination is detected as corruption by the
-	 * contrib/amcheck logic, so if you disable this assertion, make
-	 * corresponding changes there.
+	 * 不允许将带有无效提示位组合的元组放置到页面上。contrib/amcheck 的逻辑
+	 * 会将此组合检测为损坏，因此如果你禁用了此断言，请在那里做出相应的修改。
 	 */
 	Assert(!((tuple->t_data->t_infomask & HEAP_XMAX_COMMITTED) &&
 			 (tuple->t_data->t_infomask & HEAP_XMAX_IS_MULTI)));
 
-	/* Add the tuple to the page */
+	/* 将元组添加到页面 */
 	pageHeader = BufferGetPage(buffer);
 
 	offnum = PageAddItem(pageHeader, (Item) tuple->t_data,
@@ -64,13 +61,12 @@ RelationPutHeapTuple(Relation relation,
 	if (offnum == InvalidOffsetNumber)
 		elog(PANIC, "failed to add tuple to page");
 
-	/* Update tuple->t_self to the actual position where it was stored */
+	/* 将 tuple->t_self 更新为它实际存储的位置 */
 	ItemPointerSet(&(tuple->t_self), BufferGetBlockNumber(buffer), offnum);
 
 	/*
-	 * Insert the correct position into CTID of the stored tuple, too (unless
-	 * this is a speculative insertion, in which case the token is held in
-	 * CTID field instead)
+	 * 也要将正确的位置插入到已存储元组的 CTID 中（除非这是一个推测性插入，
+	 * 这种情况下 token 保存在 CTID 字段中）。
 	 */
 	if (!token)
 	{
@@ -82,7 +78,7 @@ RelationPutHeapTuple(Relation relation,
 }
 
 /*
- * Read in a buffer in mode, using bulk-insert strategy if bistate isn't NULL.
+ * 以给定模式读入一个缓冲区，如果 bistate 不为 NULL 则使用批量插入策略。
  */
 static Buffer
 ReadBufferBI(Relation relation, BlockNumber targetBlock,
@@ -90,19 +86,18 @@ ReadBufferBI(Relation relation, BlockNumber targetBlock,
 {
 	Buffer		buffer;
 
-	/* If not bulk-insert, exactly like ReadBuffer */
+	/* 如果不是批量插入，则与 ReadBuffer 完全相同 */
 	if (!bistate)
 		return ReadBufferExtended(relation, MAIN_FORKNUM, targetBlock,
 								  mode, NULL);
 
-	/* If we have the desired block already pinned, re-pin and return it */
+	/* 如果所需的块已经处于 pin 状态，重新 pin 并返回它 */
 	if (bistate->current_buf != InvalidBuffer)
 	{
 		if (BufferGetBlockNumber(bistate->current_buf) == targetBlock)
 		{
 			/*
-			 * Currently the LOCK variants are only used for extending
-			 * relation, which should never reach this branch.
+			 * 当前 LOCK 变体仅用于扩展关系，永远不应该到达这个分支。
 			 */
 			Assert(mode != RBM_ZERO_AND_LOCK &&
 				   mode != RBM_ZERO_AND_CLEANUP_LOCK);
@@ -110,16 +105,16 @@ ReadBufferBI(Relation relation, BlockNumber targetBlock,
 			IncrBufferRefCount(bistate->current_buf);
 			return bistate->current_buf;
 		}
-		/* ... else drop the old buffer */
+		/* ... 否则丢弃旧缓冲区 */
 		ReleaseBuffer(bistate->current_buf);
 		bistate->current_buf = InvalidBuffer;
 	}
 
-	/* Perform a read using the buffer strategy */
+	/* 使用缓冲区策略执行读取 */
 	buffer = ReadBufferExtended(relation, MAIN_FORKNUM, targetBlock,
 								mode, bistate->strategy);
 
-	/* Save the selected block as target for future inserts */
+	/* 将选定的块保存为将来插入的目标 */
 	IncrBufferRefCount(buffer);
 	bistate->current_buf = buffer;
 
@@ -127,14 +122,13 @@ ReadBufferBI(Relation relation, BlockNumber targetBlock,
 }
 
 /*
- * For each heap page which is all-visible, acquire a pin on the appropriate
- * visibility map page, if we haven't already got one.
+ * 对于每一个全可见的堆页面，如果尚未获取，则在相应的可见性映射页上
+ * 获取一个 pin。
  *
- * To avoid complexity in the callers, either buffer1 or buffer2 may be
- * InvalidBuffer if only one buffer is involved. For the same reason, block2
- * may be smaller than block1.
+ * 为避免调用者中的复杂性，如果只涉及一个缓冲区，则 buffer1 或 buffer2
+ * 可能为 InvalidBuffer。出于同样的原因，block2 可能小于 block1。
  *
- * Returns whether buffer locks were temporarily released.
+ * 返回是否临时释放了缓冲区锁。
  */
 static bool
 GetVisibilityMapPins(Relation relation, Buffer buffer1, Buffer buffer2,
@@ -146,8 +140,8 @@ GetVisibilityMapPins(Relation relation, Buffer buffer1, Buffer buffer2,
 	bool		released_locks = false;
 
 	/*
-	 * Swap buffers around to handle case of a single block/buffer, and to
-	 * handle if lock ordering rules require to lock block2 first.
+	 * 交换缓冲区以处理单个块/缓冲区的情况，并用于处理如果锁排序规则
+	 * 要求先锁定 block2 的情况。
 	 */
 	if (!BufferIsValid(buffer1) ||
 		(BufferIsValid(buffer2) && block1 > block2))
@@ -170,7 +164,7 @@ GetVisibilityMapPins(Relation relation, Buffer buffer1, Buffer buffer2,
 
 	while (1)
 	{
-		/* Figure out which pins we need but don't have. */
+		/* 找出我们需要但尚未获取的 pin。 */
 		need_to_pin_buffer1 = PageIsAllVisible(BufferGetPage(buffer1))
 			&& !visibilitymap_pin_ok(block1, *vmbuffer1);
 		need_to_pin_buffer2 = buffer2 != InvalidBuffer
@@ -179,28 +173,27 @@ GetVisibilityMapPins(Relation relation, Buffer buffer1, Buffer buffer2,
 		if (!need_to_pin_buffer1 && !need_to_pin_buffer2)
 			break;
 
-		/* We must unlock both buffers before doing any I/O. */
+		/* 在进行任何 I/O 之前，我们必须先解锁两个缓冲区。 */
 		released_locks = true;
 		LockBuffer(buffer1, BUFFER_LOCK_UNLOCK);
 		if (buffer2 != InvalidBuffer && buffer2 != buffer1)
 			LockBuffer(buffer2, BUFFER_LOCK_UNLOCK);
 
-		/* Get pins. */
+		/* 获取 pin。 */
 		if (need_to_pin_buffer1)
 			visibilitymap_pin(relation, block1, vmbuffer1);
 		if (need_to_pin_buffer2)
 			visibilitymap_pin(relation, block2, vmbuffer2);
 
-		/* Relock buffers. */
+		/* 重新锁定缓冲区。 */
 		LockBuffer(buffer1, BUFFER_LOCK_EXCLUSIVE);
 		if (buffer2 != InvalidBuffer && buffer2 != buffer1)
 			LockBuffer(buffer2, BUFFER_LOCK_EXCLUSIVE);
 
 		/*
-		 * If there are two buffers involved and we pinned just one of them,
-		 * it's possible that the second one became all-visible while we were
-		 * busy pinning the first one.  If it looks like that's a possible
-		 * scenario, we'll need to make a second pass through this loop.
+		 * 如果涉及两个缓冲区且我们只 pin 了其中一个，那么在我们忙于
+		 * pin 第一个缓冲区时，第二个缓冲区有可能变成了全可见的。
+		 * 如果看起来是这种情况，我们需要再循环一次来处理。
 		 */
 		if (buffer2 == InvalidBuffer || buffer1 == buffer2
 			|| (need_to_pin_buffer1 && need_to_pin_buffer2))
@@ -211,28 +204,24 @@ GetVisibilityMapPins(Relation relation, Buffer buffer1, Buffer buffer2,
 }
 
 /*
- * Extend the relation. By multiple pages, if beneficial.
+ * 扩展关系。如果有利，则扩展多个页面。
  *
- * If the caller needs multiple pages (num_pages > 1), we always try to extend
- * by at least that much.
+ * 如果调用者需要多个页面（num_pages > 1），我们总是尝试至少扩展那么多页面。
  *
- * If there is contention on the extension lock, we don't just extend "for
- * ourselves", but we try to help others. We can do so by adding empty pages
- * into the FSM. Typically there is no contention when we can't use the FSM.
+ * 如果扩展锁上存在争用，我们不仅为自己扩展，还会尝试帮助他人。我们可以通过
+ * 将空页面加入 FSM 来实现这一点。通常，当我们无法使用 FSM 时，不存在争用。
  *
- * We do have to limit the number of pages to extend by to some value, as the
- * buffers for all the extended pages need to, temporarily, be pinned. For now
- * we define MAX_BUFFERS_TO_EXTEND_BY to be 64 buffers, it's hard to see
- * benefits with higher numbers. This partially is because copyfrom.c's
- * MAX_BUFFERED_TUPLES / MAX_BUFFERED_BYTES prevents larger multi_inserts.
+ * 我们确实需要将扩展的页面数量限制在某个值，因为所有被扩展页面的缓冲区
+ * 都需要临时被 pin。目前我们将 MAX_BUFFERS_TO_EXTEND_BY 定义为 64 个缓冲区，
+ * 更高的数值似乎难以看到收益。这部分是因为 copyfrom.c 的
+ * MAX_BUFFERED_TUPLES / MAX_BUFFERED_BYTES 阻止了更大的 multi_insert。
  *
- * Returns a buffer for a newly extended block. If possible, the buffer is
- * returned exclusively locked. *did_unlock is set to true if the lock had to
- * be released, false otherwise.
+ * 返回一个新扩展块的缓冲区。如果可能，该缓冲区以独占锁方式返回。
+ * *did_unlock 设置为 true 表示锁不得不被释放，否则为 false。
  *
  *
- * XXX: It would likely be beneficial for some workloads to extend more
- * aggressively, e.g. using a heuristic based on the relation size.
+ * XXX: 对于某些工作负载，更激进地扩展可能是有益的，例如使用基于关系
+ * 大小的启发式方法。
  */
 static Buffer
 RelationAddBlocks(Relation relation, BulkInsertState bistate,
@@ -248,13 +237,13 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 	Page		page;
 
 	/*
-	 * Determine by how many pages to try to extend by.
+	 * 确定尝试扩展多少个页面。
 	 */
 	if (bistate == NULL && !use_fsm)
 	{
 		/*
-		 * If we have neither bistate, nor can use the FSM, we can't bulk
-		 * extend - there'd be no way to find the additional pages.
+		 * 如果我们既没有 bistate，也无法使用 FSM，我们就无法进行批量
+		 * 扩展 - 将没有找到额外页面的方法。
 		 */
 		extend_by_pages = 1;
 	}
@@ -263,8 +252,8 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 		uint32		waitcount;
 
 		/*
-		 * Try to extend at least by the number of pages the caller needs. We
-		 * can remember the additional pages (either via FSM or bistate).
+		 * 尝试至少按调用者需要的页面数进行扩展。我们可以记住额外的
+		 * 页面（通过 FSM 或 bistate）。
 		 */
 		extend_by_pages = num_pages;
 
@@ -274,55 +263,50 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 			waitcount = 0;
 
 		/*
-		 * Multiply the number of pages to extend by the number of waiters. Do
-		 * this even if we're not using the FSM, as it still relieves
-		 * contention, by deferring the next time this backend needs to
-		 * extend. In that case the extended pages will be found via
-		 * bistate->next_free.
+		 * 将扩展的页面数乘以等待者的数量。即使我们没有使用 FSM 也要
+		 * 这样做，因为它仍然可以通过推迟此后端下一次需要扩展的时间来
+		 * 缓解争用。在这种情况下，扩展的页面将通过 bistate->next_free
+		 * 找到。
 		 */
 		extend_by_pages += extend_by_pages * waitcount;
 
 		/* ---
-		 * If we previously extended using the same bistate, it's very likely
-		 * we'll extend some more. Try to extend by as many pages as
-		 * before. This can be important for performance for several reasons,
-		 * including:
+		 * 如果我们之前使用相同的 bistate 进行过扩展，很可能我们还会
+		 * 继续扩展。尝试按之前那么多页面进行扩展。这对于性能可能很
+		 * 重要，原因包括：
 		 *
-		 * - It prevents mdzeroextend() switching between extending the
-		 *   relation in different ways, which is inefficient for some
-		 *   filesystems.
+		 * - 它可以防止 mdzeroextend() 在以不同方式扩展关系之间切换，
+		 *   这对于某些文件系统来说效率低下。
 		 *
-		 * - Contention is often intermittent. Even if we currently don't see
-		 *   other waiters (see above), extending by larger amounts can
-		 *   prevent future contention.
+		 * - 争用往往是间歇性的。即使我们当前没有看到其他等待者（见
+		 *   上文），以更大的数量扩展可以防止未来的争用。
 		 * ---
 		 */
 		if (bistate)
 			extend_by_pages = Max(extend_by_pages, bistate->already_extended_by);
 
 		/*
-		 * Can't extend by more than MAX_BUFFERS_TO_EXTEND_BY, we need to pin
-		 * them all concurrently.
+		 * 不能超过 MAX_BUFFERS_TO_EXTEND_BY，我们需要并发地 pin 它们
+		 * 全部。
 		 */
 		extend_by_pages = Min(extend_by_pages, MAX_BUFFERS_TO_EXTEND_BY);
 	}
 
 	/*
-	 * How many of the extended pages should be entered into the FSM?
+	 * 应该将多少扩展页面录入 FSM？
 	 *
-	 * If we have a bistate, only enter pages that we don't need ourselves
-	 * into the FSM.  Otherwise every other backend will immediately try to
-	 * use the pages this backend needs for itself, causing unnecessary
-	 * contention.  If we don't have a bistate, we can't avoid the FSM.
+	 * 如果我们有 bistate，只将我们自己不需要的页面录入 FSM。否则，
+	 * 其他每个后端都会立即尝试使用此后端自己需要的页面，导致不必要
+	 * 的争用。如果我们没有 bistate，我们就无法避免使用 FSM。
 	 *
-	 * Never enter the page returned into the FSM, we'll immediately use it.
+	 * 永远不要将返回的页面录入 FSM，我们会立即使用它。
 	 */
 	if (num_pages > 1 && bistate == NULL)
 		not_in_fsm_pages = 1;
 	else
 		not_in_fsm_pages = num_pages;
 
-	/* prepare to put another buffer into the bistate */
+	/* 准备将另一个缓冲区放入 bistate */
 	if (bistate && bistate->current_buf != InvalidBuffer)
 	{
 		ReleaseBuffer(bistate->current_buf);
@@ -330,13 +314,11 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 	}
 
 	/*
-	 * Extend the relation. We ask for the first returned page to be locked,
-	 * so that we are sure that nobody has inserted into the page
-	 * concurrently.
+	 * 扩展关系。我们要求第一个返回的页面被锁定，以便确保没有人
+	 * 并发地插入到该页面中。
 	 *
-	 * With the current MAX_BUFFERS_TO_EXTEND_BY there's no danger of
-	 * [auto]vacuum trying to truncate later pages as REL_TRUNCATE_MINIMUM is
-	 * way larger.
+	 * 在当前的 MAX_BUFFERS_TO_EXTEND_BY 下，不存在 [auto]vacuum
+	 * 尝试截断后续页面的危险，因为 REL_TRUNCATE_MINIMUM 要大得多。
 	 */
 	first_block = ExtendBufferedRelBy(BMR_REL(relation), MAIN_FORKNUM,
 									  bistate ? bistate->strategy : NULL,
@@ -344,15 +326,14 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 									  extend_by_pages,
 									  victim_buffers,
 									  &extend_by_pages);
-	buffer = victim_buffers[0]; /* the buffer the function will return */
+	buffer = victim_buffers[0]; /* 该函数将返回的缓冲区 */
 	last_block = first_block + (extend_by_pages - 1);
 	Assert(first_block == BufferGetBlockNumber(buffer));
 
 	/*
-	 * Relation is now extended. Initialize the page. We do this here, before
-	 * potentially releasing the lock on the page, because it allows us to
-	 * double check that the page contents are empty (this should never
-	 * happen, but if it does we don't want to risk wiping out valid data).
+	 * 关系现在已扩展。初始化页面。我们在这里做这件事，在可能释放
+	 * 页面锁之前，因为它允许我们双重检查页面内容是否为空（这应该
+	 * 永远不会发生，但如果发生了，我们不想冒险清除有效数据）。
 	 */
 	page = BufferGetPage(buffer);
 	if (!PageIsNew(page))
@@ -364,9 +345,9 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 	MarkBufferDirty(buffer);
 
 	/*
-	 * If we decided to put pages into the FSM, release the buffer lock (but
-	 * not pin), we don't want to do IO while holding a buffer lock. This will
-	 * necessitate a bit more extensive checking in our caller.
+	 * 如果我们决定将页面放入 FSM，则释放缓冲区锁（但不释放 pin），
+	 * 我们不想在持有缓冲区锁时进行 IO。这将需要在调用者中进行
+	 * 更进一步的检查。
 	 */
 	if (use_fsm && not_in_fsm_pages < extend_by_pages)
 	{
@@ -377,9 +358,9 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 		*did_unlock = false;
 
 	/*
-	 * Relation is now extended. Release pins on all buffers, except for the
-	 * first (which we'll return).  If we decided to put pages into the FSM,
-	 * we can do that as part of the same loop.
+	 * 关系现在已扩展。释放所有缓冲区的 pin，除了第一个（我们将返回
+	 * 它）。如果我们决定将页面放入 FSM，我们可以将其作为同一个循环
+	 * 的一部分来完成。
 	 */
 	for (uint32 i = 1; i < extend_by_pages; i++)
 	{
@@ -409,8 +390,8 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 	if (bistate)
 	{
 		/*
-		 * Remember the additional pages we extended by, so we later can use
-		 * them without looking into the FSM.
+		 * 记住我们扩展的额外页面，以便我们以后可以在不查看 FSM 的
+		 * 情况下使用它们。
 		 */
 		if (extend_by_pages > 1)
 		{
@@ -423,7 +404,7 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 			bistate->last_free = InvalidBlockNumber;
 		}
 
-		/* maintain bistate->current_buf */
+		/* 维护 bistate->current_buf */
 		IncrBufferRefCount(buffer);
 		bistate->current_buf = buffer;
 		bistate->already_extended_by += extend_by_pages;
@@ -436,67 +417,57 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 /*
  * RelationGetBufferForTuple
  *
- *	Returns pinned and exclusive-locked buffer of a page in given relation
- *	with free space >= given len.
+ *	返回给定关系中一个页面的已 pin 且独占锁定的缓冲区，
+ *	其空闲空间 >= 给定的 len。
  *
- *	If num_pages is > 1, we will try to extend the relation by at least that
- *	many pages when we decide to extend the relation. This is more efficient
- *	for callers that know they will need multiple pages
- *	(e.g. heap_multi_insert()).
+ *	如果 num_pages > 1，当我们决定扩展关系时，我们将尝试至少扩展那么多
+ *	页面。这对于知道自己将需要多个页面的调用者（例如 heap_multi_insert()）
+ *	来说效率更高。
  *
- *	If otherBuffer is not InvalidBuffer, then it references a previously
- *	pinned buffer of another page in the same relation; on return, this
- *	buffer will also be exclusive-locked.  (This case is used by heap_update;
- *	the otherBuffer contains the tuple being updated.)
+ *	如果 otherBuffer 不是 InvalidBuffer，则它引用同一关系中另一个页面的
+ *	先前已 pin 的缓冲区；返回时，该缓冲区也将被独占锁定。（这种情况由
+ *	heap_update 使用；otherBuffer 包含正在被更新的元组。）
  *
- *	The reason for passing otherBuffer is that if two backends are doing
- *	concurrent heap_update operations, a deadlock could occur if they try
- *	to lock the same two buffers in opposite orders.  To ensure that this
- *	can't happen, we impose the rule that buffers of a relation must be
- *	locked in increasing page number order.  This is most conveniently done
- *	by having RelationGetBufferForTuple lock them both, with suitable care
- *	for ordering.
+ *	传递 otherBuffer 的原因是，如果两个后端正在执行并发的 heap_update
+ *	操作，如果它们试图以相反的顺序锁定相同的两个缓冲区，则可能发生
+ *	死锁。为确保这不会发生，我们强制执行这样的规则：关系的缓冲区必须
+ *	按页面号递增的顺序锁定。最方便的做法是让 RelationGetBufferForTuple
+ *	以适当的顺序小心地锁定它们两个。
  *
- *	NOTE: it is unlikely, but not quite impossible, for otherBuffer to be the
- *	same buffer we select for insertion of the new tuple (this could only
- *	happen if space is freed in that page after heap_update finds there's not
- *	enough there).  In that case, the page will be pinned and locked only once.
+ *	注意：otherBuffer 与我们为新元组插入而选择的缓冲区相同，这不太可能，
+ *	但并非完全不可能（这只有在 heap_update 发现该页面空间不足后，该页面
+ *	中释放了空间时才会发生）。在这种情况下，页面只会被 pin 并锁定一次。
  *
- *	We also handle the possibility that the all-visible flag will need to be
- *	cleared on one or both pages.  If so, pin on the associated visibility map
- *	page must be acquired before acquiring buffer lock(s), to avoid possibly
- *	doing I/O while holding buffer locks.  The pins are passed back to the
- *	caller using the input-output arguments vmbuffer and vmbuffer_other.
- *	Note that in some cases the caller might have already acquired such pins,
- *	which is indicated by these arguments not being InvalidBuffer on entry.
+ *	我们还处理以下可能性：全可见标志可能需要在一个或两个页面上被清除。
+ *	如果是这样，必须在获取缓冲区锁之前获取关联可见性映射页上的 pin，
+ *	以避免在持有缓冲区锁时可能进行 I/O。这些 pin 使用输入输出参数
+ *	vmbuffer 和 vmbuffer_other 传递回给调用者。请注意，在某些情况下，
+ *	调用者可能已经获取了这样的 pin，这由这些参数在进入时不为 InvalidBuffer
+ *	来指示。
  *
- *	We normally use FSM to help us find free space.  However,
- *	if HEAP_INSERT_SKIP_FSM is specified, we just append a new empty page to
- *	the end of the relation if the tuple won't fit on the current target page.
- *	This can save some cycles when we know the relation is new and doesn't
- *	contain useful amounts of free space.
+ *	我们通常使 FSM 来帮助我们查找空闲空间。但是，如果指定了
+ *	HEAP_INSERT_SKIP_FSM，我们只需在元组无法放入当前目标页面时，将一个
+ *	新的空页面追加到关系的末尾。当我们知道关系是新的且不包含有用的
+ *	空闲空间量时，这可以节省一些周期。
  *
- *	HEAP_INSERT_SKIP_FSM is also useful for non-WAL-logged additions to a
- *	relation, if the caller holds exclusive lock and is careful to invalidate
- *	relation's smgr_targblock before the first insertion --- that ensures that
- *	all insertions will occur into newly added pages and not be intermixed
- *	with tuples from other transactions.  That way, a crash can't risk losing
- *	any committed data of other transactions.  (See heap_insert's comments
- *	for additional constraints needed for safe usage of this behavior.)
+ *	HEAP_INSERT_SKIP_FSM 对于关系的非 WAL 日志记录添加也很有用，如果
+ *	调用者持有独占锁并小心地在第一次插入之前使关系的 smgr_targblock
+ *	失效 --- 这确保所有插入都发生在新添加的页面中，而不会与来自其他
+ *	事务的元组混合。这样，崩溃就不会冒丢失任何其他事务已提交数据
+ *	的风险。（有关安全使用此行为所需的额外约束，请参见 heap_insert
+ *	的注释。）
  *
- *	The caller can also provide a BulkInsertState object to optimize many
- *	insertions into the same relation.  This keeps a pin on the current
- *	insertion target page (to save pin/unpin cycles) and also passes a
- *	BULKWRITE buffer selection strategy object to the buffer manager.
- *	Passing NULL for bistate selects the default behavior.
+ *	调用者还可以提供 BulkInsertState 对象来优化对同一关系的多次插入。
+ *	这会保持在当前插入目标页面上的 pin（以节省 pin/unpin 周期），并将
+ *	一个 BULKWRITE 缓冲区选择策略对象传递给缓冲区管理器。为 bistate
+ *	传递 NULL 选择默认行为。
  *
- *	We don't fill existing pages further than the fillfactor, except for large
- *	tuples in nearly-empty pages.  This is OK since this routine is not
- *	consulted when updating a tuple and keeping it on the same page, which is
- *	the scenario fillfactor is meant to reserve space for.
+ *	我们不会将现有页面填充超过 fillfactor，除了近乎空页面中的大元组。
+ *	这是可以的，因为在更新元组并使其保持在同一个页面上时不会咨询此
+ *	例程，而这正是 fillfactor 旨在为其保留空间的场景。
  *
- *	ereport(ERROR) is allowed here, so this routine *must* be called
- *	before any (unlogged) changes are made in buffer pool.
+ *	此处允许 ereport(ERROR)，因此必须在对缓冲区池进行任何（未记录的）
+ *	更改之前调用此例程。
  */
 Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
@@ -517,17 +488,17 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	bool		unlockedTargetBuffer;
 	bool		recheckVmPins;
 
-	len = MAXALIGN(len);		/* be conservative */
+	len = MAXALIGN(len);		/* 保守起见 */
 
-	/* if the caller doesn't know by how many pages to extend, extend by 1 */
+	/* 如果调用者不知道要扩展多少个页面，则扩展 1 个 */
 	if (num_pages <= 0)
 		num_pages = 1;
 
-	/* Bulk insert is not supported for updates, only inserts. */
+	/* 批量插入不支持更新，只支持插入。 */
 	Assert(otherBuffer == InvalidBuffer || !bistate);
 
 	/*
-	 * If we're gonna fail for oversize tuple, do it right away
+	 * 如果我们将因超大元组而失败，立即失败
 	 */
 	if (len > MaxHeapTupleSize)
 		ereport(ERROR,
@@ -535,15 +506,14 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				 errmsg("row is too big: size %zu, maximum size %zu",
 						len, MaxHeapTupleSize)));
 
-	/* Compute desired extra freespace due to fillfactor option */
+	/* 计算由于 fillfactor 选项所需的额外空闲空间 */
 	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
 												   HEAP_DEFAULT_FILLFACTOR);
 
 	/*
-	 * Since pages without tuples can still have line pointers, we consider
-	 * pages "empty" when the unavailable space is slight.  This threshold is
-	 * somewhat arbitrary, but it should prevent most unnecessary relation
-	 * extensions while inserting large tuples into low-fillfactor tables.
+	 * 由于没有元组的页面仍然可以有行指针，我们将页面视为 "空" 当
+	 * 不可用空间很小时。这个阈值是有些随意的，但它应该能在向低
+	 * fillfactor 表中插入大元组时防止大多数不必要的关关系扩展。
 	 */
 	nearlyEmptyFreeSpace = MaxHeapTupleSize -
 		(MaxHeapTuplesPerPage / 8 * sizeof(ItemIdData));
@@ -555,20 +525,18 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
 	else
-		otherBlock = InvalidBlockNumber;	/* just to keep compiler quiet */
+		otherBlock = InvalidBlockNumber;	/* 仅为让编译器安静 */
 
 	/*
-	 * We first try to put the tuple on the same page we last inserted a tuple
-	 * on, as cached in the BulkInsertState or relcache entry.  If that
-	 * doesn't work, we ask the Free Space Map to locate a suitable page.
-	 * Since the FSM's info might be out of date, we have to be prepared to
-	 * loop around and retry multiple times. (To ensure this isn't an infinite
-	 * loop, we must update the FSM with the correct amount of free space on
-	 * each page that proves not to be suitable.)  If the FSM has no record of
-	 * a page with enough free space, we give up and extend the relation.
+	 * 我们首先尝试将元组放在上一次插入元组的同一页面上，该页面缓存于
+	 * BulkInsertState 或 relcache 条目中。如果那不起作用，我们会请求
+	 * 可用空间映射来定位一个合适的页面。由于 FSM 的信息可能已过时，
+	 * 我们必须准备好循环并重试多次。（为确保这不是一个无限循环，我们
+	 * 必须用每个被证明不合适的页面上的正确空闲空间量来更新 FSM。）
+	 * 如果 FSM 没有记录具有足够空闲空间的页面，我们放弃并扩展关系。
 	 *
-	 * When use_fsm is false, we either put the tuple onto the existing target
-	 * page or extend the relation.
+	 * 当 use_fsm 为 false 时，我们要么将元组放在现有目标页面上，要么
+	 * 扩展关系。
 	 */
 	if (bistate && bistate->current_buf != InvalidBuffer)
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
@@ -578,16 +546,14 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
 		/*
-		 * We have no cached target page, so ask the FSM for an initial
-		 * target.
+		 * 我们没有缓存的目标页面，因此向 FSM 请求一个初始目标。
 		 */
 		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
 	}
 
 	/*
-	 * If the FSM knows nothing of the rel, try the last page before we give
-	 * up and extend.  This avoids one-tuple-per-page syndrome during
-	 * bootstrapping or in a recently-started system.
+	 * 如果 FSM 对该关系一无所知，在我们放弃并扩展之前尝试最后一个页面。
+	 * 这可以避免在引导期间或最近启动的系统中出现每页一个元组的问题。
 	 */
 	if (targetBlock == InvalidBlockNumber)
 	{
@@ -601,27 +567,25 @@ loop:
 	while (targetBlock != InvalidBlockNumber)
 	{
 		/*
-		 * Read and exclusive-lock the target block, as well as the other
-		 * block if one was given, taking suitable care with lock ordering and
-		 * the possibility they are the same block.
+		 * 读取并以独占方式锁定目标块，以及另一个块（如果给定了的话），
+		 * 适当注意锁排序以及它们是同一个块的可能性。
 		 *
-		 * If the page-level all-visible flag is set, caller will need to
-		 * clear both that and the corresponding visibility map bit.  However,
-		 * by the time we return, we'll have x-locked the buffer, and we don't
-		 * want to do any I/O while in that state.  So we check the bit here
-		 * before taking the lock, and pin the page if it appears necessary.
-		 * Checking without the lock creates a risk of getting the wrong
-		 * answer, so we'll have to recheck after acquiring the lock.
+		 * 如果页面级全可见标志被设置，调用者将需要清除该标志以及
+		 * 相应的可见性映射位。但是，到我们返回时，我们将已经 x 锁定了
+		 * 缓冲区，而我们不想在那种状态下进行任何 I/O。所以我们在此处、
+		 * 在获取锁之前检查该位，并在看起来必要时 pin 该页面。在没有
+		 * 锁的情况下检查存在得到错误答案的风险，因此我们将不得不在
+		 * 获取锁之后重新检查。
 		 */
 		if (otherBuffer == InvalidBuffer)
 		{
-			/* easy case */
+			/* 简单情况 */
 			buffer = ReadBufferBI(relation, targetBlock, RBM_NORMAL, bistate);
 			if (PageIsAllVisible(BufferGetPage(buffer)))
 				visibilitymap_pin(relation, targetBlock, vmbuffer);
 
 			/*
-			 * If the page is empty, pin vmbuffer to set all_frozen bit later.
+			 * 如果页面为空，pin vmbuffer 以便稍后设置 all_frozen 位。
 			 */
 			if ((options & HEAP_INSERT_FROZEN) &&
 				(PageGetMaxOffsetNumber(BufferGetPage(buffer)) == 0))
@@ -631,7 +595,7 @@ loop:
 		}
 		else if (otherBlock == targetBlock)
 		{
-			/* also easy case */
+			/* 同样简单的情况 */
 			buffer = otherBuffer;
 			if (PageIsAllVisible(BufferGetPage(buffer)))
 				visibilitymap_pin(relation, targetBlock, vmbuffer);
@@ -639,7 +603,7 @@ loop:
 		}
 		else if (otherBlock < targetBlock)
 		{
-			/* lock other buffer first */
+			/* 先锁定另一个缓冲区 */
 			buffer = ReadBuffer(relation, targetBlock);
 			if (PageIsAllVisible(BufferGetPage(buffer)))
 				visibilitymap_pin(relation, targetBlock, vmbuffer);
@@ -648,7 +612,7 @@ loop:
 		}
 		else
 		{
-			/* lock target buffer first */
+			/* 先锁定目标缓冲区 */
 			buffer = ReadBuffer(relation, targetBlock);
 			if (PageIsAllVisible(BufferGetPage(buffer)))
 				visibilitymap_pin(relation, targetBlock, vmbuffer);
@@ -657,41 +621,36 @@ loop:
 		}
 
 		/*
-		 * We now have the target page (and the other buffer, if any) pinned
-		 * and locked.  However, since our initial PageIsAllVisible checks
-		 * were performed before acquiring the lock, the results might now be
-		 * out of date, either for the selected victim buffer, or for the
-		 * other buffer passed by the caller.  In that case, we'll need to
-		 * give up our locks, go get the pin(s) we failed to get earlier, and
-		 * re-lock.  That's pretty painful, but hopefully shouldn't happen
-		 * often.
+		 * 我们现在已经将目标页面（以及另一个缓冲区，如果有的话）pin 并
+		 * 锁定。然而，由于我们最初的 PageIsAllVisible 检查是在获取锁之前
+		 * 执行的，结果现在可能已经过时，无论是对于选定的牺牲缓冲区，
+		 * 还是对于调用者传递的另一个缓冲区。在这种情况下，我们将需要
+		 * 放弃我们的锁，去获取我们之前未能获取的 pin，然后重新锁定。
+		 * 这相当麻烦，但希望不会经常发生。
 		 *
-		 * Note that there's a small possibility that we didn't pin the page
-		 * above but still have the correct page pinned anyway, either because
-		 * we've already made a previous pass through this loop, or because
-		 * caller passed us the right page anyway.
+		 * 注意，有一个小可能性是我们上面没有 pin 该页面，但仍然已经
+		 * 正确地 pin 了该页面，要么是因为我们已经通过此循环进行了
+		 * 先前的一遍，要么是因为调用者无论如何都将正确的页面传递给了
+		 * 我们。
 		 *
-		 * Note also that it's possible that by the time we get the pin and
-		 * retake the buffer locks, the visibility map bit will have been
-		 * cleared by some other backend anyway.  In that case, we'll have
-		 * done a bit of extra work for no gain, but there's no real harm
-		 * done.
+		 * 还要注意，有可能当我们获取 pin 并重新获取缓冲区锁时，可见性
+		 * 映射位已经被其他后端清除了。在这种情况下，我们将已经做了一些
+		 * 额外的工作而没有收益，但并没有造成真正的危害。
 		 */
 		GetVisibilityMapPins(relation, buffer, otherBuffer,
 							 targetBlock, otherBlock, vmbuffer,
 							 vmbuffer_other);
 
 		/*
-		 * Now we can check to see if there's enough free space here. If so,
-		 * we're done.
+		 * 现在我们可以检查这里是否有足够的空闲空间。如果有，我们就
+		 * 完成了。
 		 */
 		page = BufferGetPage(buffer);
 
 		/*
-		 * If necessary initialize page, it'll be used soon.  We could avoid
-		 * dirtying the buffer here, and rely on the caller to do so whenever
-		 * it puts a tuple onto the page, but there seems not much benefit in
-		 * doing so.
+		 * 如有必要初始化页面，它将很快被使用。我们可以避免在这里弄脏
+		 * 缓冲区，并依赖调用者在其将元组放入页面时这样做，但这样做
+		 * 似乎没有太大好处。
 		 */
 		if (PageIsNew(page))
 		{
@@ -702,16 +661,15 @@ loop:
 		pageFreeSpace = PageGetHeapFreeSpace(page);
 		if (targetFreeSpace <= pageFreeSpace)
 		{
-			/* use this page as future insert target, too */
+			/* 也使用此页面作为将来的插入目标 */
 			RelationSetTargetBlock(relation, targetBlock);
 			return buffer;
 		}
 
 		/*
-		 * Not enough space, so we must give up our page locks and pin (if
-		 * any) and prepare to look elsewhere.  We don't care which order we
-		 * unlock the two buffers in, so this can be slightly simpler than the
-		 * code above.
+		 * 空间不足，因此我们必须放弃我们的页面锁和 pin（如果有），并
+		 * 准备在别处查找。我们不在乎以什么顺序解锁两个缓冲区，所以这
+		 * 可以比上面的代码稍微简单一些。
 		 */
 		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 		if (otherBuffer == InvalidBuffer)
@@ -722,16 +680,15 @@ loop:
 			ReleaseBuffer(buffer);
 		}
 
-		/* Is there an ongoing bulk extension? */
+		/* 是否正在进行批量扩展？ */
 		if (bistate && bistate->next_free != InvalidBlockNumber)
 		{
 			Assert(bistate->next_free <= bistate->last_free);
 
 			/*
-			 * We bulk extended the relation before, and there are still some
-			 * unused pages from that extension, so we don't need to look in
-			 * the FSM for a new page. But do record the free space from the
-			 * last page, somebody might insert narrower tuples later.
+			 * 我们之前批量扩展了关系，并且该扩展还有一些未使用的页面，
+			 * 因此我们无需到 FSM 中去查找新页面。但要记录最后一个页面
+			 * 的空闲空间，某人以后可能会插入更窄的元组。
 			 */
 			if (use_fsm)
 				RecordPageWithFreeSpace(relation, targetBlock, pageFreeSpace);
@@ -747,14 +704,13 @@ loop:
 		}
 		else if (!use_fsm)
 		{
-			/* Without FSM, always fall out of the loop and extend */
+			/* 没有 FSM 时，总是跳出循环并扩展 */
 			break;
 		}
 		else
 		{
 			/*
-			 * Update FSM as to condition of this page, and ask for another
-			 * page to try.
+			 * 向 FSM 更新此页面的状况，并请求另一个页面进行尝试。
 			 */
 			targetBlock = RecordAndGetPageWithFreeSpace(relation,
 														targetBlock,
@@ -763,7 +719,7 @@ loop:
 		}
 	}
 
-	/* Have to extend the relation */
+	/* 必须扩展关系 */
 	buffer = RelationAddBlocks(relation, bistate, num_pages, use_fsm,
 							   &unlockedTargetBuffer);
 
@@ -771,9 +727,8 @@ loop:
 	page = BufferGetPage(buffer);
 
 	/*
-	 * The page is empty, pin vmbuffer to set all_frozen bit. We don't want to
-	 * do IO while the buffer is locked, so we unlock the page first if IO is
-	 * needed (necessitating checks below).
+	 * 页面为空，pin vmbuffer 以设置 all_frozen 位。我们不想在缓冲区被
+	 * 锁定时进行 IO，因此如果需要 IO（需要下面的检查），我们先解锁页面。
 	 */
 	if (options & HEAP_INSERT_FROZEN)
 	{
@@ -789,17 +744,16 @@ loop:
 	}
 
 	/*
-	 * Reacquire locks if necessary.
+	 * 如有必要，重新获取锁。
 	 *
-	 * If the target buffer was unlocked above, or is unlocked while
-	 * reacquiring the lock on otherBuffer below, it's unlikely, but possible,
-	 * that another backend used space on this page. We check for that below,
-	 * and retry if necessary.
+	 * 如果目标缓冲区在上面被解锁，或者在下面重新获取 otherBuffer 锁时被
+	 * 解锁，这不太可能，但有可能，另一个后端在此页面上使用了空间。我们
+	 * 在下面检查这一点，并在必要时重试。
 	 */
 	recheckVmPins = false;
 	if (unlockedTargetBuffer)
 	{
-		/* released lock on target buffer above */
+		/* 在上面释放了目标缓冲区的锁 */
 		if (otherBuffer != InvalidBuffer)
 			LockBuffer(otherBuffer, BUFFER_LOCK_EXCLUSIVE);
 		LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
@@ -808,17 +762,14 @@ loop:
 	else if (otherBuffer != InvalidBuffer)
 	{
 		/*
-		 * We did not release the target buffer, and otherBuffer is valid,
-		 * need to lock the other buffer. It's guaranteed to be of a lower
-		 * page number than the new page.  To conform with the deadlock
-		 * prevent rules, we ought to lock otherBuffer first, but that would
-		 * give other backends a chance to put tuples on our page. To reduce
-		 * the likelihood of that, attempt to lock the other buffer
-		 * conditionally, that's very likely to work.
+		 * 我们没有释放目标缓冲区，并且 otherBuffer 有效，需要锁定另一个
+		 * 缓冲区。可以保证它的页面号比新页面低。为了符合死锁预防规则，
+		 * 我们应当先锁定 otherBuffer，但那样会给予其他后端在我们的页面
+		 * 上放置元组的机会。为了降低这种可能性，尝试以条件方式锁定另一个
+		 * 缓冲区，这非常有可能会成功。
 		 *
-		 * Alternatively, we could acquire the lock on otherBuffer before
-		 * extending the relation, but that'd require holding the lock while
-		 * performing IO, which seems worse than an unlikely retry.
+		 * 或者，我们可以在扩展关系之前获取 otherBuffer 上的锁，但这需要
+		 * 在执行 IO 时持有锁，这似乎比不太可能重试更糟糕。
 		 */
 		Assert(otherBuffer != buffer);
 		Assert(targetBlock > otherBlock);
@@ -834,12 +785,11 @@ loop:
 	}
 
 	/*
-	 * If one of the buffers was unlocked (always the case if otherBuffer is
-	 * valid), it's possible, although unlikely, that an all-visible flag
-	 * became set.  We can use GetVisibilityMapPins to deal with that. It's
-	 * possible that GetVisibilityMapPins() might need to temporarily release
-	 * buffer locks, in which case we'll need to check if there's still enough
-	 * space on the page below.
+	 * 如果其中一个缓冲区被解锁（如果 otherBuffer 有效则总是这种情况），
+	 * 一个全可见标志有可能被设置，虽然不太可能。我们可以使用
+	 * GetVisibilityMapPins 来处理。GetVisibilityMapPins() 有可能需要临时
+	 * 释放缓冲区锁，在这种情况下我们将需要在下面检查页面上是否仍有足够的
+	 * 空间。
 	 */
 	if (recheckVmPins)
 	{
@@ -850,11 +800,10 @@ loop:
 	}
 
 	/*
-	 * If the target buffer was temporarily unlocked since the relation
-	 * extension, it's possible, although unlikely, that all the space on the
-	 * page was already used. If so, we just retry from the start.  If we
-	 * didn't unlock, something has gone wrong if there's not enough space -
-	 * the test at the top should have prevented reaching this case.
+	 * 如果自关系扩展以来目标缓冲区被临时解锁，则页面上的所有空间有可能
+	 * 已经被使用，虽然不太可能。如果是这样，我们只需从头重试。如果我们
+	 * 没有解锁，那么如果没有足够的空间就出了问题 - 顶部的测试应该已经
+	 * 防止到达这种情况。
 	 */
 	pageFreeSpace = PageGetHeapFreeSpace(page);
 	if (len > pageFreeSpace)
@@ -871,13 +820,12 @@ loop:
 	}
 
 	/*
-	 * Remember the new page as our target for future insertions.
+	 * 记住新页面作为我们将来插入的目标。
 	 *
-	 * XXX should we enter the new page into the free space map immediately,
-	 * or just keep it for this backend's exclusive use in the short run
-	 * (until VACUUM sees it)?	Seems to depend on whether you expect the
-	 * current backend to make more insertions or not, which is probably a
-	 * good bet most of the time.  So for now, don't add it to FSM yet.
+	 * XXX 我们应该立即将新页面录入空闲空间映射，还是只在短期内（直到
+	 * VACUUM 看到它）为此后端的独占使用保留它？这似乎取决于您是否期望
+	 * 当前后端进行更多插入，这在大多数时候可能是一个不错的赌注。所以
+	 * 目前，不要将它加入 FSM。
 	 */
 	RelationSetTargetBlock(relation, targetBlock);
 

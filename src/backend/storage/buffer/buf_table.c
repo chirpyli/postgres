@@ -1,13 +1,13 @@
 /*-------------------------------------------------------------------------
  *
  * buf_table.c
- *	  routines for mapping BufferTags to buffer indexes.
+ *	  将 BufferTag 映射到缓冲区索引的例程。
  *
- * Note: the routines in this file do no locking of their own.  The caller
- * must hold a suitable lock on the appropriate BufMappingLock, as specified
- * in the comments.  We can't do the locking inside these functions because
- * in most cases the caller needs to adjust the buffer header contents
- * before the lock is released (see notes in README).
+ * 注意：本文件中的例程不自行加锁。调用者必须
+ * 持有相应 BufMappingLock 分区上的合适锁，详见
+ * 各函数的注释。我们不能在这些函数内部加锁，因为
+ * 大多数情况下调用者需要在释放锁之前调整
+ * 缓冲区头部内容（参见 README 中的说明）。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -23,19 +23,19 @@
 
 #include "storage/buf_internals.h"
 
-/* entry for buffer lookup hashtable */
+/* 缓冲区查找哈希表的条目 */
 typedef struct
 {
-	BufferTag	key;			/* Tag of a disk page */
-	int			id;				/* Associated buffer ID */
+	BufferTag	key;			/* 磁盘页面的 Tag */
+	int			id;				/* 关联的缓冲区 ID */
 } BufferLookupEnt;
 
 static HTAB *SharedBufHash;
 
 
 /*
- * Estimate space needed for mapping hashtable
- *		size is the desired hash table size (possibly more than NBuffers)
+ * 估算映射哈希表所需的空间。
+ *		size 是所需的哈希表大小（可能大于 NBuffers）。
  */
 Size
 BufTableShmemSize(int size)
@@ -44,17 +44,17 @@ BufTableShmemSize(int size)
 }
 
 /*
- * Initialize shmem hash table for mapping buffers
- *		size is the desired hash table size (possibly more than NBuffers)
+ * 初始化用于映射缓冲区的共享内存哈希表。
+ *		size 是所需的哈希表大小（可能大于 NBuffers）。
  */
 void
 InitBufTable(int size)
 {
 	HASHCTL		info;
 
-	/* assume no locking is needed yet */
+	/* 假设此时还不需要加锁 */
 
-	/* BufferTag maps to Buffer */
+	/* BufferTag 映射到 Buffer */
 	info.keysize = sizeof(BufferTag);
 	info.entrysize = sizeof(BufferLookupEnt);
 	info.num_partitions = NUM_BUFFER_PARTITIONS;
@@ -67,12 +67,12 @@ InitBufTable(int size)
 
 /*
  * BufTableHashCode
- *		Compute the hash code associated with a BufferTag
+ *		计算与 BufferTag 关联的哈希码。
  *
- * This must be passed to the lookup/insert/delete routines along with the
- * tag.  We do it like this because the callers need to know the hash code
- * in order to determine which buffer partition to lock, and we don't want
- * to do the hash computation twice (hash_any is a bit slow).
+ * 该哈希码必须与 tag 一起传递给查找/插入/删除例程。
+ * 我们采用这种设计是因为调用者需要知道哈希码以确定
+ * 要锁定哪个缓冲区分区，而我们不想多次计算哈希值
+ * （hash_any 有些慢）。
  */
 uint32
 BufTableHashCode(BufferTag *tagPtr)
@@ -82,9 +82,9 @@ BufTableHashCode(BufferTag *tagPtr)
 
 /*
  * BufTableLookup
- *		Lookup the given BufferTag; return buffer ID, or -1 if not found
+ *		查找给定的 BufferTag；返回缓冲区 ID，如果未找到则返回 -1。
  *
- * Caller must hold at least share lock on BufMappingLock for tag's partition
+ * 调用者必须至少持有 tag 所属分区上 BufMappingLock 的共享锁。
  */
 int
 BufTableLookup(BufferTag *tagPtr, uint32 hashcode)
@@ -106,13 +106,13 @@ BufTableLookup(BufferTag *tagPtr, uint32 hashcode)
 
 /*
  * BufTableInsert
- *		Insert a hashtable entry for given tag and buffer ID,
- *		unless an entry already exists for that tag
+ *		为给定的 tag 和缓冲区 ID 插入一条哈希表条目，
+ *		除非该 tag 的条目已存在。
  *
- * Returns -1 on successful insertion.  If a conflicting entry exists
- * already, returns the buffer ID in that entry.
+ * 插入成功返回 -1。如果已有冲突条目存在，
+ * 则返回该条目中的缓冲区 ID。
  *
- * Caller must hold exclusive lock on BufMappingLock for tag's partition
+ * 调用者必须持有 tag 所属分区上 BufMappingLock 的排他锁。
  */
 int
 BufTableInsert(BufferTag *tagPtr, uint32 hashcode, int buf_id)
@@ -120,8 +120,8 @@ BufTableInsert(BufferTag *tagPtr, uint32 hashcode, int buf_id)
 	BufferLookupEnt *result;
 	bool		found;
 
-	Assert(buf_id >= 0);		/* -1 is reserved for not-in-table */
-	Assert(tagPtr->blockNum != P_NEW);	/* invalid tag */
+	Assert(buf_id >= 0);		/* -1 保留给不在表中的情况 */
+	Assert(tagPtr->blockNum != P_NEW);	/* 无效的 tag */
 
 	result = (BufferLookupEnt *)
 		hash_search_with_hash_value(SharedBufHash,
@@ -130,7 +130,7 @@ BufTableInsert(BufferTag *tagPtr, uint32 hashcode, int buf_id)
 									HASH_ENTER,
 									&found);
 
-	if (found)					/* found something already in the table */
+	if (found)					/* 发现表中已有条目 */
 		return result->id;
 
 	result->id = buf_id;
@@ -140,9 +140,9 @@ BufTableInsert(BufferTag *tagPtr, uint32 hashcode, int buf_id)
 
 /*
  * BufTableDelete
- *		Delete the hashtable entry for given tag (which must exist)
+ *		删除给定 tag 的哈希表条目（必须存在）。
  *
- * Caller must hold exclusive lock on BufMappingLock for tag's partition
+ * 调用者必须持有 tag 所属分区上 BufMappingLock 的排他锁。
  */
 void
 BufTableDelete(BufferTag *tagPtr, uint32 hashcode)
@@ -156,6 +156,6 @@ BufTableDelete(BufferTag *tagPtr, uint32 hashcode)
 									HASH_REMOVE,
 									NULL);
 
-	if (!result)				/* shouldn't happen */
+	if (!result)				/* 不应发生 */
 		elog(ERROR, "shared buffer hash table corrupted");
 }

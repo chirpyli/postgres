@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * fd.h
- *	  Virtual file descriptor definitions.
+ *	  虚拟文件描述符定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -13,13 +13,13 @@
  */
 
 /*
- * calls:
+ * 调用：
  *
  *	File {Close, Read, ReadV, Write, WriteV, Size, Sync}
  *	{Path Name Open, Allocate, Free} File
  *
- * These are NOT JUST RENAMINGS OF THE UNIX ROUTINES.
- * Use them for all file activity...
+ * 这些并非仅仅是 UNIX 系统调用的重命名。
+ * 所有文件操作都应使用它们...
  *
  *	File fd;
  *	fd = PathNameOpenFile("foo", O_RDONLY);
@@ -27,18 +27,18 @@
  *	AllocateFile();
  *	FreeFile();
  *
- * Use AllocateFile, not fopen, if you need a stdio file (FILE*); then
- * use FreeFile, not fclose, to close it.  AVOID using stdio for files
- * that you intend to hold open for any length of time, since there is
- * no way for them to share kernel file descriptors with other files.
+ * 如果需要一个 stdio 文件 (FILE*)，请使用 AllocateFile 而非 fopen；
+ * 然后用 FreeFile 而非 fclose 来关闭它。
+ * 避免对需要长期持有的文件使用 stdio，
+ * 因为 stdio 无法与其他文件共享内核文件描述符。
  *
- * Likewise, use AllocateDir/FreeDir, not opendir/closedir, to allocate
- * open directories (DIR*), and OpenTransientFile/CloseTransientFile for an
- * unbuffered file descriptor.
+ * 同理，使用 AllocateDir/FreeDir 而非 opendir/closedir 来分配
+ * 打开的目录 (DIR*)，使用 OpenTransientFile/CloseTransientFile
+ * 来获取无缓冲的文件描述符。
  *
- * If you really can't use any of the above, at least call AcquireExternalFD
- * or ReserveExternalFD to report any file descriptors that are held for any
- * length of time.  Failure to do so risks unnecessary EMFILE errors.
+ * 如果确实无法使用上述任何接口，至少应调用 AcquireExternalFD
+ * 或 ReserveExternalFD 来报告那些长期持有的文件描述符。
+ * 否则可能导致不必要的 EMFILE 错误。
  */
 #ifndef FD_H
 #define FD_H
@@ -63,10 +63,10 @@ enum FileExtendMethod
 	FILE_EXTEND_METHOD_WRITE_ZEROS,
 };
 
-/* Default to the first available file_extend_method. */
+/* 默认使用第一个可用的 file_extend_method。 */
 #define DEFAULT_FILE_EXTEND_METHOD 0
 
-/* GUC parameter */
+/* GUC 参数 */
 extern PGDLLIMPORT int max_files_per_process;
 extern PGDLLIMPORT bool data_sync_retry;
 extern PGDLLIMPORT int recovery_init_sync_method;
@@ -74,16 +74,16 @@ extern PGDLLIMPORT int io_direct_flags;
 extern PGDLLIMPORT int file_extend_method;
 
 /*
- * This is private to fd.c, but exported for save/restore_backend_variables()
+ * 这是 fd.c 的私有数据，但为了 save/restore_backend_variables() 而导出
  */
 extern PGDLLIMPORT int max_safe_fds;
 
 /*
- * On Windows, we have to interpret EACCES as possibly meaning the same as
- * ENOENT, because if a file is unlinked-but-not-yet-gone on that platform,
- * that's what you get.  Ugh.  This code is designed so that we don't
- * actually believe these cases are okay without further evidence (namely,
- * a pending fsync request getting canceled ... see ProcessSyncRequests).
+ * 在 Windows 上，我们需要将 EACCES 解释为可能与 ENOENT 含义相同，
+ * 因为在该平台上，如果一个文件已经被 unlink 但尚未消失，你就会得到 EACCES。
+ * 哎。此代码的设计使得我们不会在没有进一步证据（即
+ * 一个待处理的 fsync 请求被取消... 参见 ProcessSyncRequests）的情况下
+ * 轻信这些情况是正常的。
  */
 #ifndef WIN32
 #define FILE_POSSIBLY_DELETED(err)	((err) == ENOENT)
@@ -92,12 +92,12 @@ extern PGDLLIMPORT int max_safe_fds;
 #endif
 
 /*
- * O_DIRECT is not standard, but almost every Unix has it.  We translate it
- * to the appropriate Windows flag in src/port/open.c.  We simulate it with
- * fcntl(F_NOCACHE) on macOS inside fd.c's open() wrapper.  We use the name
- * PG_O_DIRECT rather than defining O_DIRECT in that case (probably not a good
- * idea on a Unix).  We can only use it if the compiler will correctly align
- * PGIOAlignedBlock for us, though.
+ * O_DIRECT 不是标准标志，但几乎所有 Unix 系统都支持它。
+ * 在 src/port/open.c 中将其转换为适当的 Windows 标志。
+ * 在 macOS 上，我们在 fd.c 的 open() 包装函数中通过 fcntl(F_NOCACHE) 来模拟它。
+ * 在这种情况下，我们使用 PG_O_DIRECT 名称，而不是定义 O_DIRECT
+ * （在 Unix 上这可能不是个好主意）。
+ * 不过，只有当编译器能正确对齐 PGIOAlignedBlock 时才能使用它。
  */
 #if defined(O_DIRECT) && defined(pg_attribute_aligned)
 #define		PG_O_DIRECT O_DIRECT
@@ -109,12 +109,12 @@ extern PGDLLIMPORT int max_safe_fds;
 #endif
 
 /*
- * prototypes for functions in fd.c
+ * fd.c 中函数的原型
  */
 
 struct PgAioHandle;
 
-/* Operations on virtual Files --- equivalent to Unix kernel file ops */
+/* 虚拟文件操作 --- 等价于 Unix 内核文件操作 */
 extern File PathNameOpenFile(const char *fileName, int fileFlags);
 extern File PathNameOpenFilePerm(const char *fileName, int fileFlags, mode_t fileMode);
 extern File OpenTemporaryFile(bool interXact);
@@ -135,7 +135,7 @@ extern int	FileGetRawDesc(File file);
 extern int	FileGetRawFlags(File file);
 extern mode_t FileGetRawMode(File file);
 
-/* Operations used for sharing named temporary files */
+/* 用于共享命名临时文件的操作 */
 extern File PathNameCreateTemporaryFile(const char *path, bool error_on_failure);
 extern File PathNameOpenTemporaryFile(const char *path, int mode);
 extern bool PathNameDeleteTemporaryFile(const char *path, bool error_on_failure);
@@ -143,39 +143,39 @@ extern void PathNameCreateTemporaryDir(const char *basedir, const char *director
 extern void PathNameDeleteTemporaryDir(const char *dirname);
 extern void TempTablespacePath(char *path, Oid tablespace);
 
-/* Operations that allow use of regular stdio --- USE WITH CAUTION */
+/* 允许使用常规 stdio 的操作 --- 请谨慎使用 */
 extern FILE *AllocateFile(const char *name, const char *mode);
 extern int	FreeFile(FILE *file);
 
-/* Operations that allow use of pipe streams (popen/pclose) */
+/* 允许使用管道流的操作（popen/pclose） */
 extern FILE *OpenPipeStream(const char *command, const char *mode);
 extern int	ClosePipeStream(FILE *file);
 
-/* Operations to allow use of the <dirent.h> library routines */
+/* 允许使用 <dirent.h> 库例程的操作 */
 extern DIR *AllocateDir(const char *dirname);
 extern struct dirent *ReadDir(DIR *dir, const char *dirname);
 extern struct dirent *ReadDirExtended(DIR *dir, const char *dirname,
 									  int elevel);
 extern int	FreeDir(DIR *dir);
 
-/* Operations to allow use of a plain kernel FD, with automatic cleanup */
+/* 允许使用普通内核 FD 的操作，带自动清理 */
 extern int	OpenTransientFile(const char *fileName, int fileFlags);
 extern int	OpenTransientFilePerm(const char *fileName, int fileFlags, mode_t fileMode);
 extern int	CloseTransientFile(int fd);
 
-/* If you've really really gotta have a plain kernel FD, use this */
+/* 如果你确实、真的必须要一个普通内核 FD，请使用此函数 */
 extern int	BasicOpenFile(const char *fileName, int fileFlags);
 extern int	BasicOpenFilePerm(const char *fileName, int fileFlags, mode_t fileMode);
 
-/* Use these for other cases, and also for long-lived BasicOpenFile FDs */
+/* 在其他情况下使用这些函数，也用于长期持有的 BasicOpenFile FD */
 extern bool AcquireExternalFD(void);
 extern void ReserveExternalFD(void);
 extern void ReleaseExternalFD(void);
 
-/* Make a directory with default permissions */
+/* 使用默认权限创建一个目录 */
 extern int	MakePGDirectory(const char *directoryName);
 
-/* Miscellaneous support routines */
+/* 杂项支持例程 */
 extern void InitFileAccess(void);
 extern void InitTemporaryFileAccess(void);
 extern void set_max_safe_fds(void);

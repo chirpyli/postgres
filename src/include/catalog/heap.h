@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * heap.h
- *	  prototypes for functions in backend/catalog/heap.c
+ *		backend/catalog/heap.c 中各函数的原型声明
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -19,33 +19,33 @@
 #include "parser/parse_node.h"
 
 
-/* flag bits for CheckAttributeType/CheckAttributeNamesTypes */
-#define CHKATYPE_ANYARRAY		0x01	/* allow ANYARRAY */
-#define CHKATYPE_ANYRECORD		0x02	/* allow RECORD and RECORD[] */
-#define CHKATYPE_IS_PARTKEY		0x04	/* attname is part key # not column */
-#define CHKATYPE_IS_VIRTUAL		0x08	/* is virtual generated column */
+/* CheckAttributeType/CheckAttributeNamesTypes 的标志位 */
+#define CHKATYPE_ANYARRAY		0x01	/* 允许 ANYARRAY */
+#define CHKATYPE_ANYRECORD		0x02	/* 允许 RECORD 和 RECORD[] */
+#define CHKATYPE_IS_PARTKEY		0x04	/* attname 是分区键编号而非列名 */
+#define CHKATYPE_IS_VIRTUAL		0x08	/* 是否为虚拟生成列 */
 
 typedef struct RawColumnDefault
 {
-	AttrNumber	attnum;			/* attribute to attach default to */
-	Node	   *raw_default;	/* default value (untransformed parse tree) */
-	char		generated;		/* attgenerated setting */
+	AttrNumber	attnum;			/* 要附加默认值的属性 */
+	Node	   *raw_default;	/* 默认值（未经转换的解析树） */
+	char		generated;		/* attgenerated 设置 */
 } RawColumnDefault;
 
 typedef struct CookedConstraint
 {
-	ConstrType	contype;		/* CONSTR_DEFAULT, CONSTR_CHECK,
+	ConstrType	contype;		/* 约束类型：CONSTR_DEFAULT、CONSTR_CHECK、
 								 * CONSTR_NOTNULL */
-	Oid			conoid;			/* constr OID if created, otherwise Invalid */
-	char	   *name;			/* name, or NULL if none */
-	AttrNumber	attnum;			/* which attr (only for NOTNULL, DEFAULT) */
-	Node	   *expr;			/* transformed default or check expr */
-	bool		is_enforced;	/* is enforced? (only for CHECK) */
-	bool		skip_validation;	/* skip validation? (only for CHECK) */
-	bool		is_local;		/* constraint has local (non-inherited) def */
-	int16		inhcount;		/* number of times constraint is inherited */
-	bool		is_no_inherit;	/* constraint has local def and cannot be
-								 * inherited */
+	Oid			conoid;			/* 若已创建则为约束 OID，否则为 Invalid */
+	char	   *name;			/* 名称，没有则为 NULL */
+	AttrNumber	attnum;			/* 对应哪个属性（仅用于 NOTNULL、DEFAULT） */
+	Node	   *expr;			/* 转换后的默认值或 CHECK 表达式 */
+	bool		is_enforced;	/* 是否强制执行？（仅用于 CHECK） */
+	bool		skip_validation;	/* 是否跳过校验？（仅用于 CHECK） */
+	bool		is_local;		/* 约束具有本地（非继承）定义 */
+	int16		inhcount;		/* 约束被继承的次数 */
+	bool		is_no_inherit;	/* 约束具有本地定义且不能被
+								 * 继承 */
 } CookedConstraint;
 
 extern Relation heap_create(const char *relname,
@@ -153,7 +153,7 @@ extern void CheckAttributeType(const char *attname,
 							   List *containing_rowtypes,
 							   int flags);
 
-/* pg_partitioned_table catalog manipulation functions */
+/* pg_partitioned_table 系统表操作函数 */
 extern void StorePartitionKey(Relation rel,
 							  char strategy,
 							  int16 partnatts,

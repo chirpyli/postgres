@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * pg_am.h
- *	  definition of the "access method" system catalog (pg_am)
+ *		"访问方法"（access method）系统目录（pg_am）的定义
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -9,9 +9,8 @@
  *
  * src/include/catalog/pg_am.h
  *
- * NOTES
- *	  The Catalog.pm module reads this file and derives schema
- *	  information.
+ * 说明
+ *		Catalog.pm 模块会读取此文件并推导模式信息。
  *
  *-------------------------------------------------------------------------
  */
@@ -22,7 +21,7 @@
 #include "catalog/pg_am_d.h"	/* IWYU pragma: export */
 
 /* ----------------
- *		pg_am definition.  cpp turns this into
+ *		pg_am 定义。cpp 会将其转换为
  *		typedef struct FormData_pg_am
  * ----------------
  */
@@ -30,19 +29,18 @@ CATALOG(pg_am,2601,AccessMethodRelationId)
 {
 	Oid			oid;			/* oid */
 
-	/* access method name */
+	/* 访问方法名称 */
 	NameData	amname;
 
-	/* handler function */
+	/* 处理器函数 */
 	regproc		amhandler BKI_LOOKUP(pg_proc);
 
-	/* see AMTYPE_xxx constants below */
+	/* 参见下方的 AMTYPE_xxx 常量 */
 	char		amtype;
 } FormData_pg_am;
 
 /* ----------------
- *		Form_pg_am corresponds to a pointer to a tuple with
- *		the format of pg_am relation.
+ *		Form_pg_am 对应一个指向具有 pg_am 关系格式的元组的指针。
  * ----------------
  */
 typedef FormData_pg_am *Form_pg_am;
@@ -56,10 +54,10 @@ MAKE_SYSCACHE(AMOID, pg_am_oid_index, 4);
 #ifdef EXPOSE_TO_CLIENT_CODE
 
 /*
- * Allowed values for amtype
+ * amtype 的合法取值
  */
-#define AMTYPE_INDEX					'i' /* index access method */
-#define AMTYPE_TABLE					't' /* table access method */
+#define AMTYPE_INDEX					'i' /* 索引访问方法 */
+#define AMTYPE_TABLE					't' /* 表访问方法 */
 
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 

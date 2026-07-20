@@ -1,56 +1,47 @@
 /*-------------------------------------------------------------------------
  *
  * smgr.c
- *	  public interface routines to storage manager switch.
+ *	  存储管理器切换的对外接口例程。
  *
- * All file system operations on relations dispatch through these routines.
- * An SMgrRelation represents physical on-disk relation files that are open
- * for reading and writing.
+ * 所有针对关系的文件系统操作都经由这些例程进行分发。
+ * SMgrRelation 表示已打开、可供读写的物理磁盘关系文件。
  *
- * When a relation is first accessed through the relation cache, the
- * corresponding SMgrRelation entry is opened by calling smgropen(), and the
- * reference is stored in the relation cache entry.
+ * 当一个关系首次通过关系缓存被访问时，对应的 SMgrRelation 项会通过
+ * 调用 smgropen() 打开，该引用会被保存在关系缓存项中。
  *
- * Accesses that don't go through the relation cache open the SMgrRelation
- * directly.  That includes flushing buffers from the buffer cache, as well as
- * all accesses in auxiliary processes like the checkpointer or the WAL redo
- * in the startup process.
+ * 不经过关系缓存的访问会直接打开 SMgrRelation。这包括从缓冲区缓存
+ * 刷出缓冲区，以及诸如检查点进程或启动进程中的 WAL 重做等辅助进程
+ * 内的所有访问。
  *
- * Operations like CREATE, DROP, ALTER TABLE also hold SMgrRelation references
- * independent of the relation cache.  They need to prepare the physical files
- * before updating the relation cache.
+ * 像 CREATE、DROP、ALTER TABLE 这样的操作也会持有独立于关系缓存的
+ * SMgrRelation 引用。它们需要在更新关系缓存之前先准备好物理文件。
  *
- * There is a hash table that holds all the SMgrRelation entries in the
- * backend.  If you call smgropen() twice for the same rel locator, you get a
- * reference to the same SMgrRelation. The reference is valid until the end of
- * transaction.  This makes repeated access to the same relation efficient,
- * and allows caching things like the relation size in the SMgrRelation entry.
+ * 后端中维护着一个哈希表，保存所有的 SMgrRelation 项。如果对同一个
+ * 关系定位器（rel locator）调用两次 smgropen()，会得到同一个
+ * SMgrRelation 的引用。该引用在事务结束之前一直有效。这使得对同一个
+ * 关系的重复访问更高效，并且允许在 SMgrRelation 项中缓存关系大小等
+ * 信息。
  *
- * At end of transaction, all SMgrRelation entries that haven't been pinned
- * are removed.  An SMgrRelation can hold kernel file system descriptors for
- * the underlying files, and we'd like to close those reasonably soon if the
- * file gets deleted.  The SMgrRelations references held by the relcache are
- * pinned to prevent them from being closed.
+ * 在事务结束时，所有未被固定的（unpinned）SMgrRelation 项会被移除。
+ * 一个 SMgrRelation 可能持有底层文件的内核文件系统描述符，如果文件
+ * 被删除，我们希望尽快关闭这些描述符。由 relcache 持有的 SMgrRelation
+ * 引用会被固定（pinned），以防止它们被关闭。
  *
- * There is another mechanism to close file descriptors early:
- * PROCSIGNAL_BARRIER_SMGRRELEASE.  It is a request to immediately close all
- * file descriptors.  Upon receiving that signal, the backend closes all file
- * descriptors held open by SMgrRelations, but because it can happen in the
- * middle of a transaction, we cannot destroy the SMgrRelation objects
- * themselves, as there could pointers to them in active use.  See
- * smgrrelease() and smgrreleaseall().
+ * 还有另一种提前关闭文件描述符的机制：
+ * PROCSIGNAL_BARRIER_SMGRRELEASE。它是一个立即关闭所有文件描述符的
+ * 请求。后端收到该信号后，会关闭 SMgrRelation 持有的所有已打开文件
+ * 描述符，但由于它可能发生在事务执行过程中，我们不能销毁 SMgrRelation
+ * 对象本身，因为可能有正在使用的指针指向它们。参见
+ * smgrrelease() 和 smgrreleaseall()。
  *
- * NB: We need to hold interrupts across most of the functions in this file,
- * as otherwise interrupt processing, e.g. due to a < ERROR elog/ereport, can
- * trigger procsignal processing, which in turn can trigger
- * smgrreleaseall(). Most of the relevant code is not reentrant.  It seems
- * better to put the HOLD_INTERRUPTS()/RESUME_INTERRUPTS() here, instead of
- * trying to push them down to md.c where possible: For one, every smgr
- * implementation would be vulnerable, for another, a good bit of smgr.c code
- * itself is affected too.  Eventually we might want a more targeted solution,
- * allowing e.g. a networked smgr implementation to be interrupted, but many
- * other, more complicated, problems would need to be fixed for that to be
- * viable (e.g. smgr.c is often called with interrupts already held).
+ * 注意：本文件中的大多数函数都需要在持有中断的情况下执行，否则中断
+ * 处理（例如由于 < ERROR 级别的 elog/ereport）可能触发 procsignal 处理，
+ * 进而触发 smgrreleaseall()。相关代码大多不可重入。将
+ * HOLD_INTERRUPTS()/RESUME_INTERRUPTS() 放在这里，而不是在可能时下沉到
+ * md.c，似乎更好：一方面，每个 smgr 实现都可能存在此问题；另一方面，
+ * smgr.c 自身也有相当一部分代码受到影响。最终我们或许想要一个更有
+ * 针对性的方案，例如允许网络化的 smgr 实现被中断，但要使其可行还需
+ * 解决许多更复杂的问题（例如 smgr.c 常常在中断已被持有的情况下被调用）。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -76,19 +67,17 @@
 
 
 /*
- * This struct of function pointers defines the API between smgr.c and
- * any individual storage manager module.  Note that smgr subfunctions are
- * generally expected to report problems via elog(ERROR).  An exception is
- * that smgr_unlink should use elog(WARNING), rather than erroring out,
- * because we normally unlink relations during post-commit/abort cleanup,
- * and so it's too late to raise an error.  Also, various conditions that
- * would normally be errors should be allowed during bootstrap and/or WAL
- * recovery --- see comments in md.c for details.
+ * 这个由函数指针组成的结构体定义了 smgr.c 与各个存储管理器模块之间的
+ * API。注意 smgr 子函数通常应通过 elog(ERROR) 来报告问题。例外情况是
+ * smgr_unlink 应使用 elog(WARNING) 而不是报错，因为我们通常在提交后/
+ * 中止后的清理阶段解除关系链接，此时再报错已经太晚了。此外，在引导
+ * （bootstrap）和/或 WAL 恢复期间，通常会被视为错误的各种情况应被允许
+ * ——详见 md.c 中的注释。
  */
 typedef struct f_smgr
 {
-	void		(*smgr_init) (void);	/* may be NULL */
-	void		(*smgr_shutdown) (void);	/* may be NULL */
+	void		(*smgr_init) (void);	/* 可以为 NULL */
+	void		(*smgr_shutdown) (void);	/* 可以为 NULL */
 	void		(*smgr_open) (SMgrRelation reln);
 	void		(*smgr_close) (SMgrRelation reln, ForkNumber forknum);
 	void		(*smgr_create) (SMgrRelation reln, ForkNumber forknum,
@@ -126,7 +115,7 @@ typedef struct f_smgr
 } f_smgr;
 
 static const f_smgr smgrsw[] = {
-	/* magnetic disk */
+	/* 磁盘 */
 	{
 		.smgr_init = mdinit,
 		.smgr_shutdown = NULL,
@@ -154,14 +143,14 @@ static const f_smgr smgrsw[] = {
 static const int NSmgr = lengthof(smgrsw);
 
 /*
- * Each backend has a hashtable that stores all extant SMgrRelation objects.
- * In addition, "unpinned" SMgrRelation objects are chained together in a list.
+ * 每个后端都有一个哈希表，用于保存所有现存的 SMgrRelation 对象。
+ * 此外，所有“未固定”（unpinned）的 SMgrRelation 对象会被串成一个链表。
  */
 static HTAB *SMgrRelationHash = NULL;
 
 static dlist_head unpinned_relns;
 
-/* local function prototypes */
+/* 本地函数原型 */
 static void smgrshutdown(int code, Datum arg);
 static void smgrdestroy(SMgrRelation reln);
 
@@ -177,12 +166,11 @@ const PgAioTargetInfo aio_smgr_target_info = {
 
 
 /*
- * smgrinit(), smgrshutdown() -- Initialize or shut down storage
- *								 managers.
+ * smgrinit()、smgrshutdown() -- 初始化或关闭存储管理器。
  *
- * Note: smgrinit is called during backend startup (normal or standalone
- * case), *not* during postmaster start.  Therefore, any resources created
- * here or destroyed in smgrshutdown are backend-local.
+ * 注意：smgrinit 在后端启动期间（普通或独立模式）被调用，而*不是*在
+ * postmaster 启动期间。因此，在这里创建或在 smgrshutdown 中销毁的
+ * 任何资源都是后端局部（backend-local）的。
  */
 void
 smgrinit(void)
@@ -199,12 +187,12 @@ smgrinit(void)
 
 	RESUME_INTERRUPTS();
 
-	/* register the shutdown proc */
+	/* 注册关闭处理函数 */
 	on_proc_exit(smgrshutdown, 0);
 }
 
 /*
- * on_proc_exit hook for smgr cleanup during backend shutdown
+ * 后端关闭期间用于 smgr 清理的 on_proc_exit 钩子
  */
 static void
 smgrshutdown(int code, Datum arg)
@@ -223,18 +211,16 @@ smgrshutdown(int code, Datum arg)
 }
 
 /*
- * smgropen() -- Return an SMgrRelation object, creating it if need be.
+ * smgropen() -- 返回一个 SMgrRelation 对象，必要时创建它。
  *
- * In versions of PostgreSQL prior to 17, this function returned an object
- * with no defined lifetime.  Now, however, the object remains valid for the
- * lifetime of the transaction, up to the point where AtEOXact_SMgr() is
- * called, making it much easier for callers to know for how long they can
- * hold on to a pointer to the returned object.  If this function is called
- * outside of a transaction, the object remains valid until smgrdestroy() or
- * smgrdestroyall() is called.  Background processes that use smgr but not
- * transactions typically do this once per checkpoint cycle.
+ * 在 17 之前的 PostgreSQL 版本中，该函数返回一个生命周期未定义的对象。
+ * 但现在，该对象在事务的整个生命周期内保持有效，直到调用
+ * AtEOXact_SMgr() 为止，这让调用者更容易判断自己能持有指向返回对象的
+ * 指针多久。如果在事务之外调用该函数，对象会一直有效，直到调用
+ * smgrdestroy() 或 smgrdestroyall()。使用 smgr 但不使用事务的后台进程
+ * 通常每个检查点周期执行一次。
  *
- * This does not attempt to actually open the underlying files.
+ * 该函数并不会真正去打开底层文件。
  */
 SMgrRelation
 smgropen(RelFileLocator rlocator, ProcNumber backend)
@@ -249,7 +235,7 @@ smgropen(RelFileLocator rlocator, ProcNumber backend)
 
 	if (SMgrRelationHash == NULL)
 	{
-		/* First time through: initialize the hash table */
+		/* 首次调用：初始化哈希表 */
 		HASHCTL		ctl;
 
 		ctl.keysize = sizeof(RelFileLocatorBackend);
@@ -259,23 +245,23 @@ smgropen(RelFileLocator rlocator, ProcNumber backend)
 		dlist_init(&unpinned_relns);
 	}
 
-	/* Look up or create an entry */
+	/* 查找或创建一个项 */
 	brlocator.locator = rlocator;
 	brlocator.backend = backend;
 	reln = (SMgrRelation) hash_search(SMgrRelationHash,
 									  &brlocator,
 									  HASH_ENTER, &found);
 
-	/* Initialize it if not present before */
+	/* 如果之前不存在则进行初始化 */
 	if (!found)
 	{
-		/* hash_search already filled in the lookup key */
+		/* hash_search 已经填好了查找键 */
 		reln->smgr_targblock = InvalidBlockNumber;
 		for (int i = 0; i <= MAX_FORKNUM; ++i)
 			reln->smgr_cached_nblocks[i] = InvalidBlockNumber;
-		reln->smgr_which = 0;	/* we only have md.c at present */
+		reln->smgr_which = 0;	/* 目前只有 md.c 一种实现 */
 
-		/* it is not pinned yet */
+		/* 尚未被固定 */
 		reln->pincount = 0;
 		dlist_push_tail(&unpinned_relns, &reln->node);
 
@@ -289,8 +275,7 @@ smgropen(RelFileLocator rlocator, ProcNumber backend)
 }
 
 /*
- * smgrpin() -- Prevent an SMgrRelation object from being destroyed at end of
- *				transaction
+ * smgrpin() -- 防止 SMgrRelation 对象在事务结束时被销毁
  */
 void
 smgrpin(SMgrRelation reln)
@@ -301,11 +286,10 @@ smgrpin(SMgrRelation reln)
 }
 
 /*
- * smgrunpin() -- Allow an SMgrRelation object to be destroyed at end of
- *				  transaction
+ * smgrunpin() -- 允许 SMgrRelation 对象在事务结束时被销毁
  *
- * The object remains valid, but if there are no other pins on it, it is moved
- * to the unpinned list where it will be destroyed by AtEOXact_SMgr().
+ * 该对象仍然有效，但如果没有其他 pin，它会被移到未固定链表中，
+ * 由 AtEOXact_SMgr() 将其销毁。
  */
 void
 smgrunpin(SMgrRelation reln)
@@ -317,7 +301,7 @@ smgrunpin(SMgrRelation reln)
 }
 
 /*
- * smgrdestroy() -- Delete an SMgrRelation object.
+ * smgrdestroy() -- 删除一个 SMgrRelation 对象。
  */
 static void
 smgrdestroy(SMgrRelation reln)
@@ -342,9 +326,9 @@ smgrdestroy(SMgrRelation reln)
 }
 
 /*
- * smgrrelease() -- Release all resources used by this object.
+ * smgrrelease() -- 释放该对象使用的所有资源。
  *
- * The object remains valid.
+ * 该对象仍然保持有效。
  */
 void
 smgrrelease(SMgrRelation reln)
@@ -362,13 +346,12 @@ smgrrelease(SMgrRelation reln)
 }
 
 /*
- * smgrclose() -- Close an SMgrRelation object.
+ * smgrclose() -- 关闭一个 SMgrRelation 对象。
  *
- * The SMgrRelation reference should not be used after this call.  However,
- * because we don't keep track of the references returned by smgropen(), we
- * don't know if there are other references still pointing to the same object,
- * so we cannot remove the SMgrRelation object yet.  Therefore, this is just a
- * synonym for smgrrelease() at the moment.
+ * 本次调用之后不应再使用该 SMgrRelation 引用。然而，由于我们没有跟踪
+ * smgropen() 返回的引用，无法确定是否还有其他引用仍指向同一个对象，
+ * 因此暂时还不能移除该 SMgrRelation 对象。所以目前它只是 smgrrelease()
+ * 的同义函数。
  */
 void
 smgrclose(SMgrRelation reln)
@@ -377,22 +360,22 @@ smgrclose(SMgrRelation reln)
 }
 
 /*
- * smgrdestroyall() -- Release resources used by all unpinned objects.
+ * smgrdestroyall() -- 释放所有未固定对象使用的资源。
  *
- * It must be known that there are no pointers to SMgrRelations, other than
- * those pinned with smgrpin().
+ * 调用前必须确认：除了通过 smgrpin() 固定的那些之外，没有任何指向
+ * SMgrRelation 的指针。
  */
 void
 smgrdestroyall(void)
 {
 	dlist_mutable_iter iter;
 
-	/* seems unsafe to accept interrupts while in a dlist_foreach_modify() */
+	/* 在 dlist_foreach_modify() 中接受中断似乎不安全 */
 	HOLD_INTERRUPTS();
 
 	/*
-	 * Zap all unpinned SMgrRelations.  We rely on smgrdestroy() to remove
-	 * each one from the list.
+	 * 清除所有未固定的 SMgrRelation。我们依赖 smgrdestroy() 将每一项
+	 * 从链表中移除。
 	 */
 	dlist_foreach_modify(iter, &unpinned_relns)
 	{
@@ -406,7 +389,7 @@ smgrdestroyall(void)
 }
 
 /*
- * smgrreleaseall() -- Release resources used by all objects.
+ * smgrreleaseall() -- 释放所有对象使用的资源。
  */
 void
 smgrreleaseall(void)
@@ -414,11 +397,11 @@ smgrreleaseall(void)
 	HASH_SEQ_STATUS status;
 	SMgrRelation reln;
 
-	/* Nothing to do if hashtable not set up */
+	/* 如果哈希表尚未建立则无事可做 */
 	if (SMgrRelationHash == NULL)
 		return;
 
-	/* seems unsafe to accept interrupts while iterating */
+	/* 迭代期间接受中断似乎不安全 */
 	HOLD_INTERRUPTS();
 
 	hash_seq_init(&status, SMgrRelationHash);
@@ -432,19 +415,17 @@ smgrreleaseall(void)
 }
 
 /*
- * smgrreleaserellocator() -- Release resources for given RelFileLocator, if
- *							  it's open.
+ * smgrreleaserellocator() -- 释放给定 RelFileLocator 的资源（如果它已打开）。
  *
- * This has the same effects as smgrrelease(smgropen(rlocator)), but avoids
- * uselessly creating a hashtable entry only to drop it again when no
- * such entry exists already.
+ * 其效果与 smgrrelease(smgropen(rlocator)) 相同，但当对应项不存在时，
+ * 可以避免无谓地创建哈希表项又随即丢弃它。
  */
 void
 smgrreleaserellocator(RelFileLocatorBackend rlocator)
 {
 	SMgrRelation reln;
 
-	/* Nothing to do if hashtable not set up */
+	/* 如果哈希表尚未建立则无事可做 */
 	if (SMgrRelationHash == NULL)
 		return;
 
@@ -456,7 +437,7 @@ smgrreleaserellocator(RelFileLocatorBackend rlocator)
 }
 
 /*
- * smgrexists() -- Does the underlying file for a fork exist?
+ * smgrexists() -- 某个 fork 的底层文件是否存在？
  */
 bool
 smgrexists(SMgrRelation reln, ForkNumber forknum)
@@ -471,11 +452,10 @@ smgrexists(SMgrRelation reln, ForkNumber forknum)
 }
 
 /*
- * smgrcreate() -- Create a new relation.
+ * smgrcreate() -- 创建一个新的关系。
  *
- * Given an already-created (but presumably unused) SMgrRelation,
- * cause the underlying disk file or other storage for the fork
- * to be created.
+ * 给定一个已创建（但大概尚未使用）的 SMgrRelation，使该 fork 的
+ * 底层磁盘文件或其他存储被创建出来。
  */
 void
 smgrcreate(SMgrRelation reln, ForkNumber forknum, bool isRedo)
@@ -486,13 +466,12 @@ smgrcreate(SMgrRelation reln, ForkNumber forknum, bool isRedo)
 }
 
 /*
- * smgrdosyncall() -- Immediately sync all forks of all given relations
+ * smgrdosyncall() -- 立即将所有给定关系所有 fork 同步到存储。
  *
- * All forks of all given relations are synced out to the store.
+ * 所有给定关系的所有 fork 都会被同步到存储中。
  *
- * This is equivalent to FlushRelationBuffers() for each smgr relation,
- * then calling smgrimmedsync() for all forks of each relation, but it's
- * significantly quicker so should be preferred when possible.
+ * 这等价于对每个 smgr 关系调用 FlushRelationBuffers()，再对每个关系的
+ * 所有 fork 调用 smgrimmedsync()，但速度要快得多，因此应尽可能优先使用。
  */
 void
 smgrdosyncall(SMgrRelation *rels, int nrels)
@@ -508,7 +487,7 @@ smgrdosyncall(SMgrRelation *rels, int nrels)
 	HOLD_INTERRUPTS();
 
 	/*
-	 * Sync the physical file(s).
+	 * 同步物理文件。
 	 */
 	for (i = 0; i < nrels; i++)
 	{
@@ -525,14 +504,12 @@ smgrdosyncall(SMgrRelation *rels, int nrels)
 }
 
 /*
- * smgrdounlinkall() -- Immediately unlink all forks of all given relations
+ * smgrdounlinkall() -- 立即解除所有给定关系所有 fork 的链接
  *
- * All forks of all given relations are removed from the store.  This
- * should not be used during transactional operations, since it can't be
- * undone.
+ * 所有给定关系的所有 fork 都会从存储中被移除。这不应在事务操作期间
+ * 使用，因为它无法被回滚。
  *
- * If isRedo is true, it is okay for the underlying file(s) to be gone
- * already.
+ * 如果 isRedo 为 true，底层文件已经不存在也是允许的。
  */
 void
 smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo)
@@ -545,21 +522,20 @@ smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo)
 		return;
 
 	/*
-	 * It would be unsafe to process interrupts between DropRelationBuffers()
-	 * and unlinking the underlying files. This probably should be a critical
-	 * section, but we're not there yet.
+	 * 在 DropRelationBuffers() 与解除底层文件链接之间处理中断是不安全的。
+	 * 这或许应当是一个临界区，但目前还没做到。
 	 */
 	HOLD_INTERRUPTS();
 
 	/*
-	 * Get rid of any remaining buffers for the relations.  bufmgr will just
-	 * drop them without bothering to write the contents.
+	 * 丢弃这些关系剩余的所有缓冲区。bufmgr 会直接丢弃它们，
+	 * 而不费心写出其内容。
 	 */
 	DropRelationsAllBuffers(rels, nrels);
 
 	/*
-	 * create an array which contains all relations to be dropped, and close
-	 * each relation's forks at the smgr level while at it
+	 * 创建一个数组，包含所有要删除的关系，并顺便在 smgr 层关闭
+	 * 每个关系的各个 fork
 	 */
 	rlocators = palloc(sizeof(RelFileLocatorBackend) * nrels);
 	for (i = 0; i < nrels; i++)
@@ -569,28 +545,25 @@ smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo)
 
 		rlocators[i] = rlocator;
 
-		/* Close the forks at smgr level */
+		/* 在 smgr 层关闭各 fork */
 		for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
 			smgrsw[which].smgr_close(rels[i], forknum);
 	}
 
 	/*
-	 * Send a shared-inval message to force other backends to close any
-	 * dangling smgr references they may have for these rels.  We should do
-	 * this before starting the actual unlinking, in case we fail partway
-	 * through that step.  Note that the sinval messages will eventually come
-	 * back to this backend, too, and thereby provide a backstop that we
-	 * closed our own smgr rel.
+	 * 发送一条共享失效（shared-inval）消息，强制其他后端关闭它们可能
+	 * 持有的、指向这些关系的悬空 smgr 引用。我们应在开始真正解除链接
+	 * 之前执行此操作，以防在中间某步失败。注意这些 sinval 消息最终也会
+	 * 回到本后端，从而提供一个兜底，确保我们也关闭了自己的 smgr 关系。
 	 */
 	for (i = 0; i < nrels; i++)
 		CacheInvalidateSmgr(rlocators[i]);
 
 	/*
-	 * Delete the physical file(s).
+	 * 删除物理文件。
 	 *
-	 * Note: smgr_unlink must treat deletion failure as a WARNING, not an
-	 * ERROR, because we've already decided to commit or abort the current
-	 * xact.
+	 * 注意：smgr_unlink 必须把删除失败视为 WARNING 而非 ERROR，因为我们
+	 * 已经决定提交或中止当前事务。
 	 */
 
 	for (i = 0; i < nrels; i++)
@@ -608,13 +581,11 @@ smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo)
 
 
 /*
- * smgrextend() -- Add a new block to a file.
+ * smgrextend() -- 向文件追加一个新块。
  *
- * The semantics are nearly the same as smgrwrite(): write at the
- * specified position.  However, this is to be used for the case of
- * extending a relation (i.e., blocknum is at or beyond the current
- * EOF).  Note that we assume writing a block beyond current EOF
- * causes intervening file space to become filled with zeroes.
+ * 其语义与 smgrwrite() 几乎相同：在指定位置写入。但它是用于扩展关系
+ * 的场景（即 blocknum 位于当前 EOF 处或其之后）。注意我们假设在
+ * 当前 EOF 之后写入一个块，会使中间的文件空间被填为零。
  */
 void
 smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
@@ -626,9 +597,8 @@ smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 										 buffer, skipFsync);
 
 	/*
-	 * Normally we expect this to increase nblocks by one, but if the cached
-	 * value isn't as expected, just invalidate it so the next call asks the
-	 * kernel.
+	 * 通常我们期望这会使 nblocks 增加 1，但如果缓存的值与预期不符，
+	 * 则将其置为无效，以便下次调用时向内核查询。
 	 */
 	if (reln->smgr_cached_nblocks[forknum] == blocknum)
 		reln->smgr_cached_nblocks[forknum] = blocknum + 1;
@@ -639,11 +609,10 @@ smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- * smgrzeroextend() -- Add new zeroed out blocks to a file.
+ * smgrzeroextend() -- 向文件追加新的全零块。
  *
- * Similar to smgrextend(), except the relation can be extended by
- * multiple blocks at once and the added blocks will be filled with
- * zeroes.
+ * 与 smgrextend() 类似，不同之处在于关系可以一次性扩展多个块，
+ * 且新增的块会被填为零。
  */
 void
 smgrzeroextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
@@ -655,9 +624,8 @@ smgrzeroextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 											 nblocks, skipFsync);
 
 	/*
-	 * Normally we expect this to increase the fork size by nblocks, but if
-	 * the cached value isn't as expected, just invalidate it so the next call
-	 * asks the kernel.
+	 * 通常我们期望这会使 fork 大小增加 nblocks，但如果缓存的值与预期
+	 * 不符，则将其置为无效，以便下次调用时向内核查询。
 	 */
 	if (reln->smgr_cached_nblocks[forknum] == blocknum)
 		reln->smgr_cached_nblocks[forknum] = blocknum + nblocks;
@@ -668,11 +636,10 @@ smgrzeroextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- * smgrprefetch() -- Initiate asynchronous read of the specified block of a relation.
+ * smgrprefetch() -- 发起对关系中指定块的异步读取。
  *
- * In recovery only, this can return false to indicate that a file
- * doesn't exist (presumably it has been dropped by a later WAL
- * record).
+ * 仅在恢复期间，它可能返回 false 来表明某个文件不存在
+ * （大概它已被后续的 WAL 记录删除）。
  */
 bool
 smgrprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
@@ -688,10 +655,10 @@ smgrprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- * smgrmaxcombine() - Return the maximum number of total blocks that can be
- *				 combined with an IO starting at blocknum.
+ * smgrmaxcombine() -- 返回以 blocknum 起始的 IO 最多可以合并的
+ *				 总块数。
  *
- * The returned value includes the IO for blocknum itself.
+ * 返回值包含 blocknum 本身的那个 IO。
  */
 uint32
 smgrmaxcombine(SMgrRelation reln, ForkNumber forknum,
@@ -707,15 +674,13 @@ smgrmaxcombine(SMgrRelation reln, ForkNumber forknum,
 }
 
 /*
- * smgrreadv() -- read a particular block range from a relation into the
- *				 supplied buffers.
+ * smgrreadv() -- 从关系中读取一个特定的块范围到所提供的缓冲区中。
  *
- * This routine is called from the buffer manager in order to
- * instantiate pages in the shared buffer cache.  All storage managers
- * return pages in the format that POSTGRES expects.
+ * 该例程由缓冲区管理器调用，以便在共享缓冲区缓存中实例化页面。
+ * 所有存储管理器都以 POSTGRES 期望的格式返回页面。
  *
- * If more than one block is intended to be read, callers need to use
- * smgrmaxcombine() to check how many blocks can be combined into one IO.
+ * 如果打算读取多个块，调用者需要使用 smgrmaxcombine() 来检查有多少
+ * 块可以合并到一次 IO 中。
  */
 void
 smgrreadv(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
@@ -728,26 +693,22 @@ smgrreadv(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- * smgrstartreadv() -- asynchronous version of smgrreadv()
+ * smgrstartreadv() -- smgrreadv() 的异步版本
  *
- * This starts an asynchronous readv IO using the IO handle `ioh`. Other than
- * `ioh` all parameters are the same as smgrreadv().
+ * 使用该 IO 句柄 `ioh` 启动一次异步 readv IO。除 `ioh` 之外，所有参数
+ * 与 smgrreadv() 相同。
  *
- * Completion callbacks above smgr will be passed the result as the number of
- * successfully read blocks if the read [partially] succeeds (Buffers for
- * blocks not successfully read might bear unspecified modifications, up to
- * the full nblocks). This maintains the abstraction that smgr operates on the
- * level of blocks, rather than bytes.
+ * smgr 之上的完成回调会收到结果，即成功读取的块数（如果读取[部分]
+ * 成功的话；未成功读取的块对应的缓冲区可能带有未指定的修改，最多可达
+ * 全部 nblocks）。这维持了 smgr 以块而非字节为操作层级的抽象。
  *
- * Compared to smgrreadv(), more responsibilities fall on the caller:
- * - Partial reads need to be handled by the caller re-issuing IO for the
- *   unread blocks
- * - smgr will ereport(LOG_SERVER_ONLY) some problems, but higher layers are
- *   responsible for pgaio_result_report() to mirror that news to the user (if
- *   the IO results in PGAIO_RS_WARNING) or abort the (sub)transaction (if
- *   PGAIO_RS_ERROR).
- * - Under Valgrind, the "buffers" memory may or may not change status to
- *   DEFINED, depending on io_method and concurrent activity.
+ * 与 smgrreadv() 相比，调用者需要承担更多责任：
+ * - 部分读取需要由调用者重新发起针对未读块的 IO 来处理
+ * - smgr 会以 ereport(LOG_SERVER_ONLY) 报告某些问题，但上层负责调用
+ *   pgaio_result_report() 将该消息反映给用户（如果 IO 结果为
+ *   PGAIO_RS_WARNING），或中止（子）事务（如果 IO 结果为 PGAIO_RS_ERROR）。
+ * - 在 Valgrind 下，"buffers" 内存的状态可能变为也可能不变为 DEFINED，
+ *   取决于 io_method 和并发活动。
  */
 void
 smgrstartreadv(PgAioHandle *ioh,
@@ -762,30 +723,25 @@ smgrstartreadv(PgAioHandle *ioh,
 }
 
 /*
- * smgrwritev() -- Write the supplied buffers out.
+ * smgrwritev() -- 写出所提供的缓冲区。
  *
- * This is to be used only for updating already-existing blocks of a
- * relation (ie, those before the current EOF).  To extend a relation,
- * use smgrextend().
+ * 仅用于更新关系中已存在的块（即当前 EOF 之前的那些）。要扩展关系，
+ * 请使用 smgrextend()。
  *
- * This is not a synchronous write -- the block is not necessarily
- * on disk at return, only dumped out to the kernel.  However,
- * provisions will be made to fsync the write before the next checkpoint.
+ * 这不是同步写——返回时块不一定已落盘，只是被转交给内核。不过，会
+ * 采取措施在下次检查点之前 fsync 该写入。
  *
- * NB: The mechanism to ensure fsync at next checkpoint assumes that there is
- * something that prevents a concurrent checkpoint from "racing ahead" of the
- * write.  One way to prevent that is by holding a lock on the buffer; the
- * buffer manager's writes are protected by that.  The bulk writer facility
- * in bulk_write.c checks the redo pointer and calls smgrimmedsync() if a
- * checkpoint happened; that relies on the fact that no other backend can be
- * concurrently modifying the page.
+ * 注意：确保在下次检查点 fsync 的机制，依赖于存在某种阻止并发检查点
+ * “抢跑”在写入之前的因素。一种方式是对缓冲区加锁；缓冲区管理器的
+ * 写入即受此保护。bulk_write.c 中的批量写入设施会检查 redo 指针，并在
+ * 发生检查点时调用 smgrimmedsync()；这依赖于没有其他后端能并发修改
+ * 该页面的事实。
  *
- * skipFsync indicates that the caller will make other provisions to
- * fsync the relation, so we needn't bother.  Temporary relations also
- * do not require fsync.
+ * skipFsync 表示调用者将通过其他途径来 fsync 该关系，因此我们无需
+ * 费心。临时关系也不需要 fsync。
  *
- * If more than one block is intended to be read, callers need to use
- * smgrmaxcombine() to check how many blocks can be combined into one IO.
+ * 如果打算读取多个块，调用者需要使用 smgrmaxcombine() 来检查有多少
+ * 块可以合并到一次 IO 中。
  */
 void
 smgrwritev(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
@@ -798,8 +754,7 @@ smgrwritev(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- * smgrwriteback() -- Trigger kernel writeback for the supplied range of
- *					   blocks.
+ * smgrwriteback() -- 触发内核对已提供的块范围执行回写。
  */
 void
 smgrwriteback(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
@@ -812,15 +767,14 @@ smgrwriteback(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- * smgrnblocks() -- Calculate the number of blocks in the
- *					supplied relation.
+ * smgrnblocks() -- 计算所提供关系中的块数。
  */
 BlockNumber
 smgrnblocks(SMgrRelation reln, ForkNumber forknum)
 {
 	BlockNumber result;
 
-	/* Check and return if we get the cached value for the number of blocks. */
+	/* 如果拿到块数的缓存值，则直接返回。 */
 	result = smgrnblocks_cached(reln, forknum);
 	if (result != InvalidBlockNumber)
 		return result;
@@ -837,19 +791,17 @@ smgrnblocks(SMgrRelation reln, ForkNumber forknum)
 }
 
 /*
- * smgrnblocks_cached() -- Get the cached number of blocks in the supplied
- *						   relation.
+ * smgrnblocks_cached() -- 获取所提供关系中缓存的块数。
  *
- * Returns an InvalidBlockNumber when not in recovery and when the relation
- * fork size is not cached.
+ * 当不在恢复状态，或关系 fork 大小未被缓存时，返回 InvalidBlockNumber。
  */
 BlockNumber
 smgrnblocks_cached(SMgrRelation reln, ForkNumber forknum)
 {
 	/*
-	 * For now, this function uses cached values only in recovery due to lack
-	 * of a shared invalidation mechanism for changes in file size.  Code
-	 * elsewhere reads smgr_cached_nblocks and copes with stale data.
+	 * 目前，由于缺乏针对文件大小变化的共享失效机制，该函数在恢复期间
+	 * 才会使用缓存值。其他位置的代码会读取 smgr_cached_nblocks 并
+	 * 处理其中的过期数据。
 	 */
 	if (InRecovery && reln->smgr_cached_nblocks[forknum] != InvalidBlockNumber)
 		return reln->smgr_cached_nblocks[forknum];
@@ -858,18 +810,15 @@ smgrnblocks_cached(SMgrRelation reln, ForkNumber forknum)
 }
 
 /*
- * smgrtruncate() -- Truncate the given forks of supplied relation to
- *					 each specified numbers of blocks
+ * smgrtruncate() -- 将所提供关系的给定 fork 截断到各自指定的块数
  *
- * The truncation is done immediately, so this can't be rolled back.
+ * 截断会立即执行，因此无法回滚。
  *
- * The caller must hold AccessExclusiveLock on the relation, to ensure that
- * other backends receive the smgr invalidation event that this function sends
- * before they access any forks of the relation again.  The current size of
- * the forks should be provided in old_nblocks.  This function should normally
- * be called in a critical section, but the current size must be checked
- * outside the critical section, and no interrupts or smgr functions relating
- * to this relation should be called in between.
+ * 调用者必须持有该关系的 AccessExclusiveLock，以确保其他后端在本函数
+ * 发送 smgr 失效事件之后、再次访问该关系的任何 fork 之前收到该事件。
+ * fork 的当前大小应通过 old_nblocks 提供。该函数通常应在临界区中调用，
+ * 但当前大小必须在临界区之外检查，且两者之间不得调用任何与本关系
+ * 相关的中断或 smgr 函数。
  */
 void
 smgrtruncate(SMgrRelation reln, ForkNumber *forknum, int nforks,
@@ -878,46 +827,41 @@ smgrtruncate(SMgrRelation reln, ForkNumber *forknum, int nforks,
 	int			i;
 
 	/*
-	 * Get rid of any buffers for the about-to-be-deleted blocks. bufmgr will
-	 * just drop them without bothering to write the contents.
+	 * 丢弃即将被删除的块对应的所有缓冲区。bufmgr 会直接丢弃它们，
+	 * 而不费心写出其内容。
 	 */
 	DropRelationBuffers(reln, forknum, nforks, nblocks);
 
 	/*
-	 * Send a shared-inval message to force other backends to close any smgr
-	 * references they may have for this rel.  This is useful because they
-	 * might have open file pointers to segments that got removed, and/or
-	 * smgr_targblock variables pointing past the new rel end.  (The inval
-	 * message will come back to our backend, too, causing a
-	 * probably-unnecessary local smgr flush.  But we don't expect that this
-	 * is a performance-critical path.)  As in the unlink code, we want to be
-	 * sure the message is sent before we start changing things on-disk.
+	 * 发送一条共享失效消息，强制其他后端关闭它们可能持有的、指向本
+	 * 关系的任何 smgr 引用。这很有用，因为它们可能持有指向已被删除
+	 * 段的打开文件指针，和/或指向新关系末尾之后的 smgr_targblock 变量。
+	 * （该失效消息也会回到本后端，导致一次大概不必要的本地 smgr 刷出。
+	 * 但我们并不认为这是性能关键的路径。）与解除链接的代码一样，我们
+	 * 希望确保该消息在我们开始改动磁盘上的内容之前发出。
 	 */
 	CacheInvalidateSmgr(reln->smgr_rlocator);
 
-	/* Do the truncation */
+	/* 执行截断 */
 	for (i = 0; i < nforks; i++)
 	{
-		/* Make the cached size is invalid if we encounter an error. */
+		/* 如果遇到错误，使缓存大小变为无效。 */
 		reln->smgr_cached_nblocks[forknum[i]] = InvalidBlockNumber;
 
 		smgrsw[reln->smgr_which].smgr_truncate(reln, forknum[i],
 											   old_nblocks[i], nblocks[i]);
 
 		/*
-		 * We might as well update the local smgr_cached_nblocks values. The
-		 * smgr cache inval message that this function sent will cause other
-		 * backends to invalidate their copies of smgr_cached_nblocks, and
-		 * these ones too at the next command boundary. But ensure they aren't
-		 * outright wrong until then.
+		 * 我们不妨更新本地的 smgr_cached_nblocks 值。本函数发出的 smgr
+		 * 缓存失效消息会导致其他后端使它们的 smgr_cached_nblocks 副本
+		 * 失效，这些本地的副本也会在下个命令边界失效。但要确保在那之前
+		 * 它们不完全错误。
 		 *
-		 * We can have nblocks > old_nblocks when a relation was truncated
-		 * multiple times, a replica applied all the truncations, and later
-		 * restarts from a restartpoint located before the truncations. The
-		 * relation on disk will be the size of the last truncate. When
-		 * replaying the first truncate, we will have nblocks > current size.
-		 * In such cases, smgr_truncate does nothing, so set the cached size
-		 * to the old size rather than the requested size.
+		 * 当一个关系被多次截断、某个副本应用了所有截断、之后又从一个
+		 * 位于这些截断之前的重启点重新启动时，可能出现 nblocks > old_nblocks
+		 * 的情况。磁盘上的关系将是最后一次截断后的大小。重放第一次截断
+		 * 时，我们会得到 nblocks > 当前大小。这种情况下 smgr_truncate 不
+		 * 做任何事，因此应将缓存大小设为旧大小而非请求的大小。
 		 */
 		reln->smgr_cached_nblocks[forknum[i]] =
 			nblocks[i] > old_nblocks[i] ? old_nblocks[i] : nblocks[i];
@@ -925,16 +869,15 @@ smgrtruncate(SMgrRelation reln, ForkNumber *forknum, int nforks,
 }
 
 /*
- * smgrregistersync() -- Request a relation to be sync'd at next checkpoint
+ * smgrregistersync() -- 请求一个关系在下次检查点被同步
  *
- * This can be used after calling smgrwrite() or smgrextend() with skipFsync =
- * true, to register the fsyncs that were skipped earlier.
+ * 它可在以 skipFsync = true 调用 smgrwrite() 或 smgrextend() 之后使用，
+ * 用于登记之前被跳过的 fsync。
  *
- * Note: be mindful that a checkpoint could already have happened between the
- * smgrwrite or smgrextend calls and this!  In that case, the checkpoint
- * already missed fsyncing this relation, and you should use smgrimmedsync
- * instead.  Most callers should use the bulk loading facility in bulk_write.c
- * which handles all that.
+ * 注意：要当心在 smgrwrite 或 smgrextend 调用与本次调用之间，可能已经
+ * 发生过检查点！这种情况下，该检查点已经错过了对本关系的 fsync，你应当
+ * 改用 smgrimmedsync。大多数调用者应使用 bulk_write.c 中的批量加载设施，
+ * 它会处理好这一切。
  */
 void
 smgrregistersync(SMgrRelation reln, ForkNumber forknum)
@@ -945,30 +888,24 @@ smgrregistersync(SMgrRelation reln, ForkNumber forknum)
 }
 
 /*
- * smgrimmedsync() -- Force the specified relation to stable storage.
+ * smgrimmedsync() -- 强制将指定关系同步到稳定存储。
  *
- * Synchronously force all previous writes to the specified relation
- * down to disk.
+ * 同步地将之前对该指定关系的所有写入强制落盘。
  *
- * This is useful for building completely new relations (eg, new
- * indexes).  Instead of incrementally WAL-logging the index build
- * steps, we can just write completed index pages to disk with smgrwrite
- * or smgrextend, and then fsync the completed index file before
- * committing the transaction.  (This is sufficient for purposes of
- * crash recovery, since it effectively duplicates forcing a checkpoint
- * for the completed index.  But it is *not* sufficient if one wishes
- * to use the WAL log for PITR or replication purposes: in that case
- * we have to make WAL entries as well.)
+ * 这在构建全新关系（例如新建索引）时很有用。我们不必按增量方式将索引
+ * 构建步骤记录到 WAL，而只需用 smgrwrite 或 smgrextend 把已完成的索引
+ * 页写入磁盘，然后在提交事务之前 fsync 完成后的索引文件。（这对于崩溃
+ * 恢复来说已经足够，因为它实际上等价于对完成后的索引强制做一次检查点。
+ * 但如果你希望将 WAL 日志用于 PITR 或复制目的，这就*不够*了：那种情况下
+ * 我们还必须生成 WAL 记录。）
  *
- * The preceding writes should specify skipFsync = true to avoid
- * duplicative fsyncs.
+ * 前面的写入应当指定 skipFsync = true，以避免重复的 fsync。
  *
- * Note that you need to do FlushRelationBuffers() first if there is
- * any possibility that there are dirty buffers for the relation;
- * otherwise the sync is not very meaningful.
+ * 注意，如果存在该关系存在脏缓冲区的任何可能，你需要先执行
+ * FlushRelationBuffers()；否则这次同步意义不大。
  *
- * Most callers should use the bulk loading facility in bulk_write.c
- * instead of calling this directly.
+ * 大多数调用者应使用 bulk_write.c 中的批量加载设施，而不是直接调用本
+ * 函数。
  */
 void
 smgrimmedsync(SMgrRelation reln, ForkNumber forknum)
@@ -979,11 +916,10 @@ smgrimmedsync(SMgrRelation reln, ForkNumber forknum)
 }
 
 /*
- * Return fd for the specified block number and update *off to the appropriate
- * position.
+ * 返回指定块号对应的 fd，并将 *off 更新到合适的位置。
  *
- * This is only to be used for when AIO needs to perform the IO in a different
- * process than where it was issued (e.g. in an IO worker).
+ * 这仅用于 AIO 需要在与发起 IO 不同的进程中执行该 IO 的情况
+ * （例如在某个 IO worker 中）。
  */
 static int
 smgrfd(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum, uint32 *off)
@@ -991,8 +927,7 @@ smgrfd(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum, uint32 *off)
 	int			fd;
 
 	/*
-	 * The caller needs to prevent interrupts from being processed, otherwise
-	 * the FD could be closed prematurely.
+	 * 调用者需要阻止中断被处理，否则该 FD 可能会被过早关闭。
 	 */
 	Assert(!INTERRUPTS_CAN_BE_PROCESSED());
 
@@ -1004,14 +939,13 @@ smgrfd(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum, uint32 *off)
 /*
  * AtEOXact_SMgr
  *
- * This routine is called during transaction commit or abort (it doesn't
- * particularly care which).  All unpinned SMgrRelation objects are destroyed.
+ * 该例程在事务提交或中止时调用（它并不在意是哪种）。所有未固定的
+ * SMgrRelation 对象都会被销毁。
  *
- * We do this as a compromise between wanting transient SMgrRelations to
- * live awhile (to amortize the costs of blind writes of multiple blocks)
- * and needing them to not live forever (since we're probably holding open
- * a kernel file descriptor for the underlying file, and we need to ensure
- * that gets closed reasonably soon if the file gets deleted).
+ * 我们这样做是为了在两种需求之间折中：一方面希望临时 SMgrRelation 能
+ * 存活一段时间（以摊还多次盲写的开销），另一方面又需要它们不能永远
+ * 存活（因为我们很可能持有着底层文件的内核文件描述符，而需要确保该
+ * 文件被删除时能尽快关闭它）。
  */
 void
 AtEOXact_SMgr(void)
@@ -1020,8 +954,7 @@ AtEOXact_SMgr(void)
 }
 
 /*
- * This routine is called when we are ordered to release all open files by a
- * ProcSignalBarrier.
+ * 当我们被 ProcSignalBarrier 命令释放所有已打开文件时，调用本例程。
  */
 bool
 ProcessBarrierSmgrRelease(void)
@@ -1031,8 +964,7 @@ ProcessBarrierSmgrRelease(void)
 }
 
 /*
- * Set target of the IO handle to be smgr and initialize all the relevant
- * pieces of data.
+ * 将 IO 句柄的目标设为 smgr，并初始化所有相关的数据部分。
  */
 void
 pgaio_io_set_target_smgr(PgAioHandle *ioh,
@@ -1046,19 +978,19 @@ pgaio_io_set_target_smgr(PgAioHandle *ioh,
 
 	pgaio_io_set_target(ioh, PGAIO_TID_SMGR);
 
-	/* backend is implied via IO owner */
+	/* 后端由 IO 拥有者隐含指定 */
 	sd->smgr.rlocator = smgr->smgr_rlocator.locator;
 	sd->smgr.forkNum = forknum;
 	sd->smgr.blockNum = blocknum;
 	sd->smgr.nblocks = nblocks;
 	sd->smgr.is_temp = SmgrIsTemp(smgr);
-	/* Temp relations should never be fsync'd */
+	/* 临时关系绝不应被 fsync */
 	sd->smgr.skip_fsync = skip_fsync && !SmgrIsTemp(smgr);
 }
 
 /*
- * Callback for the smgr AIO target, to reopen the file (e.g. because the IO
- * is executed in a worker).
+ * smgr AIO 目标的回调，用于重新打开文件（例如因为 IO 是在某个
+ * worker 中执行的）。
  */
 static void
 smgr_aio_reopen(PgAioHandle *ioh)
@@ -1070,8 +1002,8 @@ smgr_aio_reopen(PgAioHandle *ioh)
 	uint32		off;
 
 	/*
-	 * The caller needs to prevent interrupts from being processed, otherwise
-	 * the FD could be closed again before we get to executing the IO.
+	 * 调用者需要阻止中断被处理，否则该 FD 可能在我们要执行 IO 之前
+	 * 又被关闭。
 	 */
 	Assert(!INTERRUPTS_CAN_BE_PROCESSED());
 
@@ -1098,7 +1030,7 @@ smgr_aio_reopen(PgAioHandle *ioh)
 }
 
 /*
- * Callback for the smgr AIO target, describing the target of the IO.
+ * smgr AIO 目标的回调，用于描述 IO 的目标。
  */
 static char *
 smgr_aio_describe_identity(const PgAioTargetData *sd)

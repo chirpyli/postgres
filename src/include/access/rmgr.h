@@ -1,7 +1,7 @@
 /*
  * rmgr.h
  *
- * Resource managers definition
+ * 资源管理器（resource manager）定义
  *
  * src/include/access/rmgr.h
  */
@@ -11,13 +11,13 @@
 typedef uint8 RmgrId;
 
 /*
- * Built-in resource managers
+ * 内置资源管理器
  *
- * The actual numerical values for each rmgr ID are defined by the order
- * of entries in rmgrlist.h.
+ * 每个 rmgr ID 的实际数值由 rmgrlist.h 中条目的
+ * 排列顺序决定。
  *
- * Note: RM_MAX_ID must fit in RmgrId; widening that type will affect the XLOG
- * file format.
+ * 注意：RM_MAX_ID 必须能放入 RmgrId 中；拓宽该类型会影响 XLOG
+ * 文件格式。
  */
 #define PG_RMGR(symname,name,redo,desc,identify,startup,cleanup,mask,decode) \
 	symname,
@@ -53,8 +53,8 @@ RmgrIdIsCustom(int rmid)
 #define RmgrIdIsValid(rmid) (RmgrIdIsBuiltin((rmid)) || RmgrIdIsCustom((rmid)))
 
 /*
- * RmgrId to use for extensions that require an RmgrId, but are still in
- * development and have not reserved their own unique RmgrId yet. See:
+ * 用于那些需要 RmgrId、但仍处于开发阶段且尚未
+ * 预留自己专属 RmgrId 的扩展。参见：
  * https://wiki.postgresql.org/wiki/CustomWALResourceManagers
  */
 #define RM_EXPERIMENTAL_ID		128

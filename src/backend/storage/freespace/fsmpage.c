@@ -12,11 +12,10 @@
  *
  * NOTES:
  *
- *	The public functions in this file form an API that hides the internal
- *	structure of a FSM page. This allows freespace.c to treat each FSM page
- *	as a black box with SlotsPerPage "slots". fsm_set_avail() and
- *	fsm_get_avail() let you get/set the value of a slot, and
- *	fsm_search_avail() lets you search for a slot with value >= X.
+ *	本文件中的公共函数构成了一个 API，用于隐藏 FSM 页面的内部结构。
+ *	这使得 freespace.c 可以将每个 FSM 页面视为一个含有 SlotsPerPage 个
+ *	"槽位"（slot）的黑盒。fsm_set_avail() 和 fsm_get_avail() 让你可以
+ *	获取/设置某个槽位的值，而 fsm_search_avail() 则让你搜索值 >= X 的槽位。
  *
  *-------------------------------------------------------------------------
  */
@@ -25,28 +24,26 @@
 #include "storage/bufmgr.h"
 #include "storage/fsm_internals.h"
 
-/* Macros to navigate the tree within a page. Root has index zero. */
+/* 在页面内部遍历树结构的宏。根节点索引为零。 */
 #define leftchild(x)	(2 * (x) + 1)
 #define rightchild(x)	(2 * (x) + 2)
 #define parentof(x)		(((x) - 1) / 2)
 
 /*
- * Find right neighbor of x, wrapping around within the level
+ * 查找 x 的右邻居，在同一层内环绕。
  */
 static int
 rightneighbor(int x)
 {
 	/*
-	 * Move right. This might wrap around, stepping to the leftmost node at
-	 * the next level.
+	 * 向右移动。这可能会环绕，跨入下一层最左边的节点。
 	 */
 	x++;
 
 	/*
-	 * Check if we stepped to the leftmost node at next level, and correct if
-	 * so. The leftmost nodes at each level are numbered x = 2^level - 1, so
-	 * check if (x + 1) is a power of two, using a standard
-	 * twos-complement-arithmetic trick.
+	 * 检查我们是否跨入了下一层最左边的节点，若是则予以修正。
+	 * 每一层最左边的节点编号为 x = 2^level - 1，因此可以通过判断
+	 * (x + 1) 是否是 2 的幂来确认，这里使用了一个标准的补码算术技巧。
 	 */
 	if (((x + 1) & x) == 0)
 		x = parentof(x);
@@ -55,9 +52,9 @@ rightneighbor(int x)
 }
 
 /*
- * Sets the value of a slot on page. Returns true if the page was modified.
+ * 设置页面上某个槽位的值。若页面被修改则返回 true。
  *
- * The caller must hold an exclusive lock on the page.
+ * 调用者必须持有该页面的排他锁。
  */
 bool
 fsm_set_avail(Page page, int slot, uint8 value)
@@ -70,15 +67,14 @@ fsm_set_avail(Page page, int slot, uint8 value)
 
 	oldvalue = fsmpage->fp_nodes[nodeno];
 
-	/* If the value hasn't changed, we don't need to do anything */
+	/* 如果值没有变化，就无需做任何操作 */
 	if (oldvalue == value && value <= fsmpage->fp_nodes[0])
 		return false;
 
 	fsmpage->fp_nodes[nodeno] = value;
 
 	/*
-	 * Propagate up, until we hit the root or a node that doesn't need to be
-	 * updated.
+	 * 向上传播，直到抵达根节点或者一个不需要更新的节点为止。
 	 */
 	do
 	{
@@ -103,8 +99,8 @@ fsm_set_avail(Page page, int slot, uint8 value)
 	} while (nodeno > 0);
 
 	/*
-	 * sanity check: if the new value is (still) higher than the value at the
-	 * top, the tree is corrupt.  If so, rebuild.
+	 * 完整性检查：如果新值（仍然）高于顶层的值，说明树已损坏。
+	 * 若是如此，则重建。
 	 */
 	if (value > fsmpage->fp_nodes[0])
 		fsm_rebuild_page(page);
@@ -113,10 +109,9 @@ fsm_set_avail(Page page, int slot, uint8 value)
 }
 
 /*
- * Returns the value of given slot on page.
+ * 返回页面上给定槽位的值。
  *
- * Since this is just a read-only access of a single byte, the page doesn't
- * need to be locked.
+ * 由于这只是对单个字节的只读访问，因此无需对页面加锁。
  */
 uint8
 fsm_get_avail(Page page, int slot)
@@ -129,10 +124,9 @@ fsm_get_avail(Page page, int slot)
 }
 
 /*
- * Returns the value at the root of a page.
+ * 返回页面根节点处的值。
  *
- * Since this is just a read-only access of a single byte, the page doesn't
- * need to be locked.
+ * 由于这只是对单个字节的只读访问，因此无需对页面加锁。
  */
 uint8
 fsm_get_max_avail(Page page)
@@ -143,16 +137,15 @@ fsm_get_max_avail(Page page)
 }
 
 /*
- * Searches for a slot with category at least minvalue.
- * Returns slot number, or -1 if none found.
+ * 搜索类别至少为 minvalue 的槽位。
+ * 返回槽位编号，若未找到则返回 -1。
  *
- * The caller must hold at least a shared lock on the page, and this
- * function can unlock and lock the page again in exclusive mode if it
- * needs to be updated. exclusive_lock_held should be set to true if the
- * caller is already holding an exclusive lock, to avoid extra work.
+ * 调用者必须至少持有该页面的共享锁，而本函数在需要更新页面时，
+ * 可以先解锁再以排他模式重新加锁。如果调用者已经持有排他锁，
+ * 则将 exclusive_lock_held 设为 true，以避免做多余的工作。
  *
- * If advancenext is false, fp_next_slot is set to point to the returned
- * slot, and if it's true, to the slot after the returned slot.
+ * 如果 advancenext 为 false，fp_next_slot 会被设为指向所返回的槽位；
+ * 如果为 true，则指向所返回槽位的下一个槽位。
  */
 int
 fsm_search_avail(Buffer buf, uint8 minvalue, bool advancenext,
@@ -167,16 +160,15 @@ fsm_search_avail(Buffer buf, uint8 minvalue, bool advancenext,
 restart:
 
 	/*
-	 * Check the root first, and exit quickly if there's no leaf with enough
-	 * free space
+	 * 先检查根节点，如果没有叶子节点具有足够的空闲空间，则快速退出。
 	 */
 	if (fsmpage->fp_nodes[0] < minvalue)
 		return -1;
 
 	/*
-	 * Start search using fp_next_slot.  It's just a hint, so check that it's
-	 * sane.  (This also handles wrapping around when the prior call returned
-	 * the last slot on the page.)
+	 * 使用 fp_next_slot 作为搜索起点。它只是一个提示，因此需要检查其
+	 * 取值是否合理。（当上一次调用返回页面上最后一个槽位时，这也处理了
+	 * 环绕的情况。）
 	 */
 	target = fsmpage->fp_next_slot;
 	if (target < 0 || target >= LeafNodesPerPage)
@@ -184,29 +176,23 @@ restart:
 	target += NonLeafNodesPerPage;
 
 	/*----------
-	 * Start the search from the target slot.  At every step, move one
-	 * node to the right, then climb up to the parent.  Stop when we reach
-	 * a node with enough free space (as we must, since the root has enough
-	 * space).
+	 * 从目标槽位开始搜索。每一步，先向右移动一个节点，再向上爬到父节点。
+	 * 当我们抵达一个拥有足够空闲空间的节点时停止（必然会如此，因为根节点
+	 * 具有足够的空间）。
 	 *
-	 * The idea is to gradually expand our "search triangle", that is, all
-	 * nodes covered by the current node, and to be sure we search to the
-	 * right from the start point.  At the first step, only the target slot
-	 * is examined.  When we move up from a left child to its parent, we are
-	 * adding the right-hand subtree of that parent to the search triangle.
-	 * When we move right then up from a right child, we are dropping the
-	 * current search triangle (which we know doesn't contain any suitable
-	 * page) and instead looking at the next-larger-size triangle to its
-	 * right.  So we never look left from our original start point, and at
-	 * each step the size of the search triangle doubles, ensuring it takes
-	 * only log2(N) work to search N pages.
+	 * 其核心思想是逐步扩展我们的"搜索三角形"，即当前节点所覆盖的所有
+	 * 节点，并确保我们从起点开始一直向右搜索。第一步时，只检查目标槽位。
+	 * 当我们从左孩子向上移动到父节点时，我们是在把该父节点的右子树加入
+	 * 搜索三角形。当我们从右孩子先向右再向上移动时，我们是在丢弃当前的
+	 * 搜索三角形（我们已知其中不含任何合适的页面），转而查看其右侧、尺寸
+	 * 大一号的三角形。因此我们从最初的起点出发永远不会向左看，且每一步
+	 * 搜索三角形的尺寸都会翻倍，从而保证搜索 N 个页面只需 log2(N) 的工作量。
 	 *
-	 * The "move right" operation will wrap around if it hits the right edge
-	 * of the tree, so the behavior is still good if we start near the right.
-	 * Note also that the move-and-climb behavior ensures that we can't end
-	 * up on one of the missing nodes at the right of the leaf level.
+	 * "向右移动"操作在碰到树右边界时会环绕，因此即便我们从靠近右侧的位置
+	 * 开始，行为依然是良好的。还需注意，这种"先向右再向上"的行为确保了我们
+	 * 不会落在叶子层右侧那些缺失的节点上。
 	 *
-	 * For example, consider this tree:
+	 * 举例来说，考虑下面这棵树：
 	 *
 	 *		   7
 	 *	   7	   6
@@ -214,14 +200,11 @@ restart:
 	 *	4 5 5 7 2 6 5 2
 	 *				T
 	 *
-	 * Assume that the target node is the node indicated by the letter T,
-	 * and we're searching for a node with value of 6 or higher. The search
-	 * begins at T. At the first iteration, we move to the right, then to the
-	 * parent, arriving at the rightmost 5. At the second iteration, we move
-	 * to the right, wrapping around, then climb up, arriving at the 7 on the
-	 * third level.  7 satisfies our search, so we descend down to the bottom,
-	 * following the path of sevens.  This is in fact the first suitable page
-	 * to the right of (allowing for wraparound) our start point.
+	 * 假设目标节点就是字母 T 所指示的节点，并且我们在搜索值大于等于 6 的
+	 * 节点。搜索从 T 开始。第一次迭代时，我们向右移动，再向上到父节点，
+	 * 到达最右侧的 5。第二次迭代时，我们向右移动（环绕），再向上爬，到达
+	 * 第三层的 7。7 满足我们的搜索条件，于是我们沿着全是 7 的路径向下
+	 * 走到最底层。这实际上就是起点（允许环绕）之后第一个合适的页面。
 	 *----------
 	 */
 	nodeno = target;
@@ -231,16 +214,14 @@ restart:
 			break;
 
 		/*
-		 * Move to the right, wrapping around on same level if necessary, then
-		 * climb up.
+		 * 向右移动，必要时在同一层内环绕，然后向上爬。
 		 */
 		nodeno = parentof(rightneighbor(nodeno));
 	}
 
 	/*
-	 * We're now at a node with enough free space, somewhere in the middle of
-	 * the tree. Descend to the bottom, following a path with enough free
-	 * space, preferring to move left if there's a choice.
+	 * 我们现在位于树中间某处一个具有足够空闲空间的节点上。向下走到最底层，
+	 * 沿一条具有足够空闲空间的路径下行，如果存在选择则优先向左移动。
 	 */
 	while (nodeno < NonLeafNodesPerPage)
 	{
@@ -252,7 +233,7 @@ restart:
 			nodeno = childnodeno;
 			continue;
 		}
-		childnodeno++;			/* point to right child */
+		childnodeno++;			/* 指向右孩子 */
 		if (childnodeno < NodesPerPage &&
 			fsmpage->fp_nodes[childnodeno] >= minvalue)
 		{
@@ -261,12 +242,12 @@ restart:
 		else
 		{
 			/*
-			 * Oops. The parent node promised that either left or right child
-			 * has enough space, but neither actually did. This can happen in
-			 * case of a "torn page", IOW if we crashed earlier while writing
-			 * the page to disk, and only part of the page made it to disk.
+			 * 哎呀。父节点承诺过左孩子或右孩子中至少有一个拥有足够的空间，
+			 * 但两者实际上都没有。这可能发生在出现"撕裂页"（torn page）的
+			 * 情况下，也就是说，如果我们之前在把页面写入磁盘时崩溃了，只有
+			 * 页面的一部分成功写入了磁盘。
 			 *
-			 * Fix the corruption and restart.
+			 * 修复损坏并重新开始。
 			 */
 			RelFileLocator rlocator;
 			ForkNumber	forknum;
@@ -276,8 +257,8 @@ restart:
 			elog(DEBUG1, "fixing corrupt FSM block %u, relation %u/%u/%u",
 				 blknum, rlocator.spcOid, rlocator.dbOid, rlocator.relNumber);
 
-			/* make sure we hold an exclusive lock */
-			if (!exclusive_lock_held)
+		/* 确保我们持有一个排他锁 */
+		if (!exclusive_lock_held)
 			{
 				LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 				LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
@@ -289,16 +270,15 @@ restart:
 		}
 	}
 
-	/* We're now at the bottom level, at a node with enough space. */
+	/* 我们现在位于最底层，处于一个具有足够空间的节点上。 */
 	slot = nodeno - NonLeafNodesPerPage;
 
 	/*
-	 * Update the next-target pointer. Note that we do this even if we're only
-	 * holding a shared lock, on the grounds that it's better to use a shared
-	 * lock and get a garbled next pointer every now and then, than take the
-	 * concurrency hit of an exclusive lock.
+	 * 更新下一个目标指针。注意，即便我们只持有共享锁，也会做这件事，
+	 * 其理由是：使用共享锁、偶尔得到一个错乱的下一个指针，总比承受
+	 * 排他锁带来的并发代价要好。
 	 *
-	 * Wrap-around is handled at the beginning of this function.
+	 * 环绕情况在本函数开头已经处理。
 	 */
 	fsmpage->fp_next_slot = slot + (advancenext ? 1 : 0);
 
@@ -306,8 +286,8 @@ restart:
 }
 
 /*
- * Sets the available space to zero for all slots numbered >= nslots.
- * Returns true if the page was modified.
+ * 将所有编号 >= nslots 的槽位的可用空间清零。
+ * 若页面被修改则返回 true。
  */
 bool
 fsm_truncate_avail(Page page, int nslots)
@@ -318,7 +298,7 @@ fsm_truncate_avail(Page page, int nslots)
 
 	Assert(nslots >= 0 && nslots < LeafNodesPerPage);
 
-	/* Clear all truncated leaf nodes */
+	/* 清空所有被截断的叶子节点 */
 	ptr = &fsmpage->fp_nodes[NonLeafNodesPerPage + nslots];
 	for (; ptr < &fsmpage->fp_nodes[NodesPerPage]; ptr++)
 	{
@@ -327,7 +307,7 @@ fsm_truncate_avail(Page page, int nslots)
 		*ptr = 0;
 	}
 
-	/* Fix upper nodes. */
+	/* 修复上层节点。 */
 	if (changed)
 		fsm_rebuild_page(page);
 
@@ -335,8 +315,7 @@ fsm_truncate_avail(Page page, int nslots)
 }
 
 /*
- * Reconstructs the upper levels of a page. Returns true if the page
- * was modified.
+ * 重建一个页面的上层结构。若页面被修改则返回 true。
  */
 bool
 fsm_rebuild_page(Page page)
@@ -346,8 +325,8 @@ fsm_rebuild_page(Page page)
 	int			nodeno;
 
 	/*
-	 * Start from the lowest non-leaf level, at last node, working our way
-	 * backwards, through all non-leaf nodes at all levels, up to the root.
+	 * 从最低的非叶子层、最后一个节点开始，逆向进行，遍历所有层的所有
+	 * 非叶子节点，一直到达根节点。
 	 */
 	for (nodeno = NonLeafNodesPerPage - 1; nodeno >= 0; nodeno--)
 	{
@@ -355,7 +334,7 @@ fsm_rebuild_page(Page page)
 		int			rchild = lchild + 1;
 		uint8		newvalue = 0;
 
-		/* The first few nodes we examine might have zero or one child. */
+		/* 我们最先检查的几个节点可能只有零个或一个孩子。 */
 		if (lchild < NodesPerPage)
 			newvalue = fsmpage->fp_nodes[lchild];
 

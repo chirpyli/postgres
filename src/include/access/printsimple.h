@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * printsimple.h
- *	  print simple tuples without catalog access
+ *	  打印简单元组，无需访问系统表
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California

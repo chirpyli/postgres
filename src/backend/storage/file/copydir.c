@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * copydir.c
- *	  copies a directory
+ *	  复制一个目录
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -30,19 +30,19 @@
 #include "storage/copydir.h"
 #include "storage/fd.h"
 
-/* GUCs */
+/* GUC 参数 */
 int			file_copy_method = FILE_COPY_METHOD_COPY;
 
 static void clone_file(const char *fromfile, const char *tofile);
 
 /*
- * copydir: copy a directory
+ * copydir: 复制一个目录
  *
- * If recurse is false, subdirectories are ignored.  Anything that's not
- * a directory or a regular file is ignored.
+ * 如果 recurse 为 false，则忽略子目录。任何非目录或非普通文件的内容
+ * 都会被忽略。
  *
- * This function uses the file_copy_method GUC.  New uses of this function must
- * be documented in doc/src/sgml/config.sgml.
+ * 此函数使用 file_copy_method GUC 参数。调用此函数的新场景必须在
+ * doc/src/sgml/config.sgml 中说明。
  */
 void
 copydir(const char *fromdir, const char *todir, bool recurse)
@@ -63,7 +63,7 @@ copydir(const char *fromdir, const char *todir, bool recurse)
 	{
 		PGFileType	xlde_type;
 
-		/* If we got a cancel signal during the copy of the directory, quit */
+		/* 如果在目录复制期间收到取消信号，则退出 */
 		CHECK_FOR_INTERRUPTS();
 
 		if (strcmp(xlde->d_name, ".") == 0 ||
@@ -77,7 +77,7 @@ copydir(const char *fromdir, const char *todir, bool recurse)
 
 		if (xlde_type == PGFILETYPE_DIR)
 		{
-			/* recurse to handle subdirectories */
+			/* 递归处理子目录 */
 			if (recurse)
 				copydir(fromfile, tofile, true);
 		}
@@ -92,8 +92,8 @@ copydir(const char *fromdir, const char *todir, bool recurse)
 	FreeDir(xldir);
 
 	/*
-	 * Be paranoid here and fsync all files to ensure the copy is really done.
-	 * But if fsync is disabled, we're done.
+	 * 此处采取保守策略，对所有文件执行 fsync 以确保复制真正完成。
+	 * 但如果 fsync 已被禁用，我们到此为止。
 	 */
 	if (!enableFsync)
 		return;
@@ -109,8 +109,7 @@ copydir(const char *fromdir, const char *todir, bool recurse)
 		snprintf(tofile, sizeof(tofile), "%s/%s", todir, xlde->d_name);
 
 		/*
-		 * We don't need to sync subdirectories here since the recursive
-		 * copydir will do it before it returns
+		 * 此处不需要同步子目录，因为递归 copydir 会在返回前完成同步
 		 */
 		if (get_dirent_type(tofile, xlde, false, ERROR) == PGFILETYPE_REG)
 			fsync_fname(tofile, false);
@@ -118,16 +117,15 @@ copydir(const char *fromdir, const char *todir, bool recurse)
 	FreeDir(xldir);
 
 	/*
-	 * It's important to fsync the destination directory itself as individual
-	 * file fsyncs don't guarantee that the directory entry for the file is
-	 * synced. Recent versions of ext4 have made the window much wider but
-	 * it's been true for ext3 and other filesystems in the past.
+	 * 对目标目录本身执行 fsync 非常重要，因为单个文件的 fsync 并不能保证
+	 * 该文件的目录项已同步。ext4 的最新版本大大加宽了这个窗口（更易丢失），
+	 * 但这在 ext3 和其他文件系统上一直如此。
 	 */
 	fsync_fname(todir, true);
 }
 
 /*
- * copy one file
+ * 复制一个文件
  */
 void
 copy_file(const char *fromfile, const char *tofile)
@@ -139,14 +137,13 @@ copy_file(const char *fromfile, const char *tofile)
 	off_t		offset;
 	off_t		flush_offset;
 
-	/* Size of copy buffer (read and write requests) */
+	/* 复制缓冲区大小（读写请求大小） */
 #define COPY_BUF_SIZE (8 * BLCKSZ)
 
 	/*
-	 * Size of data flush requests.  It seems beneficial on most platforms to
-	 * do this every 1MB or so.  But macOS, at least with early releases of
-	 * APFS, is really unfriendly to small mmap/msync requests, so there do it
-	 * only every 32MB.
+	 * 数据刷新请求的步长。在大多数平台上，大约每 1MB 刷新一次似乎
+	 * 更有利。但 macOS（至少是 APFS 早期版本）对小块的 mmap/msync
+	 * 请求非常不友好，因此在 macOS 上每 32MB 才刷新一次。
 	 */
 #if defined(__darwin__)
 #define FLUSH_DISTANCE (32 * 1024 * 1024)
@@ -154,11 +151,11 @@ copy_file(const char *fromfile, const char *tofile)
 #define FLUSH_DISTANCE (1024 * 1024)
 #endif
 
-	/* Use palloc to ensure we get a maxaligned buffer */
+	/* 使用 palloc 确保获取对齐缓冲区 */
 	buffer = palloc(COPY_BUF_SIZE);
 
 	/*
-	 * Open the files
+	 * 打开文件
 	 */
 	srcfd = OpenTransientFile(fromfile, O_RDONLY | PG_BINARY);
 	if (srcfd < 0)
@@ -173,18 +170,18 @@ copy_file(const char *fromfile, const char *tofile)
 				 errmsg("could not create file \"%s\": %m", tofile)));
 
 	/*
-	 * Do the data copying.
+	 * 执行数据复制。
 	 */
 	flush_offset = 0;
 	for (offset = 0;; offset += nbytes)
 	{
-		/* If we got a cancel signal during the copy of the file, quit */
+		/* 如果在文件复制期间收到取消信号，则退出 */
 		CHECK_FOR_INTERRUPTS();
 
 		/*
-		 * We fsync the files later, but during the copy, flush them every so
-		 * often to avoid spamming the cache and hopefully get the kernel to
-		 * start writing them out before the fsync comes.
+		 * 我们会稍后对文件执行 fsync，但在复制期间，每隔一段时间刷新
+		 * 一次，以避免填满缓存，并希望内核在 fsync 到来之前就开始
+		 * 写出数据。
 		 */
 		if (offset - flush_offset >= FLUSH_DISTANCE)
 		{
@@ -205,7 +202,7 @@ copy_file(const char *fromfile, const char *tofile)
 		pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_WRITE);
 		if ((int) write(dstfd, buffer, nbytes) != nbytes)
 		{
-			/* if write didn't set errno, assume problem is no disk space */
+			/* 如果 write 没有设置 errno，假设问题是磁盘空间不足 */
 			if (errno == 0)
 				errno = ENOSPC;
 			ereport(ERROR,
@@ -232,7 +229,7 @@ copy_file(const char *fromfile, const char *tofile)
 }
 
 /*
- * clone one file
+ * 克隆一个文件
  */
 static void
 clone_file(const char *fromfile, const char *tofile)
@@ -263,8 +260,8 @@ clone_file(const char *fromfile, const char *tofile)
 	do
 	{
 		/*
-		 * Don't copy too much at once, so we can check for interrupts from
-		 * time to time if it falls back to a slow copy.
+		 * 不要一次复制太多，这样可以在退化为慢速复制时
+		 * 定期检查中断信号。
 		 */
 		CHECK_FOR_INTERRUPTS();
 		pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_COPY);
@@ -288,7 +285,7 @@ clone_file(const char *fromfile, const char *tofile)
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", fromfile)));
 #else
-	/* If there is no CLONE support this function should not be called. */
+	/* 如果没有 CLONE 支持，此函数不应被调用。 */
 	pg_unreachable();
 #endif
 }

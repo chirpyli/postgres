@@ -1,8 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * buf_internals.h
- *	  Internal definitions for buffer manager and the buffer replacement
- *	  strategy.
+ *	  缓冲区管理器和缓冲区替换策略的内部定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -30,23 +29,23 @@
 #include "utils/resowner.h"
 
 /*
- * Buffer state is a single 32-bit variable where following data is combined.
+ * 缓冲区状态是一个 32 位变量，组合了以下数据。
  *
- * - 18 bits refcount
- * - 4 bits usage count
- * - 10 bits of flags
+ * - 18 位 refcount
+ * - 4 位 usage count
+ * - 10 位标志位
  *
- * Combining these values allows to perform some operations without locking
- * the buffer header, by modifying them together with a CAS loop.
+ * 将这些值组合在一起，可以在不锁定缓冲区头部的情况下，通过 CAS 循环
+ * 一并修改它们来完成某些操作。
  *
- * The definition of buffer state components is below.
+ * 缓冲区状态各组成部分的定义如下。
  */
 #define BUF_REFCOUNT_BITS 18
 #define BUF_USAGECOUNT_BITS 4
 #define BUF_FLAG_BITS 10
 
 StaticAssertDecl(BUF_REFCOUNT_BITS + BUF_USAGECOUNT_BITS + BUF_FLAG_BITS == 32,
-				 "parts of buffer state space need to equal 32");
+				 "缓冲区状态空间的各部分之和必须等于 32");
 
 #define BUF_REFCOUNT_ONE 1
 #define BUF_REFCOUNT_MASK ((1U << BUF_REFCOUNT_BITS) - 1)
@@ -55,61 +54,56 @@ StaticAssertDecl(BUF_REFCOUNT_BITS + BUF_USAGECOUNT_BITS + BUF_FLAG_BITS == 32,
 #define BUF_USAGECOUNT_SHIFT BUF_REFCOUNT_BITS
 #define BUF_FLAG_MASK (((1U << BUF_FLAG_BITS) - 1) << (BUF_REFCOUNT_BITS + BUF_USAGECOUNT_BITS))
 
-/* Get refcount and usagecount from buffer state */
+/* 从缓冲区状态获取 refcount 和 usagecount */
 #define BUF_STATE_GET_REFCOUNT(state) ((state) & BUF_REFCOUNT_MASK)
 #define BUF_STATE_GET_USAGECOUNT(state) (((state) & BUF_USAGECOUNT_MASK) >> BUF_USAGECOUNT_SHIFT)
 
 /*
- * Flags for buffer descriptors
+ * 缓冲区描述符的标志位
  *
- * Note: BM_TAG_VALID essentially means that there is a buffer hashtable
- * entry associated with the buffer's tag.
+ * 注意：BM_TAG_VALID 本质上意味着缓冲区哈希表中存在与缓冲区 tag 关联的条目。
  */
-#define BM_LOCKED				(1U << 22)	/* buffer header is locked */
-#define BM_DIRTY				(1U << 23)	/* data needs writing */
-#define BM_VALID				(1U << 24)	/* data is valid */
-#define BM_TAG_VALID			(1U << 25)	/* tag is assigned */
-#define BM_IO_IN_PROGRESS		(1U << 26)	/* read or write in progress */
-#define BM_IO_ERROR				(1U << 27)	/* previous I/O failed */
-#define BM_JUST_DIRTIED			(1U << 28)	/* dirtied since write started */
-#define BM_PIN_COUNT_WAITER		(1U << 29)	/* have waiter for sole pin */
-#define BM_CHECKPOINT_NEEDED	(1U << 30)	/* must write for checkpoint */
-#define BM_PERMANENT			(1U << 31)	/* permanent buffer (not unlogged,
-											 * or init fork) */
+#define BM_LOCKED				(1U << 22)	/* 缓冲区头部已锁定 */
+#define BM_DIRTY				(1U << 23)	/* 数据需要写入 */
+#define BM_VALID				(1U << 24)	/* 数据有效 */
+#define BM_TAG_VALID			(1U << 25)	/* 已分配 tag */
+#define BM_IO_IN_PROGRESS		(1U << 26)	/* 正在读取或写入 */
+#define BM_IO_ERROR				(1U << 27)	/* 先前的 I/O 失败 */
+#define BM_JUST_DIRTIED			(1U << 28)	/* 写操作开始后变脏 */
+#define BM_PIN_COUNT_WAITER		(1U << 29)	/* 有独占 pin 的等待者 */
+#define BM_CHECKPOINT_NEEDED	(1U << 30)	/* 必须为检查点写入 */
+#define BM_PERMANENT			(1U << 31)	/* 永久缓冲区（非 unlogged 或 init fork） */
 /*
- * The maximum allowed value of usage_count represents a tradeoff between
- * accuracy and speed of the clock-sweep buffer management algorithm.  A
- * large value (comparable to NBuffers) would approximate LRU semantics.
- * But it can take as many as BM_MAX_USAGE_COUNT+1 complete cycles of
- * clock sweeps to find a free buffer, so in practice we don't want the
- * value to be very large.
+ * usage_count 的最大允许值代表了时钟扫描（clock-sweep）缓冲区管理算法的
+ * 准确性与速度之间的权衡。较大的值（接近 NBuffers）会近似 LRU 语义。
+ * 但找到空闲缓冲区可能需要多达 BM_MAX_USAGE_COUNT+1 次完整的时钟扫描循环，
+ * 因此实践中我们不希望该值过大。
  */
 #define BM_MAX_USAGE_COUNT	5
 
 StaticAssertDecl(BM_MAX_USAGE_COUNT < (1 << BUF_USAGECOUNT_BITS),
-				 "BM_MAX_USAGE_COUNT doesn't fit in BUF_USAGECOUNT_BITS bits");
+				 "BM_MAX_USAGE_COUNT 无法放入 BUF_USAGECOUNT_BITS 位");
 StaticAssertDecl(MAX_BACKENDS_BITS <= BUF_REFCOUNT_BITS,
-				 "MAX_BACKENDS_BITS needs to be <= BUF_REFCOUNT_BITS");
+				 "MAX_BACKENDS_BITS 必须 <= BUF_REFCOUNT_BITS");
 
 /*
- * Buffer tag identifies which disk block the buffer contains.
+ * Buffer tag 标识缓冲区中包含的是哪个磁盘块。
  *
- * Note: the BufferTag data must be sufficient to determine where to write the
- * block, without reference to pg_class or pg_tablespace entries.  It's
- * possible that the backend flushing the buffer doesn't even believe the
- * relation is visible yet (its xact may have started before the xact that
- * created the rel).  The storage manager must be able to cope anyway.
+ * 注意：BufferTag 数据必须足以确定块要写到哪里，而无需引用 pg_class
+ * 或 pg_tablespace 条目。刷新缓冲区的后端甚至可能不认为该关系已经可见
+ * （其事务可能早于创建该关系的事务启动）。无论如何，存储管理器必须
+ * 能够处理这种情况。
  *
- * Note: if there's any pad bytes in the struct, InitBufferTag will have
- * to be fixed to zero them, since this struct is used as a hash key.
+ * 注意：如果结构体中包含任何填充字节，则必须修正 InitBufferTag 将其清零，
+ * 因为该结构体被用作哈希键。
  */
 typedef struct buftag
 {
-	Oid			spcOid;			/* tablespace oid */
-	Oid			dbOid;			/* database oid */
-	RelFileNumber relNumber;	/* relation file number */
-	ForkNumber	forkNum;		/* fork number */
-	BlockNumber blockNum;		/* blknum relative to begin of reln */
+	Oid			spcOid;			/* 表空间 oid */
+	Oid			dbOid;			/* 数据库 oid */
+	RelFileNumber relNumber;	/* 关系文件号 */
+	ForkNumber	forkNum;		/* fork 号 */
+	BlockNumber blockNum;		/* 相对于关系起始的块号 */
 } BufferTag;
 
 static inline RelFileNumber
@@ -184,10 +178,10 @@ BufTagMatchesRelFileLocator(const BufferTag *tag,
 
 
 /*
- * The shared buffer mapping table is partitioned to reduce contention.
- * To determine which partition lock a given tag requires, compute the tag's
- * hash code with BufTableHashCode(), then apply BufMappingPartitionLock().
- * NB: NUM_BUFFER_PARTITIONS must be a power of 2!
+ * 共享缓冲区映射表被分区以减少争用。
+ * 要确定给定 tag 需要哪个分区锁，先用 BufTableHashCode() 计算 tag 的哈希码，
+ * 再调用 BufMappingPartitionLock()。
+ * 注意：NUM_BUFFER_PARTITIONS 必须是 2 的幂！
  */
 static inline uint32
 BufTableHashPartition(uint32 hashcode)
@@ -209,86 +203,69 @@ BufMappingPartitionLockByIndex(uint32 index)
 }
 
 /*
- *	BufferDesc -- shared descriptor/state data for a single shared buffer.
+ *	BufferDesc —— 单个共享缓冲区的共享描述符/状态数据。
  *
- * Note: Buffer header lock (BM_LOCKED flag) must be held to examine or change
- * tag, state or wait_backend_pgprocno fields.  In general, buffer header lock
- * is a spinlock which is combined with flags, refcount and usagecount into
- * single atomic variable.  This layout allow us to do some operations in a
- * single atomic operation, without actually acquiring and releasing spinlock;
- * for instance, increase or decrease refcount.  buf_id field never changes
- * after initialization, so does not need locking.  freeNext is protected by
- * the buffer_strategy_lock not buffer header lock.  The LWLock can take care
- * of itself.  The buffer header lock is *not* used to control access to the
- * data in the buffer!
+ * 注意：检查或修改 tag、state 或 wait_backend_pgprocno 字段时，必须持有
+ * 缓冲区头部锁（BM_LOCKED 标志）。一般来说，缓冲区头部锁是一个自旋锁，
+ * 与标志位、refcount 和 usagecount 一起组合进单个原子变量中。这种布局使
+ * 我们能在一次原子操作中完成某些操作，而无需真正获取和释放自旋锁；例如
+ * 增加或减少 refcount。buf_id 字段在初始化后永不改变，因此不需要加锁。
+ * freeNext 由 buffer_strategy_lock 而非缓冲区头部锁保护。LWLock 自身会
+ * 处理好自己。缓冲区头部锁*不*用于控制对缓冲区中数据的访问！
  *
- * It's assumed that nobody changes the state field while buffer header lock
- * is held.  Thus buffer header lock holder can do complex updates of the
- * state variable in single write, simultaneously with lock release (cleaning
- * BM_LOCKED flag).  On the other hand, updating of state without holding
- * buffer header lock is restricted to CAS, which ensures that BM_LOCKED flag
- * is not set.  Atomic increment/decrement, OR/AND etc. are not allowed.
+ * 假定在持有缓冲区头部锁期间不会有人更改 state 字段。因此缓冲区头部锁的持有者
+ * 可以在一次写入中完成对 state 变量的复杂更新，同时释放锁（清除 BM_LOCKED 标志）。
+ * 另一方面，在持有缓冲区头部锁的情况下更新 state 被限制为 CAS 操作，以确保
+ * BM_LOCKED 标志未被设置。原子性的自增/自减、OR/AND 等位操作是不允许的。
  *
- * An exception is that if we have the buffer pinned, its tag can't change
- * underneath us, so we can examine the tag without locking the buffer header.
- * Also, in places we do one-time reads of the flags without bothering to
- * lock the buffer header; this is generally for situations where we don't
- * expect the flag bit being tested to be changing.
+ * 一个例外是：如果缓冲区已被我们 pin 住，则其 tag 不可能在背后改变，因此
+ * 我们可以不锁定缓冲区头部就检查 tag。此外，有些地方我们会对标志位做一次性的
+ * 读取而不费心去锁定缓冲区头部；这通常出现在不期望被测标志位发生变化的情况下。
  *
- * We can't physically remove items from a disk page if another backend has
- * the buffer pinned.  Hence, a backend may need to wait for all other pins
- * to go away.  This is signaled by storing its own pgprocno into
- * wait_backend_pgprocno and setting flag bit BM_PIN_COUNT_WAITER.  At present,
- * there can be only one such waiter per buffer.
+ * 如果另一个后端 pin 住了缓冲区，我们就无法从磁盘页中物理移除其中的项。因此，
+ * 一个后端可能需要等待所有其他 pin 消失。这是通过将自己的 pgprocno 存入
+ * wait_backend_pgprocno 并设置 BM_PIN_COUNT_WAITER 标志位来通知的。目前，
+ * 每个缓冲区只能有一个这样的等待者。
  *
- * We use this same struct for local buffer headers, but the locks are not
- * used and not all of the flag bits are useful either. To avoid unnecessary
- * overhead, manipulations of the state field should be done without actual
- * atomic operations (i.e. only pg_atomic_read_u32() and
- * pg_atomic_unlocked_write_u32()).
+ * 本地缓冲区头部也使用同一个结构体，但其中的锁不会被使用，也并非所有标志位
+ * 都有意义。为了避免不必要的开销，对 state 字段的操作应当不使用真正的原子操作
+ * （即仅使用 pg_atomic_read_u32() 和 pg_atomic_unlocked_write_u32()）。
  *
- * Be careful to avoid increasing the size of the struct when adding or
- * reordering members.  Keeping it below 64 bytes (the most common CPU
- * cache line size) is fairly important for performance.
+ * 在添加或重排成员时，小心不要增大该结构体的大小。将其控制在 64 字节（最常见的
+ * CPU 缓存行大小）以下对性能相当重要。
  *
- * Per-buffer I/O condition variables are currently kept outside this struct in
- * a separate array.  They could be moved in here and still fit within that
- * limit on common systems, but for now that is not done.
+ * 每个缓冲区的 I/O 条件变量目前保存在该结构体之外的一个独立数组中。它们本可以
+ * 移入此处，在常见系统上仍能容纳在该限制内，但目前尚未这样做。
  */
 typedef struct BufferDesc
 {
-	BufferTag	tag;			/* ID of page contained in buffer */
-	int			buf_id;			/* buffer's index number (from 0) */
+	BufferTag	tag;			/* 缓冲区中所包含页面的 ID */
+	int			buf_id;			/* 缓冲区的索引号（从 0 开始） */
 
-	/* state of the tag, containing flags, refcount and usagecount */
+	/* tag 的状态，包含标志位、refcount 和 usagecount */
 	pg_atomic_uint32 state;
 
-	int			wait_backend_pgprocno;	/* backend of pin-count waiter */
-	int			freeNext;		/* link in freelist chain */
+	int			wait_backend_pgprocno;	/* pin 计数等待者所在的后端 */
+	int			freeNext;		/* 空闲链表中的链接 */
 
-	PgAioWaitRef io_wref;		/* set iff AIO is in progress */
-	LWLock		content_lock;	/* to lock access to buffer contents */
+	PgAioWaitRef io_wref;		/* 当 AIO 进行中时设置 */
+	LWLock		content_lock;	/* 用于锁定对缓冲区内容的访问 */
 } BufferDesc;
 
 /*
- * Concurrent access to buffer headers has proven to be more efficient if
- * they're cache line aligned. So we force the start of the BufferDescriptors
- * array to be on a cache line boundary and force the elements to be cache
- * line sized.
+ * 实践证明，如果缓冲区头部按缓存行对齐，对它们的并发访问会更高效。因此我们
+ * 强制 BufferDescriptors 数组的起始位置位于缓存行边界，并强制每个元素大小为
+ * 一个缓存行。
  *
- * XXX: As this is primarily matters in highly concurrent workloads which
- * probably all are 64bit these days, and the space wastage would be a bit
- * more noticeable on 32bit systems, we don't force the stride to be cache
- * line sized on those. If somebody does actual performance testing, we can
- * reevaluate.
+ * XXX：由于这主要在高度并发的工作负载中有意义，而如今这类负载几乎都在 64 位
+ * 系统上，且空间浪费在 32 位系统上会更明显，因此我们没有在那些系统上强制
+ * 步长为缓存行大小。如果有人做了实际的性能测试，我们可以重新评估。
  *
- * Note that local buffer descriptors aren't forced to be aligned - as there's
- * no concurrent access to those it's unlikely to be beneficial.
+ * 注意，本地缓冲区描述符不会被强制对齐——因为不存在对其的并发访问，对齐不太可能
+ * 带来收益。
  *
- * We use a 64-byte cache line size here, because that's the most common
- * size. Making it bigger would be a waste of memory. Even if running on a
- * platform with either 32 or 128 byte line sizes, it's good to align to
- * boundaries and avoid false sharing.
+ * 这里使用 64 字节的缓存行大小，因为这是最常见的尺寸。设得更大只会浪费内存。
+ * 即使在具有 32 或 128 字节缓存行大小的平台上运行，对齐到边界并避免伪共享也是有益的。
  */
 #define BUFFERDESC_PAD_TO_SIZE	(SIZEOF_VOID_P == 8 ? 64 : 1)
 
@@ -299,34 +276,34 @@ typedef union BufferDescPadded
 } BufferDescPadded;
 
 /*
- * The PendingWriteback & WritebackContext structure are used to keep
- * information about pending flush requests to be issued to the OS.
+ * PendingWriteback 和 WritebackContext 结构体用于保存待向操作系统发出的
+ * 刷新请求相关信息。
  */
 typedef struct PendingWriteback
 {
-	/* could store different types of pending flushes here */
+	/* 此处可以存储不同类型的待处理刷新请求 */
 	BufferTag	tag;
 } PendingWriteback;
 
-/* struct forward declared in bufmgr.h */
+/* 结构体在 bufmgr.h 中前向声明 */
 typedef struct WritebackContext
 {
-	/* pointer to the max number of writeback requests to coalesce */
+	/* 指向可合并的最大写回请求数的指针 */
 	int		   *max_pending;
 
-	/* current number of pending writeback requests */
+	/* 当前待处理的写回请求数 */
 	int			nr_pending;
 
-	/* pending requests */
+	/* 待处理的请求 */
 	PendingWriteback pending_writebacks[WRITEBACK_MAX_PENDING_FLUSHES];
 } WritebackContext;
 
-/* in buf_init.c */
+/* 在 buf_init.c 中 */
 extern PGDLLIMPORT BufferDescPadded *BufferDescriptors;
 extern PGDLLIMPORT ConditionVariableMinimallyPadded *BufferIOCVArray;
 extern PGDLLIMPORT WritebackContext BackendWritebackContext;
 
-/* in localbuf.c */
+/* 在 localbuf.c 中 */
 extern PGDLLIMPORT BufferDesc *LocalBufferDescriptors;
 
 
@@ -361,15 +338,15 @@ BufferDescriptorGetContentLock(const BufferDesc *bdesc)
 }
 
 /*
- * The freeNext field is either the index of the next freelist entry,
- * or one of these special values:
+ * freeNext 字段要么是下一个空闲链表条目的索引，
+ * 要么是以下特殊值之一：
  */
 #define FREENEXT_END_OF_LIST	(-1)
 #define FREENEXT_NOT_IN_LIST	(-2)
 
 /*
- * Functions for acquiring/releasing a shared buffer header's spinlock.  Do
- * not apply these to local buffers!
+ * 用于获取/释放共享缓冲区头部自旋锁的函数。
+ * 切勿将其用于本地缓冲区！
  */
 extern uint32 LockBufHdr(BufferDesc *desc);
 
@@ -380,13 +357,12 @@ UnlockBufHdr(BufferDesc *desc, uint32 buf_state)
 	pg_atomic_write_u32(&desc->state, buf_state & (~BM_LOCKED));
 }
 
-/* in bufmgr.c */
+/* 在 bufmgr.c 中 */
 
 /*
- * Structure to sort buffers per file on checkpoints.
+ * 在检查点上按文件对缓冲区进行排序的结构体。
  *
- * This structure is allocated per buffer in shared memory, so it should be
- * kept as small as possible.
+ * 该结构体在共享内存中为每个缓冲区分配，因此应尽量保持最小。
  */
 typedef struct CkptSortItem
 {
@@ -399,11 +375,11 @@ typedef struct CkptSortItem
 
 extern PGDLLIMPORT CkptSortItem *CkptBufferIds;
 
-/* ResourceOwner callbacks to hold buffer I/Os and pins */
+/* 持有缓冲区 I/O 和 pin 的 ResourceOwner 回调 */
 extern PGDLLIMPORT const ResourceOwnerDesc buffer_io_resowner_desc;
 extern PGDLLIMPORT const ResourceOwnerDesc buffer_pin_resowner_desc;
 
-/* Convenience wrappers over ResourceOwnerRemember/Forget */
+/* 对 ResourceOwnerRemember/Forget 的便捷封装 */
 static inline void
 ResourceOwnerRememberBuffer(ResourceOwner owner, Buffer buffer)
 {
@@ -426,7 +402,7 @@ ResourceOwnerForgetBufferIO(ResourceOwner owner, Buffer buffer)
 }
 
 /*
- * Internal buffer management routines
+ * 内部缓冲区管理例程
  */
 /* bufmgr.c */
 extern void WritebackContextInit(WritebackContext *context, int *max_pending);
@@ -434,7 +410,7 @@ extern void IssuePendingWritebacks(WritebackContext *wb_context, IOContext io_co
 extern void ScheduleBufferTagForWriteback(WritebackContext *wb_context,
 										  IOContext io_context, BufferTag *tag);
 
-/* solely to make it easier to write tests */
+/* 仅为便于编写测试 */
 extern bool StartBufferIO(BufferDesc *buf, bool forInput, bool nowait);
 extern void TerminateBufferIO(BufferDesc *buf, bool clear_dirty, uint32 set_flag_bits,
 							  bool forget_owner, bool release_aio);

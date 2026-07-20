@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * relation.h
- *	  Generic relation related routines.
+ *	  通用的关系相关例程。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group

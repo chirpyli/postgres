@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * freespace.c
- *	  POSTGRES free space map for quickly finding free space in relations
+ *	  POSTGRES 空闲空间映射，用于在关系中快速查找空闲空间
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -11,13 +11,12 @@
  *	  src/backend/storage/freespace/freespace.c
  *
  *
- * NOTES:
+ * 说明：
  *
- *	Free Space Map keeps track of the amount of free space on pages, and
- *	allows quickly searching for a page with enough free space. The FSM is
- *	stored in a dedicated relation fork of all heap relations, and those
- *	index access methods that need it (see also indexfsm.c). See README for
- *	more information.
+ *	空闲空间映射（FSM）跟踪各页面上的空闲空间量，并允许快速搜索
+ *	具有足够空闲空间的页面。FSM 存储在所有堆表及那些需要它的
+ *	索引访问方法的专用关系分支中（另见 indexfsm.c）。
+ *	更多信息请参见 README。
  *
  *-------------------------------------------------------------------------
  */
@@ -34,19 +33,16 @@
 
 
 /*
- * We use just one byte to store the amount of free space on a page, so we
- * divide the amount of free space a page can have into 256 different
- * categories. The highest category, 255, represents a page with at least
- * MaxFSMRequestSize bytes of free space, and the second highest category
- * represents the range from 254 * FSM_CAT_STEP, inclusive, to
- * MaxFSMRequestSize, exclusive.
+ * 我们仅使用一个字节来存储页面上的空闲空间量，因此我们将页面可能拥有的
+ * 空闲空间量划分为 256 个不同类别。最高类别 255 表示页面至少有
+ * MaxFSMRequestSize 字节的空闲空间，次高类别表示从
+ * 254 * FSM_CAT_STEP（含）到 MaxFSMRequestSize（不含）的范围。
  *
- * MaxFSMRequestSize depends on the architecture and BLCKSZ, but assuming
- * default 8k BLCKSZ, and that MaxFSMRequestSize is 8164 bytes, the
- * categories look like this:
+ * MaxFSMRequestSize 依赖于体系架构和 BLCKSZ，但假设默认 8k BLCKSZ，
+ * 且 MaxFSMRequestSize 为 8164 字节，则类别如下所示：
  *
  *
- * Range	 Category
+ * 范围	       类别
  * 0	- 31   0
  * 32	- 63   1
  * ...    ...  ...
@@ -54,23 +50,22 @@
  * 8128 - 8163 254
  * 8164 - 8192 255
  *
- * The reason that MaxFSMRequestSize is special is that if MaxFSMRequestSize
- * isn't equal to a range boundary, a page with exactly MaxFSMRequestSize
- * bytes of free space wouldn't satisfy a request for MaxFSMRequestSize
- * bytes. If there isn't more than MaxFSMRequestSize bytes of free space on a
- * completely empty page, that would mean that we could never satisfy a
- * request of exactly MaxFSMRequestSize bytes.
+ * MaxFSMRequestSize 特殊的原因是：如果 MaxFSMRequestSize 不等于某个范围边界，
+ * 那么恰好有 MaxFSMRequestSize 字节空闲空间的页面将无法满足
+ * MaxFSMRequestSize 字节的请求。如果在一个完全空白的页面上都没有超过
+ * MaxFSMRequestSize 字节的空闲空间，那就意味着我们永远无法满足
+ * 恰好 MaxFSMRequestSize 字节的请求。
  */
 #define FSM_CATEGORIES	256
 #define FSM_CAT_STEP	(BLCKSZ / FSM_CATEGORIES)
 #define MaxFSMRequestSize	MaxHeapTupleSize
 
 /*
- * Depth of the on-disk tree. We need to be able to address 2^32-1 blocks,
- * and 1626 is the smallest number that satisfies X^3 >= 2^32-1. Likewise,
- * 256 is the smallest number that satisfies X^4 >= 2^32-1. In practice,
- * this means that 4096 bytes is the smallest BLCKSZ that we can get away
- * with a 3-level tree, and 512 is the smallest we support.
+ * 磁盘上树的深度。我们需要能够寻址 2^32-1 个块，
+ * 而 1626 是满足 X^3 >= 2^32-1 的最小数字。同样地，
+ * 256 是满足 X^4 >= 2^32-1 的最小数字。实际上，
+ * 这意味着 4096 字节是我们可以使用 3 层树的最小 BLCKSZ，
+ * 而 512 是我们支持的最小值。
  */
 #define FSM_TREE_DEPTH	((SlotsPerFSMPage >= 1626) ? 3 : 4)
 
@@ -78,19 +73,19 @@
 #define FSM_BOTTOM_LEVEL 0
 
 /*
- * The internal FSM routines work on a logical addressing scheme. Each
- * level of the tree can be thought of as a separately addressable file.
+ * 内部 FSM 例程使用逻辑寻址方案。树的每一层
+ * 可以被视为一个可单独寻址的文件。
  */
 typedef struct
 {
-	int			level;			/* level */
-	int			logpageno;		/* page number within the level */
+	int			level;			/* 层级 */
+	int			logpageno;		/* 该层级内的页号 */
 } FSMAddress;
 
-/* Address of the root page. */
+/* 根页的地址。 */
 static const FSMAddress FSM_ROOT_ADDRESS = {FSM_ROOT_LEVEL, 0};
 
-/* functions to navigate the tree */
+/* 在树中导航的函数 */
 static FSMAddress fsm_get_child(FSMAddress parent, uint16 slot);
 static FSMAddress fsm_get_parent(FSMAddress child, uint16 *slot);
 static FSMAddress fsm_get_location(BlockNumber heapblk, uint16 *slot);
@@ -100,12 +95,12 @@ static BlockNumber fsm_logical_to_physical(FSMAddress addr);
 static Buffer fsm_readbuf(Relation rel, FSMAddress addr, bool extend);
 static Buffer fsm_extend(Relation rel, BlockNumber fsm_nblocks);
 
-/* functions to convert amount of free space to a FSM category */
+/* 将空闲空间量转换为 FSM 类别的函数 */
 static uint8 fsm_space_avail_to_cat(Size avail);
 static uint8 fsm_space_needed_to_cat(Size needed);
 static Size fsm_space_cat_to_avail(uint8 cat);
 
-/* workhorse functions for various operations */
+/* 各项操作的核心函数 */
 static int	fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 							   uint8 newValue, uint8 minValue);
 static BlockNumber fsm_search(Relation rel, uint8 min_cat);
@@ -115,23 +110,19 @@ static uint8 fsm_vacuum_page(Relation rel, FSMAddress addr,
 static bool fsm_does_block_exist(Relation rel, BlockNumber blknumber);
 
 
-/******** Public API ********/
+/******** 公共 API ********/
 
 /*
- * GetPageWithFreeSpace - try to find a page in the given relation with
- *		at least the specified amount of free space.
+ * GetPageWithFreeSpace - 尝试在给定关系中找到一个至少具有指定空闲空间量的页面。
  *
- * If successful, return the block number; if not, return InvalidBlockNumber.
+ * 如果成功，返回块号；如果不成功，返回 InvalidBlockNumber。
  *
- * The caller must be prepared for the possibility that the returned page
- * will turn out to have too little space available by the time the caller
- * gets a lock on it.  In that case, the caller should report the actual
- * amount of free space available on that page and then try again (see
- * RecordAndGetPageWithFreeSpace).  If InvalidBlockNumber is returned,
- * extend the relation.
+ * 调用方必须准备好应对返回的页面在获取锁时实际可用空间不足的可能性。
+ * 在这种情况下，调用方应报告该页面上实际可用的空闲空间量，
+ * 然后重试（参见 RecordAndGetPageWithFreeSpace）。
+ * 如果返回 InvalidBlockNumber，则扩展关系。
  *
- * This can trigger FSM updates if any FSM entry is found to point to a block
- * past the end of the relation.
+ * 如果任何 FSM 条目指向超出关系末尾的块，此函数可能会触发 FSM 更新。
  */
 BlockNumber
 GetPageWithFreeSpace(Relation rel, Size spaceNeeded)
@@ -142,13 +133,11 @@ GetPageWithFreeSpace(Relation rel, Size spaceNeeded)
 }
 
 /*
- * RecordAndGetPageWithFreeSpace - update info about a page and try again.
+ * RecordAndGetPageWithFreeSpace - 更新页面信息并重试。
  *
- * We provide this combo form to save some locking overhead, compared to
- * separate RecordPageWithFreeSpace + GetPageWithFreeSpace calls. There's
- * also some effort to return a page close to the old page; if there's a
- * page with enough free space on the same FSM page where the old one page
- * is located, it is preferred.
+ * 我们提供这个组合形式，以节省相比分别调用 RecordPageWithFreeSpace +
+ * GetPageWithFreeSpace 的锁开销。此外还会尽量返回靠近旧页面的页面；
+ * 如果在旧页面所在的同一 FSM 页面上有足够空闲空间的页面，则优先使用。
  */
 BlockNumber
 RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
@@ -160,22 +149,22 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	uint16		slot;
 	int			search_slot;
 
-	/* Get the location of the FSM byte representing the heap block */
+	/* 获取表示该堆块的 FSM 字节的位置 */
 	addr = fsm_get_location(oldPage, &slot);
 
 	search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
 
 	/*
-	 * If fsm_set_and_search found a suitable new block, return that.
-	 * Otherwise, search as usual.
+	 * 如果 fsm_set_and_search 找到了合适的新块，返回它。
+	 * 否则，按常规方式搜索。
 	 */
 	if (search_slot != -1)
 	{
 		BlockNumber blknum = fsm_get_heap_blk(addr, search_slot);
 
 		/*
-		 * Check that the blknum is actually in the relation. Don't try to
-		 * update the FSM in that case, just fall back to the other case
+		 * 检查该 blknum 是否确实在关系中。如果是，直接返回；
+		 * 如果不是，不要尝试更新 FSM，回退到其他情况。
 		 */
 		if (fsm_does_block_exist(rel, blknum))
 			return blknum;
@@ -184,11 +173,11 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 }
 
 /*
- * RecordPageWithFreeSpace - update info about a page.
+ * RecordPageWithFreeSpace - 更新页面信息。
  *
- * Note that if the new spaceAvail value is higher than the old value stored
- * in the FSM, the space might not become visible to searchers until the next
- * FreeSpaceMapVacuum call, which updates the upper level pages.
+ * 注意，如果新的 spaceAvail 值高于 FSM 中存储的旧值，
+ * 该空间可能在下次 FreeSpaceMapVacuum 调用（它会更新上层页面）之前
+ * 不会对搜索者可见。
  */
 void
 RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk, Size spaceAvail)
@@ -197,15 +186,14 @@ RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk, Size spaceAvail)
 	FSMAddress	addr;
 	uint16		slot;
 
-	/* Get the location of the FSM byte representing the heap block */
+	/* 获取表示该堆块的 FSM 字节的位置 */
 	addr = fsm_get_location(heapBlk, &slot);
 
 	fsm_set_and_search(rel, addr, slot, new_cat, 0);
 }
 
 /*
- * XLogRecordPageWithFreeSpace - like RecordPageWithFreeSpace, for use in
- *		WAL replay
+ * XLogRecordPageWithFreeSpace - 类似 RecordPageWithFreeSpace，但用于 WAL 回放
  */
 void
 XLogRecordPageWithFreeSpace(RelFileLocator rlocator, BlockNumber heapBlk,
@@ -218,11 +206,11 @@ XLogRecordPageWithFreeSpace(RelFileLocator rlocator, BlockNumber heapBlk,
 	Buffer		buf;
 	Page		page;
 
-	/* Get the location of the FSM byte representing the heap block */
+	/* 获取表示该堆块的 FSM 字节的位置 */
 	addr = fsm_get_location(heapBlk, &slot);
 	blkno = fsm_logical_to_physical(addr);
 
-	/* If the page doesn't exist already, extend */
+	/* 如果页面尚不存在，则扩展 */
 	buf = XLogReadBufferExtended(rlocator, FSM_FORKNUM, blkno,
 								 RBM_ZERO_ON_ERROR, InvalidBuffer);
 	LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
@@ -232,14 +220,13 @@ XLogRecordPageWithFreeSpace(RelFileLocator rlocator, BlockNumber heapBlk,
 		PageInit(page, BLCKSZ, 0);
 
 	/*
-	 * Changes to FSM are usually marked as changed using MarkBufferDirtyHint;
-	 * however, during recovery, it does nothing if checksums are enabled. It
-	 * is assumed that the page should not be dirtied during recovery while
-	 * modifying hints to prevent torn pages, since no new WAL data can be
-	 * generated at this point to store FPI. This is not relevant to the FSM
-	 * case, as its blocks are zeroed when a checksum mismatch occurs. So, we
-	 * need to use regular MarkBufferDirty here to mark the FSM block as
-	 * modified during recovery, otherwise changes to the FSM may be lost.
+	 * 对 FSM 的更改通常使用 MarkBufferDirtyHint 来标记为已修改；
+	 * 但在恢复期间，如果启用了校验和，它什么也不做。
+	 * 这里假设在恢复期间修改提示位时不应脏化页面，以防止撕裂页，
+	 * 因为此时无法生成新的 WAL 数据来存储 FPI。
+	 * 这对 FSM 来说并不相关，因为当校验和不匹配时，它的块会被清零。
+	 * 因此，我们需要在这里使用常规的 MarkBufferDirty 来标记 FSM 块
+	 * 在恢复期间已修改，否则对 FSM 的更改可能会丢失。
 	 */
 	if (fsm_set_avail(page, slot, new_cat))
 		MarkBufferDirty(buf);
@@ -247,8 +234,7 @@ XLogRecordPageWithFreeSpace(RelFileLocator rlocator, BlockNumber heapBlk,
 }
 
 /*
- * GetRecordedFreeSpace - return the amount of free space on a particular page,
- *		according to the FSM.
+ * GetRecordedFreeSpace - 根据 FSM 返回特定页面上的空闲空间量。
  */
 Size
 GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk)
@@ -258,7 +244,7 @@ GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk)
 	Buffer		buf;
 	uint8		cat;
 
-	/* Get the location of the FSM byte representing the heap block */
+	/* 获取表示该堆块的 FSM 字节的位置 */
 	addr = fsm_get_location(heapBlk, &slot);
 
 	buf = fsm_readbuf(rel, addr, false);
@@ -271,15 +257,14 @@ GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk)
 }
 
 /*
- * FreeSpaceMapPrepareTruncateRel - prepare for truncation of a relation.
+ * FreeSpaceMapPrepareTruncateRel - 为关系截断做准备。
  *
- * nblocks is the new size of the heap.
+ * nblocks 是堆的新大小。
  *
- * Return the number of blocks of new FSM.
- * If it's InvalidBlockNumber, there is nothing to truncate;
- * otherwise the caller is responsible for calling smgrtruncate()
- * to truncate the FSM pages, and FreeSpaceMapVacuumRange()
- * to update upper-level pages in the FSM.
+ * 返回新 FSM 的块数。
+ * 如果为 InvalidBlockNumber，则无需截断；
+ * 否则调用方负责调用 smgrtruncate() 来截断 FSM 页面，
+ * 并调用 FreeSpaceMapVacuumRange() 来更新 FSM 中的上层页面。
  */
 BlockNumber
 FreeSpaceMapPrepareTruncateRel(Relation rel, BlockNumber nblocks)
@@ -290,53 +275,50 @@ FreeSpaceMapPrepareTruncateRel(Relation rel, BlockNumber nblocks)
 	Buffer		buf;
 
 	/*
-	 * If no FSM has been created yet for this relation, there's nothing to
-	 * truncate.
+	 * 如果此关系尚未创建 FSM，则无需截断。
 	 */
 	if (!smgrexists(RelationGetSmgr(rel), FSM_FORKNUM))
 		return InvalidBlockNumber;
 
-	/* Get the location in the FSM of the first removed heap block */
+	/* 获取 FSM 中第一个被移除的堆块的位置 */
 	first_removed_address = fsm_get_location(nblocks, &first_removed_slot);
 
 	/*
-	 * Zero out the tail of the last remaining FSM page. If the slot
-	 * representing the first removed heap block is at a page boundary, as the
-	 * first slot on the FSM page that first_removed_address points to, we can
-	 * just truncate that page altogether.
+	 * 将最后一个剩余的 FSM 页面的尾部清零。如果表示第一个被移除堆块的
+	 * 槽位正好位于页面边界上（即作为 first_removed_address 所指向 FSM
+	 * 页面的第一个槽位），我们可以直接截断该页面。
 	 */
 	if (first_removed_slot > 0)
 	{
 		buf = fsm_readbuf(rel, first_removed_address, false);
 		if (!BufferIsValid(buf))
-			return InvalidBlockNumber;	/* nothing to do; the FSM was already
-										 * smaller */
+			return InvalidBlockNumber;	/* 无需操作；FSM 已经更小了 */
+
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 
-		/* NO EREPORT(ERROR) from here till changes are logged */
+		/* 从此处到更改被日志记录之前，禁止 EREPORT(ERROR) */
 		START_CRIT_SECTION();
 
 		fsm_truncate_avail(BufferGetPage(buf), first_removed_slot);
 
 		/*
-		 * This change is non-critical, because fsm_does_block_exist() would
-		 * stop us from returning a truncated-away block.  However, since this
-		 * may remove up to SlotsPerFSMPage slots, it's nice to avoid the cost
-		 * of that many fsm_does_block_exist() rejections.  Use a full
-		 * MarkBufferDirty(), not MarkBufferDirtyHint().
+		 * 此更改非关键，因为 fsm_does_block_exist() 会阻止我们返回
+		 * 已被截断的块。但是，由于这可能移除多达 SlotsPerFSMPage 个槽位，
+		 * 避免那么多 fsm_does_block_exist() 拒绝的开销总是好的。
+		 * 使用完整的 MarkBufferDirty()，而非 MarkBufferDirtyHint()。
 		 */
 		MarkBufferDirty(buf);
 
 		/*
-		 * WAL-log like MarkBufferDirtyHint() might have done, just to avoid
-		 * differing from the rest of the file in this respect.  This is
-		 * optional; see README mention of full page images.  XXX consider
-		 * XLogSaveBufferForHint() for even closer similarity.
+		 * 像 MarkBufferDirtyHint() 那样记录 WAL，只是为了在这方面
+		 * 与文件其余部分保持一致。这是可选的；参见 README 中关于
+		 * 完整页映像的说明。XXX 考虑使用 XLogSaveBufferForHint()
+		 * 以获得更接近的相似性。
 		 *
-		 * A higher-level operation calls us at WAL replay.  If we crash
-		 * before the XLOG_SMGR_TRUNCATE flushes to disk, main fork length has
-		 * not changed, and our fork remains valid.  If we crash after that
-		 * flush, redo will return here.
+		 * 更高层的操作在 WAL 回放时调用我们。如果我们在
+		 * XLOG_SMGR_TRUNCATE 刷新到磁盘之前崩溃，主分支长度尚未改变，
+		 * 我们的分支仍然有效。如果我们在该刷新之后崩溃，
+		 * 重做（redo）将回到这里。
 		 */
 		if (!InRecovery && RelationNeedsWAL(rel) && XLogHintBitIsNeeded())
 			log_newpage_buffer(buf, false);
@@ -351,52 +333,49 @@ FreeSpaceMapPrepareTruncateRel(Relation rel, BlockNumber nblocks)
 	{
 		new_nfsmblocks = fsm_logical_to_physical(first_removed_address);
 		if (smgrnblocks(RelationGetSmgr(rel), FSM_FORKNUM) <= new_nfsmblocks)
-			return InvalidBlockNumber;	/* nothing to do; the FSM was already
-										 * smaller */
+			return InvalidBlockNumber;	/* 无需操作；FSM 已经更小了 */
 	}
 
 	return new_nfsmblocks;
 }
 
 /*
- * FreeSpaceMapVacuum - update upper-level pages in the rel's FSM
+ * FreeSpaceMapVacuum - 更新关系 FSM 中的上层页面
  *
- * We assume that the bottom-level pages have already been updated with
- * new free-space information.
+ * 我们假设底层页面已经用新的空闲空间信息更新过。
  */
 void
 FreeSpaceMapVacuum(Relation rel)
 {
 	bool		dummy;
 
-	/* Recursively scan the tree, starting at the root */
+	/* 从根节点开始递归扫描树 */
 	(void) fsm_vacuum_page(rel, FSM_ROOT_ADDRESS,
 						   (BlockNumber) 0, InvalidBlockNumber,
 						   &dummy);
 }
 
 /*
- * FreeSpaceMapVacuumRange - update upper-level pages in the rel's FSM
+ * FreeSpaceMapVacuumRange - 更新关系 FSM 中的上层页面
  *
- * As above, but assume that only heap pages between start and end-1 inclusive
- * have new free-space information, so update only the upper-level slots
- * covering that block range.  end == InvalidBlockNumber is equivalent to
- * "all the rest of the relation".
+ * 与上面类似，但假设只有介于 start 和 end-1（含）之间的堆页面
+ * 具有新的空闲空间信息，因此只更新覆盖该块范围的上层槽位。
+ * end == InvalidBlockNumber 等价于"关系的其余所有部分"。
  */
 void
 FreeSpaceMapVacuumRange(Relation rel, BlockNumber start, BlockNumber end)
 {
 	bool		dummy;
 
-	/* Recursively scan the tree, starting at the root */
+	/* 从根节点开始递归扫描树 */
 	if (end > start)
 		(void) fsm_vacuum_page(rel, FSM_ROOT_ADDRESS, start, end, &dummy);
 }
 
-/******** Internal routines ********/
+/******** 内部例程 ********/
 
 /*
- * Return category corresponding x bytes of free space
+ * 返回对应 x 字节空闲空间的类别
  */
 static uint8
 fsm_space_avail_to_cat(Size avail)
@@ -411,8 +390,7 @@ fsm_space_avail_to_cat(Size avail)
 	cat = avail / FSM_CAT_STEP;
 
 	/*
-	 * The highest category, 255, is reserved for MaxFSMRequestSize bytes or
-	 * more.
+	 * 最高类别 255 保留用于 MaxFSMRequestSize 字节或更多。
 	 */
 	if (cat > 254)
 		cat = 254;
@@ -421,13 +399,12 @@ fsm_space_avail_to_cat(Size avail)
 }
 
 /*
- * Return the lower bound of the range of free space represented by given
- * category.
+ * 返回给定类别所表示的空闲空间范围的下限。
  */
 static Size
 fsm_space_cat_to_avail(uint8 cat)
 {
-	/* The highest category represents exactly MaxFSMRequestSize bytes. */
+	/* 最高类别精确表示 MaxFSMRequestSize 字节。 */
 	if (cat == 255)
 		return MaxFSMRequestSize;
 	else
@@ -435,15 +412,15 @@ fsm_space_cat_to_avail(uint8 cat)
 }
 
 /*
- * Which category does a page need to have, to accommodate x bytes of data?
- * While fsm_space_avail_to_cat() rounds down, this needs to round up.
+ * 一个页面需要属于哪个类别才能容纳 x 字节的数据？
+ * fsm_space_avail_to_cat() 是向下取整，而这里需要向上取整。
  */
 static uint8
 fsm_space_needed_to_cat(Size needed)
 {
 	int			cat;
 
-	/* Can't ask for more space than the highest category represents */
+	/* 不能请求超过最高类别所表示的空间 */
 	if (needed > MaxFSMRequestSize)
 		elog(ERROR, "invalid FSM request size %zu", needed);
 
@@ -459,7 +436,7 @@ fsm_space_needed_to_cat(Size needed)
 }
 
 /*
- * Returns the physical block number of a FSM page
+ * 返回 FSM 页面的物理块号
  */
 static BlockNumber
 fsm_logical_to_physical(FSMAddress addr)
@@ -469,14 +446,13 @@ fsm_logical_to_physical(FSMAddress addr)
 	int			l;
 
 	/*
-	 * Calculate the logical page number of the first leaf page below the
-	 * given page.
+	 * 计算给定页面下方第一个叶子页面的逻辑页号。
 	 */
 	leafno = addr.logpageno;
 	for (l = 0; l < addr.level; l++)
 		leafno *= SlotsPerFSMPage;
 
-	/* Count upper level nodes required to address the leaf page */
+	/* 计算寻址该叶子页面所需的上层节点数 */
 	pages = 0;
 	for (l = 0; l < FSM_TREE_DEPTH; l++)
 	{
@@ -485,17 +461,17 @@ fsm_logical_to_physical(FSMAddress addr)
 	}
 
 	/*
-	 * If the page we were asked for wasn't at the bottom level, subtract the
-	 * additional lower level pages we counted above.
+	 * 如果我们被请求的页面不在底层，减去上面多算的
+	 * 较低层级的页面。
 	 */
 	pages -= addr.level;
 
-	/* Turn the page count into 0-based block number */
+	/* 将页计数转换为从 0 开始的块号 */
 	return pages - 1;
 }
 
 /*
- * Return the FSM location corresponding to given heap block.
+ * 返回与给定堆块对应的 FSM 位置。
  */
 static FSMAddress
 fsm_get_location(BlockNumber heapblk, uint16 *slot)
@@ -510,7 +486,7 @@ fsm_get_location(BlockNumber heapblk, uint16 *slot)
 }
 
 /*
- * Return the heap block number corresponding to given location in the FSM.
+ * 返回与 FSM 中给定位置对应的堆块号。
  */
 static BlockNumber
 fsm_get_heap_blk(FSMAddress addr, uint16 slot)
@@ -520,8 +496,8 @@ fsm_get_heap_blk(FSMAddress addr, uint16 slot)
 }
 
 /*
- * Given a logical address of a child page, get the logical page number of
- * the parent, and the slot within the parent corresponding to the child.
+ * 给定子页面的逻辑地址，获取父页面的逻辑页号，
+ * 以及父页面中对应于该子页面的槽位。
  */
 static FSMAddress
 fsm_get_parent(FSMAddress child, uint16 *slot)
@@ -538,8 +514,8 @@ fsm_get_parent(FSMAddress child, uint16 *slot)
 }
 
 /*
- * Given a logical address of a parent page and a slot number, get the
- * logical address of the corresponding child page.
+ * 给定父页面的逻辑地址和一个槽号，
+ * 获取对应子页面的逻辑地址。
  */
 static FSMAddress
 fsm_get_child(FSMAddress parent, uint16 slot)
@@ -555,10 +531,10 @@ fsm_get_child(FSMAddress parent, uint16 slot)
 }
 
 /*
- * Read a FSM page.
+ * 读取 FSM 页面。
  *
- * If the page doesn't exist, InvalidBuffer is returned, or if 'extend' is
- * true, the FSM file is extended.
+ * 如果页面不存在，返回 InvalidBuffer；如果 'extend' 为 true，
+ * 则扩展 FSM 文件。
  */
 static Buffer
 fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
@@ -568,15 +544,14 @@ fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 	SMgrRelation reln = RelationGetSmgr(rel);
 
 	/*
-	 * If we haven't cached the size of the FSM yet, check it first.  Also
-	 * recheck if the requested block seems to be past end, since our cached
-	 * value might be stale.  (We send smgr inval messages on truncation, but
-	 * not on extension.)
+	 * 如果我们尚未缓存 FSM 的大小，先检查一下。
+	 * 如果请求的块似乎已超出末尾，也重新检查，因为我们的缓存值可能已过时。
+	 * （我们在截断时会发送 smgr 失效消息，但扩展时不会。）
 	 */
 	if (reln->smgr_cached_nblocks[FSM_FORKNUM] == InvalidBlockNumber ||
 		blkno >= reln->smgr_cached_nblocks[FSM_FORKNUM])
 	{
-		/* Invalidate the cache so smgrnblocks asks the kernel. */
+		/* 使缓存失效，以便 smgrnblocks 向内核查询。 */
 		reln->smgr_cached_nblocks[FSM_FORKNUM] = InvalidBlockNumber;
 		if (smgrexists(reln, FSM_FORKNUM))
 			smgrnblocks(reln, FSM_FORKNUM);
@@ -585,15 +560,13 @@ fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 	}
 
 	/*
-	 * For reading we use ZERO_ON_ERROR mode, and initialize the page if
-	 * necessary.  The FSM information is not accurate anyway, so it's better
-	 * to clear corrupt pages than error out. Since the FSM changes are not
-	 * WAL-logged, the so-called torn page problem on crash can lead to pages
-	 * with corrupt headers, for example.
+	 * 对于读取，我们使用 ZERO_ON_ERROR 模式，并在必要时初始化页面。
+	 * FSM 信息无论如何都不精确，因此清除损坏页比重接报错更好。
+	 * 由于 FSM 更改不记录 WAL，崩溃时的所谓撕裂页问题
+	 * 可能导致页面头部损坏，例如。
 	 *
-	 * We use the same path below to initialize pages when extending the
-	 * relation, as a concurrent extension can end up with vm_extend()
-	 * returning an already-initialized page.
+	 * 我们在下面的路径中使用同样的方式在扩展关系时初始化页面，
+	 * 因为并发扩展可能导致 vm_extend() 返回一个已经初始化的页面。
 	 */
 	if (blkno >= reln->smgr_cached_nblocks[FSM_FORKNUM])
 	{
@@ -606,19 +579,16 @@ fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 		buf = ReadBufferExtended(rel, FSM_FORKNUM, blkno, RBM_ZERO_ON_ERROR, NULL);
 
 	/*
-	 * Initializing the page when needed is trickier than it looks, because of
-	 * the possibility of multiple backends doing this concurrently, and our
-	 * desire to not uselessly take the buffer lock in the normal path where
-	 * the page is OK.  We must take the lock to initialize the page, so
-	 * recheck page newness after we have the lock, in case someone else
-	 * already did it.  Also, because we initially check PageIsNew with no
-	 * lock, it's possible to fall through and return the buffer while someone
-	 * else is still initializing the page (i.e., we might see pd_upper as set
-	 * but other page header fields are still zeroes).  This is harmless for
-	 * callers that will take a buffer lock themselves, but some callers
-	 * inspect the page without any lock at all.  The latter is OK only so
-	 * long as it doesn't depend on the page header having correct contents.
-	 * Current usage is safe because PageGetContents() does not require that.
+	 * 在需要时初始化页面比看起来更棘手，因为存在多个后端并发执行此操作的
+	 * 可能性，以及我们希望避免在页面正常时无谓地获取缓冲区锁。
+	 * 我们必须获取锁来初始化页面，因此在获得锁后重新检查页面是否为新建，
+	 * 以防其他人已经完成了初始化。此外，由于我们最初在没有锁的情况下
+	 * 检查 PageIsNew，可能出现在其他人仍在初始化页面时我们直接返回缓冲区
+	 * 的情况（即，我们可能看到 pd_upper 已设置，但其他页面头部字段仍为零）。
+	 * 这对于自身会获取缓冲区锁的调用方来说是无害的，但某些调用方
+	 * 会在没有任何锁的情况下检查页面。后者只有在不依赖页面头部具有
+	 * 正确内容的情况下才是安全的。当前用法是安全的，因为
+	 * PageGetContents() 不需要页面头部正确。
 	 */
 	if (PageIsNew(BufferGetPage(buf)))
 	{
@@ -631,9 +601,9 @@ fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 }
 
 /*
- * Ensure that the FSM fork is at least fsm_nblocks long, extending
- * it if necessary with empty pages. And by empty, I mean pages filled
- * with zeros, meaning there's no free space.
+ * 确保 FSM 分支至少为 fsm_nblocks 长，
+ * 必要时用空页面进行扩展。这里的"空"指的是页面全部填充为零，
+ * 意味着没有空闲空间。
  */
 static Buffer
 fsm_extend(Relation rel, BlockNumber fsm_nblocks)
@@ -646,11 +616,10 @@ fsm_extend(Relation rel, BlockNumber fsm_nblocks)
 }
 
 /*
- * Set value in given FSM page and slot.
+ * 在给定的 FSM 页面和槽位中设置值。
  *
- * If minValue > 0, the updated page is also searched for a page with at
- * least minValue of free space. If one is found, its slot number is
- * returned, -1 otherwise.
+ * 如果 minValue > 0，还会在更新后的页面中搜索至少具有 minValue 空闲空间的页面。
+ * 如果找到一个，返回其槽号，否则返回 -1。
  */
 static int
 fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
@@ -670,7 +639,7 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 
 	if (minValue != 0)
 	{
-		/* Search while we still hold the lock */
+		/* 在我们仍持有锁时进行搜索 */
 		newslot = fsm_search_avail(buf, minValue,
 								   addr.level == FSM_BOTTOM_LEVEL,
 								   true);
@@ -682,7 +651,7 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 }
 
 /*
- * Search the tree for a heap page with at least min_cat of free space
+ * 在树中搜索至少具有 min_cat 空闲空间的堆页面
  */
 static BlockNumber
 fsm_search(Relation rel, uint8 min_cat)
@@ -696,10 +665,10 @@ fsm_search(Relation rel, uint8 min_cat)
 		Buffer		buf;
 		uint8		max_avail = 0;
 
-		/* Read the FSM page. */
+		/* 读取 FSM 页面。 */
 		buf = fsm_readbuf(rel, addr, false);
 
-		/* Search within the page */
+		/* 在页面内搜索 */
 		if (BufferIsValid(buf))
 		{
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
@@ -713,7 +682,7 @@ fsm_search(Relation rel, uint8 min_cat)
 			}
 			else
 			{
-				/* Keep the pin for possible update below */
+				/* 保留 pin 以便下面的可能更新 */
 				LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 			}
 		}
@@ -723,8 +692,7 @@ fsm_search(Relation rel, uint8 min_cat)
 		if (slot != -1)
 		{
 			/*
-			 * Descend the tree, or return the found block if we're at the
-			 * bottom.
+			 * 沿树下移，如果已在底层则返回找到的块。
 			 */
 			if (addr.level == FSM_BOTTOM_LEVEL)
 			{
@@ -738,19 +706,18 @@ fsm_search(Relation rel, uint8 min_cat)
 				}
 
 				/*
-				 * Block is past the end of the relation.  Update FSM, and
-				 * restart from root.  The usual "advancenext" behavior is
-				 * pessimal for this rare scenario, since every later slot is
-				 * unusable in the same way.  We could zero all affected slots
-				 * on the same FSM page, but don't bet on the benefits of that
-				 * optimization justifying its compiled code bulk.
+				 * 块已超出关系末尾。更新 FSM，并从根节点重新开始。
+				 * 常用的 "advancenext" 行为在这种罕见场景下是最糟糕的，
+				 * 因为之后的每个槽位都会以同样的方式不可用。
+				 * 我们可以将同一 FSM 页面上所有受影响的槽位清零，
+				 * 但不要指望这种优化的好处能证明其编译代码量的合理性。
 				 */
 				page = BufferGetPage(buf);
 				LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 				fsm_set_avail(page, slot, 0);
 				MarkBufferDirtyHint(buf, false);
 				UnlockReleaseBuffer(buf);
-				if (restarts++ > 10000) /* same rationale as below */
+				if (restarts++ > 10000) /* 与下方的理由相同 */
 					return InvalidBlockNumber;
 				addr = FSM_ROOT_ADDRESS;
 			}
@@ -763,8 +730,7 @@ fsm_search(Relation rel, uint8 min_cat)
 		else if (addr.level == FSM_ROOT_LEVEL)
 		{
 			/*
-			 * At the root, failure means there's no page with enough free
-			 * space in the FSM. Give up.
+			 * 在根节点失败意味着 FSM 中没有具有足够空闲空间的页面。放弃。
 			 */
 			return InvalidBlockNumber;
 		}
@@ -774,31 +740,26 @@ fsm_search(Relation rel, uint8 min_cat)
 			FSMAddress	parent;
 
 			/*
-			 * At lower level, failure can happen if the value in the upper-
-			 * level node didn't reflect the value on the lower page. Update
-			 * the upper node, to avoid falling into the same trap again, and
-			 * start over.
+			 * 在较低层级，失败可能是因为上层节点中的值未反映下层页面的值。
+			 * 更新上层节点以避免再次陷入同样的陷阱，然后重新开始。
 			 *
-			 * There's a race condition here, if another backend updates this
-			 * page right after we release it, and gets the lock on the parent
-			 * page before us. We'll then update the parent page with the now
-			 * stale information we had. It's OK, because it should happen
-			 * rarely, and will be fixed by the next vacuum.
+			 * 这里存在竞态条件：如果另一个后端在我们释放它之后立即更新
+			 * 此页面，并在我们之前获取父页面的锁，我们将用现在已经过时的
+			 * 信息更新父页面。这没有问题，因为这种情况很少发生，
+			 * 且将在下一次 vacuum 中被修复。
 			 */
 			parent = fsm_get_parent(addr, &parentslot);
 			fsm_set_and_search(rel, parent, parentslot, max_avail, 0);
 
 			/*
-			 * If the upper pages are badly out of date, we might need to loop
-			 * quite a few times, updating them as we go. Any inconsistencies
-			 * should eventually be corrected and the loop should end. Looping
-			 * indefinitely is nevertheless scary, so provide an emergency
-			 * valve.
+			 * 如果上层页面严重过时，我们可能需要循环相当多的次数，
+			 * 在过程中更新它们。任何不一致最终都应得到纠正，循环应结束。
+			 * 尽管如此，无限循环是可怕的，因此提供一个紧急出口。
 			 */
 			if (restarts++ > 10000)
 				return InvalidBlockNumber;
 
-			/* Start search all over from the root */
+			/* 从根节点重新开始搜索 */
 			addr = FSM_ROOT_ADDRESS;
 		}
 	}
@@ -806,17 +767,17 @@ fsm_search(Relation rel, uint8 min_cat)
 
 
 /*
- * Recursive guts of FreeSpaceMapVacuum
+ * FreeSpaceMapVacuum 的递归核心
  *
- * Examine the FSM page indicated by addr, as well as its children, updating
- * upper-level nodes that cover the heap block range from start to end-1.
- * (It's okay if end is beyond the actual end of the map.)
- * Return the maximum freespace value on this page.
+ * 检查 addr 指示的 FSM 页面及其子页面，
+ * 更新覆盖堆块范围从 start 到 end-1 的上层节点。
+ * （如果 end 超出映射的实际末尾也没关系。）
+ * 返回此页面上的最大空闲空间值。
  *
- * If addr is past the end of the FSM, set *eof_p to true and return 0.
+ * 如果 addr 超出 FSM 的末尾，将 *eof_p 设为 true 并返回 0。
  *
- * This traverses the tree in depth-first order.  The tree is stored
- * physically in depth-first order, so this should be pretty I/O efficient.
+ * 这以深度优先顺序遍历树。树在物理上按深度优先顺序存储，
+ * 因此这应该具有相当高的 I/O 效率。
  */
 static uint8
 fsm_vacuum_page(Relation rel, FSMAddress addr,
@@ -827,7 +788,7 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 	Page		page;
 	uint8		max_avail;
 
-	/* Read the page if it exists, or return EOF */
+	/* 读取页面（如果存在），否则返回 EOF */
 	buf = fsm_readbuf(rel, addr, false);
 	if (!BufferIsValid(buf))
 	{
@@ -840,8 +801,8 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 	page = BufferGetPage(buf);
 
 	/*
-	 * If we're above the bottom level, recurse into children, and fix the
-	 * information stored about them at this level.
+	 * 如果我们在底层之上，递归进入子页面，
+	 * 并修正此层存储的子页面信息。
 	 */
 	if (addr.level > FSM_BOTTOM_LEVEL)
 	{
@@ -855,11 +816,11 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 		bool		eof = false;
 
 		/*
-		 * Compute the range of slots we need to update on this page, given
-		 * the requested range of heap blocks to consider.  The first slot to
-		 * update is the one covering the "start" block, and the last slot is
-		 * the one covering "end - 1".  (Some of this work will be duplicated
-		 * in each recursive call, but it's cheap enough to not worry about.)
+		 * 根据请求的堆块范围，计算我们需要在此页面上更新的槽位范围。
+		 * 第一个要更新的槽位是覆盖 "start" 块的槽位，
+		 * 最后一个槽位是覆盖 "end - 1" 的槽位。
+		 * （其中一些工作会在每次递归调用中重复，
+		 * 但成本很低，不值得担心。）
 		 */
 		fsm_start = fsm_get_location(start, &fsm_start_slot);
 		fsm_end = fsm_get_location(end - 1, &fsm_end_slot);
@@ -874,7 +835,7 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 		if (fsm_start.logpageno == addr.logpageno)
 			start_slot = fsm_start_slot;
 		else if (fsm_start.logpageno > addr.logpageno)
-			start_slot = SlotsPerFSMPage;	/* shouldn't get here... */
+			start_slot = SlotsPerFSMPage;	/* 不应该走到这里... */
 		else
 			start_slot = 0;
 
@@ -883,7 +844,7 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 		else if (fsm_end.logpageno > addr.logpageno)
 			end_slot = SlotsPerFSMPage - 1;
 		else
-			end_slot = -1;		/* shouldn't get here... */
+			end_slot = -1;		/* 不应该走到这里... */
 
 		for (slot = start_slot; slot <= end_slot; slot++)
 		{
@@ -891,7 +852,7 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 
 			CHECK_FOR_INTERRUPTS();
 
-			/* After we hit end-of-file, just clear the rest of the slots */
+			/* 遇到文件末尾后，直接将剩余槽位清零 */
 			if (!eof)
 				child_avail = fsm_vacuum_page(rel, fsm_get_child(addr, slot),
 											  start, end,
@@ -899,7 +860,7 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 			else
 				child_avail = 0;
 
-			/* Update information about the child */
+			/* 更新子页面信息 */
 			if (fsm_get_avail(page, slot) != child_avail)
 			{
 				LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
@@ -910,14 +871,14 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 		}
 	}
 
-	/* Now get the maximum value on the page, to return to caller */
+	/* 现在获取页面上的最大值以返回给调用方 */
 	max_avail = fsm_get_max_avail(page);
 
 	/*
-	 * Reset the next slot pointer. This encourages the use of low-numbered
-	 * pages, increasing the chances that a later vacuum can truncate the
-	 * relation.  We don't bother with a lock here, nor with marking the page
-	 * dirty if it wasn't already, since this is just a hint.
+	 * 重置下一个槽位指针。这鼓励使用低编号的页面，
+	 * 增加后续 vacuum 可以截断关系的可能性。
+	 * 我们在此处不费心获取锁，也不标记页面为脏（如果之前不脏），
+	 * 因为这只是一个提示。
 	 */
 	((FSMPage) PageGetContents(page))->fp_next_slot = 0;
 
@@ -928,9 +889,8 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 
 
 /*
- * Check whether a block number is past the end of the relation.  This can
- * happen after WAL replay, if the FSM reached disk but newly-extended pages
- * it refers to did not.
+ * 检查块号是否超出关系的末尾。这在 WAL 回放后可能发生，
+ * 如果 FSM 已写入磁盘，但它引用的新扩展页面还没有。
  */
 static bool
 fsm_does_block_exist(Relation rel, BlockNumber blknumber)
@@ -938,11 +898,10 @@ fsm_does_block_exist(Relation rel, BlockNumber blknumber)
 	SMgrRelation smgr = RelationGetSmgr(rel);
 
 	/*
-	 * If below the cached nblocks, the block surely exists.  Otherwise, we
-	 * face a trade-off.  We opt to compare to a fresh nblocks, incurring
-	 * lseek() overhead.  The alternative would be to assume the block does
-	 * not exist, but that would cause FSM to set zero space available for
-	 * blocks that main fork extension just recorded.
+	 * 如果低于缓存的 nblocks，该块肯定存在。否则，我们面临一个权衡。
+	 * 我们选择与最新的 nblocks 比较，这会产生 lseek() 开销。
+	 * 另一种方案是假设该块不存在，但这会导致 FSM 为主分支扩展刚刚记录的块
+	 * 将可用空间设为零。
 	 */
 	return ((BlockNumberIsValid(smgr->smgr_cached_nblocks[MAIN_FORKNUM]) &&
 			 blknumber < smgr->smgr_cached_nblocks[MAIN_FORKNUM]) ||

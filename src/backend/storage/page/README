@@ -1,64 +1,48 @@
 src/backend/storage/page/README
 
-Checksums
----------
+校验和
+------
 
-Checksums on data pages are designed to detect corruption by the I/O system.
-We do not protect buffers against uncorrectable memory errors, since these
-have a very low measured incidence according to research on large server farms,
-http://www.cs.toronto.edu/~bianca/papers/sigmetrics09.pdf, discussed
-2010/12/22 on -hackers list.
+数据页上的校验和旨在检测 I/O 系统导致的数据损坏。
+我们不会通过校验和保护缓冲区免受不可纠正的内存错误影响，因为根据对大型服务器集群的研究
+（http://www.cs.toronto.edu/~bianca/papers/sigmetrics09.pdf，于 2010/12/22 在
+-hackers 邮件列表中讨论），这类错误的发生率极低。
 
-Current implementation requires this be enabled system-wide at initdb time, or
-by using the pg_checksums tool on an offline cluster.
+当前实现要求在 initdb 时全集群启用校验和，或者通过 pg_checksums 工具在离线集群上启用。
 
-The checksum is not valid at all times on a data page!!
-The checksum is valid when the page leaves the shared pool and is checked
-when it later re-enters the shared pool as a result of I/O.
-We set the checksum on a buffer in the shared pool immediately before we
-flush the buffer. As a result we implicitly invalidate the page's checksum
-when we modify the page for a data change or even a hint. This means that
-many or even most pages in shared buffers have invalid page checksums,
-so be careful how you interpret the pd_checksum field.
+重要：校验和在数据页上并非始终有效！！
+校验和在页面离开共享池时是有效的，并在之后因 I/O 重新进入共享池时进行校验。
+我们在将缓冲区刷出共享池之前立即设置校验和。因此，当我们因数据变更（甚至
+hint 位更新）而修改页面时，会隐式地使页面的校验和失效。这意味着共享缓冲区中
+许多（甚至大多数）页面具有无效的页面校验和，因此在解读 pd_checksum 字段时
+请格外小心。
 
-That means that WAL-logged changes to a page do NOT update the page checksum,
-so full page images may not have a valid checksum. But those page images have
-the WAL CRC covering them and so are verified separately from this
-mechanism. WAL replay should not test the checksum of a full-page image.
+这也意味着，对页面的 WAL 日志变更不会更新页面校验和，因此完整页镜像可能没有
+有效的校验和。但这些页镜像有 WAL CRC 覆盖，因此通过独立于本机制的途径进行
+验证。WAL 回放不应校验完整页镜像的校验和。
 
-The best way to understand this is that WAL CRCs protect records entering the
-WAL stream, and data page verification protects blocks entering the shared
-buffer pool. They are similar in purpose, yet completely separate.  Together
-they ensure we are able to detect errors in data re-entering
-PostgreSQL-controlled memory. Note also that the WAL checksum is a 32-bit CRC,
-whereas the page checksum is only 16-bits.
+理解这一点的最佳方式是：WAL CRC 保护进入 WAL 流的记录，而数据页校验和保护
+进入共享缓冲池的块。它们目的相似，但完全独立。二者共同确保我们能够检测到
+数据重新进入 PostgreSQL 管控内存时的错误。另请注意，WAL 校验和是 32 位 CRC，
+而页面校验和仅为 16 位。
 
-Any write of a data block can cause a torn page if the write is unsuccessful.
-Full page writes protect us from that, which are stored in WAL.  Setting hint
-bits when a page is already dirty is OK because a full page write must already
-have been written for it since the last checkpoint.  Setting hint bits on an
-otherwise clean page can allow torn pages; this doesn't normally matter since
-they are just hints, but when the page has checksums, then losing a few bits
-would cause the checksum to be invalid.  So if we have full_page_writes = on
-and checksums enabled then we must write a WAL record specifically so that we
-record a full page image in WAL.  Hint bits updates should be protected using
-MarkBufferDirtyHint(), which is responsible for writing the full-page image
-when necessary.
+任何数据块的写入如果失败，都可能导致撕裂页（torn page）。完整页写入（存储在
+WAL 中）可以保护我们免受此问题影响。当页面已经脏时设置 hint 位是安全的，
+因为自上次检查点以来必定已经为其写入了完整页镜像。而在干净的页面上设置 hint
+位可能导致撕裂页；由于 hint 位只是提示，这通常无关紧要，但当页面启用了校验和时，
+丢失几个比特就会导致校验和无效。因此，如果 full_page_writes = on 且启用了校验和，
+我们必须专门写入一条 WAL 记录以在 WAL 中记录完整页镜像。hint 位更新应使用
+MarkBufferDirtyHint() 进行保护，该函数负责在必要时写入完整页镜像。
 
-Note that when we write a page checksum we include the hopefully zeroed bytes
-that form the hole in the centre of a standard page. Thus, when we read the
-block back from storage we implicitly check that the hole is still all zeroes.
-We do this to ensure that we spot errors that could have destroyed data even
-if they haven't actually done so. Full page images stored in WAL do *not*
-check that the hole is all zero; the data in the hole is simply skipped and
-re-zeroed if the backup block is reapplied. We do this because a failure in
-WAL is a fatal error and prevents further recovery, whereas a checksum failure
-on a normal data block is a hard error but not a critical one for the server,
-even if it is a very bad thing for the user.
+请注意，在计算页面校验和时，我们会包含横跨标准页面中央的"空洞"区域中
+（希望全为零的）字节。因此，当我们从存储中读回数据块时，会隐式地检查该空洞
+是否仍然全为零。我们这样做是为了确保能够发现那些可能已经破坏数据（即使实际上
+尚未破坏）的错误。存储在 WAL 中的完整页镜像不会检查空洞是否全为零；如果备份块
+被重新应用，空洞中的数据会被直接跳过并重新置零。我们这样做的原因是：WAL 中的
+故障是致命错误，会阻止后续恢复；而普通数据块上的校验和失败虽然是严重错误，
+但对服务器而言并非致命错误，尽管对用户来说可能是非常糟糕的事情。
 
-New WAL records cannot be written during recovery, so hint bits set during
-recovery must not dirty the page if the buffer is not already dirty, when
-checksums are enabled.  Systems in Hot-Standby mode may benefit from hint bits
-being set, but with checksums enabled, a page cannot be dirtied after setting a
-hint bit (due to the torn page risk). So, it must wait for full-page images
-containing the hint bit updates to arrive from the primary.
+在恢复期间无法写入新的 WAL 记录，因此当启用了校验和时，恢复期间设置的 hint 位
+不得弄脏尚未处于脏状态的页面。处于 Hot-Standby 模式的系统可能会受益于设置 hint 位，
+但在启用校验和的情况下，页面在设置 hint 位后不能变脏（因为有撕裂页风险）。
+因此，它必须等待包含 hint 位更新的完整页镜像从主库到达。

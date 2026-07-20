@@ -1,22 +1,22 @@
 /*-------------------------------------------------------------------------
  *
  * inv_api.c
- *	  routines for manipulating inversion fs large objects. This file
- *	  contains the user-level large object application interface routines.
+ *	  用于操作反转文件系统大对象的例程。本文件
+ *	  包含用户级大对象应用接口例程。
  *
  *
- * Note: we access pg_largeobject.data using its C struct declaration.
- * This is safe because it immediately follows pageno which is an int4 field,
- * and therefore the data field will always be 4-byte aligned, even if it
- * is in the short 1-byte-header format.  We have to detoast it since it's
- * quite likely to be in compressed or short format.  We also need to check
- * for NULLs, since initdb will mark loid and pageno but not data as NOT NULL.
+ * 注意：我们通过 C 结构体声明来访问 pg_largeobject.data。
+ * 这是安全的，因为它紧随 int4 字段 pageno，因此 data 字段将始终
+ * 按 4 字节对齐，即使它采用短的 1 字节头格式也是如此。
+ * 我们必须对其进行 detoast，因为它很可能处于压缩或短格式状态。
+ * 我们还需要检查 NULL 值，因为 initdb 会将 loid 和 pageno 标记为
+ * NOT NULL，但不会对 data 这样做。
  *
- * Note: many of these routines leak memory in CurrentMemoryContext, as indeed
- * does most of the backend code.  We expect that CurrentMemoryContext will
- * be a short-lived context.  Data that must persist across function calls
- * is kept either in CacheMemoryContext (the Relation structs) or in the
- * memory context given to inv_open (for LargeObjectDesc structs).
+ * 注意：这些例程中有许多会在 CurrentMemoryContext 中泄漏内存，
+ * 后端代码的大部分也是如此。我们期望 CurrentMemoryContext 是
+ * 一个短暂的内存上下文。需要在函数调用之间持久化的数据要么保存在
+ * CacheMemoryContext 中（对于 Relation 结构体），要么保存在
+ * 传递给 inv_open 的内存上下文中（对于 LargeObjectDesc 结构体）。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -51,23 +51,22 @@
 
 
 /*
- * GUC: backwards-compatibility flag to suppress LO permission checks
+ * GUC：向后兼容标记，用于跳过 LO 权限检查
  */
 bool		lo_compat_privileges;
 
 /*
- * All accesses to pg_largeobject and its index make use of a single
- * Relation reference.  To guarantee that the relcache entry remains
- * in the cache, on the first reference inside a subtransaction, we
- * execute a slightly klugy maneuver to assign ownership of the
- * Relation reference to TopTransactionResourceOwner.
+ * 对 pg_largeobject 及其索引的所有访问都使用单一的 Relation 引用。
+ * 为保证 relcache 条目保留在缓存中，在子事务内部首次引用时，
+ * 我们执行一个略显取巧的操作：将 Relation 引用的所有权
+ * 赋给 TopTransactionResourceOwner。
  */
 static Relation lo_heap_r = NULL;
 static Relation lo_index_r = NULL;
 
 
 /*
- * Open pg_largeobject and its index, if not already done in current xact
+ * 在当前事务中打开 pg_largeobject 及其索引（如果尚未打开）
  */
 static void
 open_lo_relation(void)
@@ -75,13 +74,13 @@ open_lo_relation(void)
 	ResourceOwner currentOwner;
 
 	if (lo_heap_r && lo_index_r)
-		return;					/* already open in current xact */
+		return;					/* 当前事务中已打开 */
 
-	/* Arrange for the top xact to own these relation references */
+	/* 安排顶层事务拥有这些关系引用 */
 	currentOwner = CurrentResourceOwner;
 	CurrentResourceOwner = TopTransactionResourceOwner;
 
-	/* Use RowExclusiveLock since we might either read or write */
+	/* 使用 RowExclusiveLock，因为我们可能需要读取或写入 */
 	if (lo_heap_r == NULL)
 		lo_heap_r = table_open(LargeObjectRelationId, RowExclusiveLock);
 	if (lo_index_r == NULL)
@@ -91,7 +90,7 @@ open_lo_relation(void)
 }
 
 /*
- * Clean up at main transaction end
+ * 在主事务结束时进行清理
  */
 void
 close_lo_relation(bool isCommit)
@@ -99,8 +98,7 @@ close_lo_relation(bool isCommit)
 	if (lo_heap_r || lo_index_r)
 	{
 		/*
-		 * Only bother to close if committing; else abort cleanup will handle
-		 * it
+		 * 仅在提交时才需要关闭；否则 abort 清理会处理它
 		 */
 		if (isCommit)
 		{
@@ -123,9 +121,9 @@ close_lo_relation(bool isCommit)
 
 
 /*
- * Extract data field from a pg_largeobject tuple, detoasting if needed
- * and verifying that the length is sane.  Returns data pointer (a bytea *),
- * data length, and an indication of whether to pfree the data pointer.
+ * 从 pg_largeobject 元组中提取 data 字段，必要时进行 detoast，
+ * 并验证长度是否合理。返回数据指针（bytea *）、数据长度，
+ * 以及是否需要 pfree 数据指针的指示。
  */
 static void
 getdatafield(Form_pg_largeobject tuple,
@@ -137,7 +135,7 @@ getdatafield(Form_pg_largeobject tuple,
 	int			len;
 	bool		freeit;
 
-	datafield = &(tuple->data); /* see note at top of file */
+	datafield = &(tuple->data); /* 见文件顶部的注释 */
 	freeit = false;
 	if (VARATT_IS_EXTENDED(datafield))
 	{
@@ -158,16 +156,15 @@ getdatafield(Form_pg_largeobject tuple,
 
 
 /*
- *	inv_create -- create a new large object
+ *	inv_create -- 创建一个新的大对象
  *
- *	Arguments:
- *	  lobjId - OID to use for new large object, or InvalidOid to pick one
+ *	参数：
+ *	  lobjId - 新大对象要使用的 OID，或 InvalidOid 以自动选取
  *
- *	Returns:
- *	  OID of new object
+ *	返回值：
+ *	  新对象的 OID
  *
- * If lobjId is not InvalidOid, then an error occurs if the OID is already
- * in use.
+ * 如果 lobjId 不是 InvalidOid，且该 OID 已被使用，则报错。
  */
 Oid
 inv_create(Oid lobjId)
@@ -175,26 +172,25 @@ inv_create(Oid lobjId)
 	Oid			lobjId_new;
 
 	/*
-	 * Create a new largeobject with empty data pages
+	 * 创建一个带有空数据页的新 largeobject
 	 */
 	lobjId_new = LargeObjectCreate(lobjId);
 
 	/*
-	 * dependency on the owner of largeobject
+	 * 大对象所有者的依赖关系
 	 *
-	 * Note that LO dependencies are recorded using classId
-	 * LargeObjectRelationId for backwards-compatibility reasons.  Using
-	 * LargeObjectMetadataRelationId instead would simplify matters for the
-	 * backend, but it'd complicate pg_dump and possibly break other clients.
+	 * 注意：出于向后兼容的原因，LO 依赖关系使用 classId
+	 * LargeObjectRelationId 来记录。使用 LargeObjectMetadataRelationId
+	 * 可以简化后端的逻辑，但会使 pg_dump 变得复杂，并可能破坏其他客户端。
 	 */
 	recordDependencyOnOwner(LargeObjectRelationId,
 							lobjId_new, GetUserId());
 
-	/* Post creation hook for new large object */
+	/* 新大对象的创建后钩子 */
 	InvokeObjectPostCreateHook(LargeObjectRelationId, lobjId_new, 0);
 
 	/*
-	 * Advance command counter to make new tuple visible to later operations.
+	 * 推进命令计数器，使新元组对后续操作可见。
 	 */
 	CommandCounterIncrement();
 
@@ -202,14 +198,13 @@ inv_create(Oid lobjId)
 }
 
 /*
- *	inv_open -- access an existing large object.
+ *	inv_open -- 访问一个现有的大对象。
  *
- * Returns a large object descriptor, appropriately filled in.
- * The descriptor and subsidiary data are allocated in the specified
- * memory context, which must be suitably long-lived for the caller's
- * purposes.  If the returned descriptor has a snapshot associated
- * with it, the caller must ensure that it also lives long enough,
- * e.g. by calling RegisterSnapshotOnOwner
+ * 返回一个适当填充的大对象描述符。
+ * 描述符及其附属数据分配在指定的内存上下文中，
+ * 该上下文必须具有足够长的生命周期以满足调用方的需求。
+ * 如果返回的描述符关联了一个快照，调用方必须确保它也能存活足够长的时间，
+ * 例如通过调用 RegisterSnapshotOnOwner。
  */
 LargeObjectDesc *
 inv_open(Oid lobjId, int flags, MemoryContext mcxt)
@@ -219,9 +214,8 @@ inv_open(Oid lobjId, int flags, MemoryContext mcxt)
 	int			descflags = 0;
 
 	/*
-	 * Historically, no difference is made between (INV_WRITE) and (INV_WRITE
-	 * | INV_READ), the caller being allowed to read the large object
-	 * descriptor in either case.
+	 * 历史上，(INV_WRITE) 和 (INV_WRITE | INV_READ) 之间不做区分，
+	 * 无论哪种情况，调用方都可以读取大对象描述符。
 	 */
 	if (flags & INV_WRITE)
 		descflags |= IFS_WRLOCK | IFS_RDLOCK;
@@ -234,19 +228,19 @@ inv_open(Oid lobjId, int flags, MemoryContext mcxt)
 				 errmsg("invalid flags for opening a large object: %d",
 						flags)));
 
-	/* Get snapshot.  If write is requested, use an instantaneous snapshot. */
+	/* 获取快照。如果请求了写入，使用瞬时快照。 */
 	if (descflags & IFS_WRLOCK)
 		snapshot = NULL;
 	else
 		snapshot = GetActiveSnapshot();
 
-	/* Can't use LargeObjectExists here because we need to specify snapshot */
+	/* 这里不能使用 LargeObjectExists，因为我们需要指定快照 */
 	if (!LargeObjectExistsWithSnapshot(lobjId, snapshot))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("large object %u does not exist", lobjId)));
 
-	/* Apply permission checks, again specifying snapshot */
+	/* 应用权限检查，同样需要指定快照 */
 	if ((descflags & IFS_RDLOCK) != 0)
 	{
 		if (!lo_compat_privileges &&
@@ -272,19 +266,19 @@ inv_open(Oid lobjId, int flags, MemoryContext mcxt)
 							lobjId)));
 	}
 
-	/* OK to create a descriptor */
+	/* 可以创建描述符了 */
 	retval = (LargeObjectDesc *) MemoryContextAlloc(mcxt,
 													sizeof(LargeObjectDesc));
 	retval->id = lobjId;
 	retval->offset = 0;
 	retval->flags = descflags;
 
-	/* caller sets if needed, not used by the functions in this file */
+	/* 由调用方按需设置，本文件中的函数不使用此字段 */
 	retval->subid = InvalidSubTransactionId;
 
 	/*
-	 * The snapshot (if any) is just the currently active snapshot.  The
-	 * caller will replace it with a longer-lived copy if needed.
+	 * 快照（如果有）只是当前活跃的快照。
+	 * 调用方将在需要时将其替换为生命周期更长的副本。
 	 */
 	retval->snapshot = snapshot;
 
@@ -292,8 +286,7 @@ inv_open(Oid lobjId, int flags, MemoryContext mcxt)
 }
 
 /*
- * Closes a large object descriptor previously made by inv_open(), and
- * releases the long-term memory used by it.
+ * 关闭先前由 inv_open() 创建的大对象描述符，并释放其所占用的长期内存。
  */
 void
 inv_close(LargeObjectDesc *obj_desc)
@@ -303,9 +296,9 @@ inv_close(LargeObjectDesc *obj_desc)
 }
 
 /*
- * Destroys an existing large object (not to be confused with a descriptor!)
+ * 销毁一个现有的大对象（不要与描述符混淆！）
  *
- * Note we expect caller to have done any required permissions check.
+ * 注意：我们期望调用方已完成任何所需的权限检查。
  */
 int
 inv_drop(Oid lobjId)
@@ -313,7 +306,7 @@ inv_drop(Oid lobjId)
 	ObjectAddress object;
 
 	/*
-	 * Delete any comments and dependencies on the large object
+	 * 删除大对象上的所有注释和依赖关系
 	 */
 	object.classId = LargeObjectRelationId;
 	object.objectId = lobjId;
@@ -321,20 +314,19 @@ inv_drop(Oid lobjId)
 	performDeletion(&object, DROP_CASCADE, 0);
 
 	/*
-	 * Advance command counter so that tuple removal will be seen by later
-	 * large-object operations in this transaction.
+	 * 推进命令计数器，使元组删除对本次事务中的后续大对象操作可见。
 	 */
 	CommandCounterIncrement();
 
-	/* For historical reasons, we always return 1 on success. */
+	/* 出于历史原因，成功时始终返回 1。 */
 	return 1;
 }
 
 /*
- * Determine size of a large object
+ * 确定大对象的大小
  *
- * NOTE: LOs can contain gaps, just like Unix files.  We actually return
- * the offset of the last byte + 1.
+ * 注意：LO 可能包含空洞，就像 Unix 文件一样。
+ * 我们实际返回的是最后一个字节的偏移量 + 1。
  */
 static uint64
 inv_getsize(LargeObjectDesc *obj_desc)
@@ -357,10 +349,9 @@ inv_getsize(LargeObjectDesc *obj_desc)
 									obj_desc->snapshot, 1, skey);
 
 	/*
-	 * Because the pg_largeobject index is on both loid and pageno, but we
-	 * constrain only loid, a backwards scan should visit all pages of the
-	 * large object in reverse pageno order.  So, it's sufficient to examine
-	 * the first valid tuple (== last valid page).
+	 * 由于 pg_largeobject 的索引覆盖 loid 和 pageno 两列，
+	 * 而我们仅约束 loid，因此反向扫描将按 pageno 逆序遍历
+	 * 大对象的所有页面。所以，只需检查第一个有效元组（即最后一个有效页面）即可。
 	 */
 	tuple = systable_getnext_ordered(sd, BackwardScanDirection);
 	if (HeapTupleIsValid(tuple))
@@ -370,7 +361,7 @@ inv_getsize(LargeObjectDesc *obj_desc)
 		int			len;
 		bool		pfreeit;
 
-		if (HeapTupleHasNulls(tuple))	/* paranoia */
+		if (HeapTupleHasNulls(tuple))	/* 偏执检查 */
 			elog(ERROR, "null field found in pg_largeobject");
 		data = (Form_pg_largeobject) GETSTRUCT(tuple);
 		getdatafield(data, &datafield, &len, &pfreeit);
@@ -392,13 +383,13 @@ inv_seek(LargeObjectDesc *obj_desc, int64 offset, int whence)
 	Assert(PointerIsValid(obj_desc));
 
 	/*
-	 * We allow seek/tell if you have either read or write permission, so no
-	 * need for a permission check here.
+	 * 只要拥有读或写权限之一，我们就允许 seek/tell，
+	 * 因此这里无需进行权限检查。
 	 */
 
 	/*
-	 * Note: overflow in the additions is possible, but since we will reject
-	 * negative results, we don't need any extra test for that.
+	 * 注意：加法可能溢出，但由于我们会拒绝负数结果，
+	 * 因此不需要额外的溢出检测。
 	 */
 	switch (whence)
 	{
@@ -415,13 +406,13 @@ inv_seek(LargeObjectDesc *obj_desc, int64 offset, int whence)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("invalid whence setting: %d", whence)));
-			newoffset = 0;		/* keep compiler quiet */
+			newoffset = 0;		/* 消除编译器警告 */
 			break;
 	}
 
 	/*
-	 * use errmsg_internal here because we don't want to expose INT64_FORMAT
-	 * in translatable strings; doing better is not worth the trouble
+	 * 这里使用 errmsg_internal，因为我们不想在可翻译字符串中
+	 * 暴露 INT64_FORMAT；做得更好不值得这个麻烦。
 	 */
 	if (newoffset < 0 || newoffset > MAX_LARGE_OBJECT_SIZE)
 		ereport(ERROR,
@@ -439,8 +430,8 @@ inv_tell(LargeObjectDesc *obj_desc)
 	Assert(PointerIsValid(obj_desc));
 
 	/*
-	 * We allow seek/tell if you have either read or write permission, so no
-	 * need for a permission check here.
+	 * 只要拥有读或写权限之一，我们就允许 seek/tell，
+	 * 因此这里无需进行权限检查。
 	 */
 
 	return obj_desc->offset;
@@ -492,14 +483,14 @@ inv_read(LargeObjectDesc *obj_desc, char *buf, int nbytes)
 		bytea	   *datafield;
 		bool		pfreeit;
 
-		if (HeapTupleHasNulls(tuple))	/* paranoia */
+		if (HeapTupleHasNulls(tuple))	/* 偏执检查 */
 			elog(ERROR, "null field found in pg_largeobject");
 		data = (Form_pg_largeobject) GETSTRUCT(tuple);
 
 		/*
-		 * We expect the indexscan will deliver pages in order.  However,
-		 * there may be missing pages if the LO contains unwritten "holes". We
-		 * want missing sections to read out as zeroes.
+		 * 我们期望索引扫描将按顺序返回页面。但是，
+		 * 如果 LO 包含未写入的"空洞"，则可能出现缺失的页面。
+		 * 我们期望缺失的部分读取为零。
 		 */
 		pageoff = ((uint64) data->pageno) * LOBLKSIZE;
 		if (pageoff > obj_desc->offset)
@@ -557,9 +548,9 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 	union
 	{
 		bytea		hdr;
-		/* this is to make the union big enough for a LO data chunk: */
+		/* 使联合体足够大以容纳一个 LO 数据块： */
 		char		data[LOBLKSIZE + VARHDRSZ];
-		/* ensure union is aligned well enough: */
+		/* 确保联合体对齐良好： */
 		int32		align_it;
 	}			workbuf;
 	char	   *workb = VARDATA(&workbuf.hdr);
@@ -572,7 +563,7 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 	Assert(PointerIsValid(obj_desc));
 	Assert(buf != NULL);
 
-	/* enforce writability because snapshot is probably wrong otherwise */
+	/* 强制检查可写权限，否则快照很可能是不正确的 */
 	if ((obj_desc->flags & IFS_WRLOCK) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -582,7 +573,7 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 	if (nbytes <= 0)
 		return 0;
 
-	/* this addition can't overflow because nbytes is only int32 */
+	/* 此加法不可能溢出，因为 nbytes 仅为 int32 */
 	if ((nbytes + obj_desc->offset) > MAX_LARGE_OBJECT_SIZE)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -613,14 +604,14 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 	while (nwritten < nbytes)
 	{
 		/*
-		 * If possible, get next pre-existing page of the LO.  We expect the
-		 * indexscan will deliver these in order --- but there may be holes.
+		 * 如果可能，获取 LO 中下一个已存在的页面。
+		 * 我们期望索引扫描按顺序返回它们 —— 但可能存在空洞。
 		 */
 		if (neednextpage)
 		{
 			if ((oldtuple = systable_getnext_ordered(sd, ForwardScanDirection)) != NULL)
 			{
-				if (HeapTupleHasNulls(oldtuple))	/* paranoia */
+				if (HeapTupleHasNulls(oldtuple))	/* 偏执检查 */
 					elog(ERROR, "null field found in pg_largeobject");
 				olddata = (Form_pg_largeobject) GETSTRUCT(oldtuple);
 				Assert(olddata->pageno >= pageno);
@@ -629,15 +620,15 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 		}
 
 		/*
-		 * If we have a pre-existing page, see if it is the page we want to
-		 * write, or a later one.
+		 * 如果我们有已存在的页面，检查它是否是我们想要写入的页面，
+		 * 或是更晚的页面。
 		 */
 		if (olddata != NULL && olddata->pageno == pageno)
 		{
 			/*
-			 * Update an existing page with fresh data.
+			 * 用新数据更新现有页面。
 			 *
-			 * First, load old data into workbuf
+			 * 首先，将旧数据加载到 workbuf 中
 			 */
 			getdatafield(olddata, &datafield, &len, &pfreeit);
 			memcpy(workb, VARDATA(datafield), len);
@@ -645,14 +636,14 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 				pfree(datafield);
 
 			/*
-			 * Fill any hole
+			 * 填充空洞
 			 */
 			off = (int) (obj_desc->offset % LOBLKSIZE);
 			if (off > len)
 				MemSet(workb + len, 0, off - len);
 
 			/*
-			 * Insert appropriate portion of new data
+			 * 插入新数据的适当部分
 			 */
 			n = LOBLKSIZE - off;
 			n = (n <= (nbytes - nwritten)) ? n : (nbytes - nwritten);
@@ -660,12 +651,12 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 			nwritten += n;
 			obj_desc->offset += n;
 			off += n;
-			/* compute valid length of new page */
+			/* 计算新页面的有效长度 */
 			len = (len >= off) ? len : off;
 			SET_VARSIZE(&workbuf.hdr, len + VARHDRSZ);
 
 			/*
-			 * Form and insert updated tuple
+			 * 构造并插入更新后的元组
 			 */
 			memset(values, 0, sizeof(values));
 			memset(nulls, false, sizeof(nulls));
@@ -679,7 +670,7 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 			heap_freetuple(newtup);
 
 			/*
-			 * We're done with this old page.
+			 * 这个旧页面已处理完毕。
 			 */
 			oldtuple = NULL;
 			olddata = NULL;
@@ -688,28 +679,28 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 		else
 		{
 			/*
-			 * Write a brand new page.
+			 * 写入一个全新的页面。
 			 *
-			 * First, fill any hole
+			 * 首先，填充空洞
 			 */
 			off = (int) (obj_desc->offset % LOBLKSIZE);
 			if (off > 0)
 				MemSet(workb, 0, off);
 
 			/*
-			 * Insert appropriate portion of new data
+			 * 插入新数据的适当部分
 			 */
 			n = LOBLKSIZE - off;
 			n = (n <= (nbytes - nwritten)) ? n : (nbytes - nwritten);
 			memcpy(workb + off, buf + nwritten, n);
 			nwritten += n;
 			obj_desc->offset += n;
-			/* compute valid length of new page */
+			/* 计算新页面的有效长度 */
 			len = off + n;
 			SET_VARSIZE(&workbuf.hdr, len + VARHDRSZ);
 
 			/*
-			 * Form and insert updated tuple
+			 * 构造并插入更新后的元组
 			 */
 			memset(values, 0, sizeof(values));
 			memset(nulls, false, sizeof(nulls));
@@ -728,8 +719,7 @@ inv_write(LargeObjectDesc *obj_desc, const char *buf, int nbytes)
 	CatalogCloseIndexes(indstate);
 
 	/*
-	 * Advance command counter so that my tuple updates will be seen by later
-	 * large-object operations in this transaction.
+	 * 推进命令计数器，使我们的元组更新对本次事务中的后续大对象操作可见。
 	 */
 	CommandCounterIncrement();
 
@@ -748,9 +738,9 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 	union
 	{
 		bytea		hdr;
-		/* this is to make the union big enough for a LO data chunk: */
+		/* 使联合体足够大以容纳一个 LO 数据块： */
 		char		data[LOBLKSIZE + VARHDRSZ];
-		/* ensure union is aligned well enough: */
+		/* 确保联合体对齐良好： */
 		int32		align_it;
 	}			workbuf;
 	char	   *workb = VARDATA(&workbuf.hdr);
@@ -762,7 +752,7 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 
 	Assert(PointerIsValid(obj_desc));
 
-	/* enforce writability because snapshot is probably wrong otherwise */
+	/* 强制检查可写权限，否则快照很可能是不正确的 */
 	if ((obj_desc->flags & IFS_WRLOCK) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -770,8 +760,8 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 						obj_desc->id)));
 
 	/*
-	 * use errmsg_internal here because we don't want to expose INT64_FORMAT
-	 * in translatable strings; doing better is not worth the trouble
+	 * 这里使用 errmsg_internal，因为我们不想在可翻译字符串中
+	 * 暴露 INT64_FORMAT；做得更好不值得这个麻烦。
 	 */
 	if (len < 0 || len > MAX_LARGE_OBJECT_SIZE)
 		ereport(ERROR,
@@ -784,7 +774,7 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 	indstate = CatalogOpenIndexes(lo_heap_r);
 
 	/*
-	 * Set up to find all pages with desired loid and pageno >= target
+	 * 设置以查找所有具有所需 loid 且 pageno >= 目标的页面
 	 */
 	ScanKeyInit(&skey[0],
 				Anum_pg_largeobject_loid,
@@ -800,26 +790,25 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 									obj_desc->snapshot, 2, skey);
 
 	/*
-	 * If possible, get the page the truncation point is in. The truncation
-	 * point may be beyond the end of the LO or in a hole.
+	 * 如果可能，获取截断点所在的页面。截断点可能超出
+	 * LO 的末尾或位于空洞中。
 	 */
 	olddata = NULL;
 	if ((oldtuple = systable_getnext_ordered(sd, ForwardScanDirection)) != NULL)
 	{
-		if (HeapTupleHasNulls(oldtuple))	/* paranoia */
+		if (HeapTupleHasNulls(oldtuple))	/* 偏执检查 */
 			elog(ERROR, "null field found in pg_largeobject");
 		olddata = (Form_pg_largeobject) GETSTRUCT(oldtuple);
 		Assert(olddata->pageno >= pageno);
 	}
 
 	/*
-	 * If we found the page of the truncation point we need to truncate the
-	 * data in it.  Otherwise if we're in a hole, we need to create a page to
-	 * mark the end of data.
+	 * 如果找到了截断点所在的页面，我们需要截断其中的数据。
+	 * 否则如果位于空洞中，我们需要创建一个页面来标记数据的结束位置。
 	 */
 	if (olddata != NULL && olddata->pageno == pageno)
 	{
-		/* First, load old data into workbuf */
+		/* 首先，将旧数据加载到 workbuf 中 */
 		bytea	   *datafield;
 		int			pagelen;
 		bool		pfreeit;
@@ -830,17 +819,17 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 			pfree(datafield);
 
 		/*
-		 * Fill any hole
+		 * 填充空洞
 		 */
 		off = len % LOBLKSIZE;
 		if (off > pagelen)
 			MemSet(workb + pagelen, 0, off - pagelen);
 
-		/* compute length of new page */
+		/* 计算新页面的长度 */
 		SET_VARSIZE(&workbuf.hdr, off + VARHDRSZ);
 
 		/*
-		 * Form and insert updated tuple
+		 * 构造并插入更新后的元组
 		 */
 		memset(values, 0, sizeof(values));
 		memset(nulls, false, sizeof(nulls));
@@ -856,9 +845,9 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 	else
 	{
 		/*
-		 * If the first page we found was after the truncation point, we're in
-		 * a hole that we'll fill, but we need to delete the later page
-		 * because the loop below won't visit it again.
+		 * 如果找到的第一个页面在截断点之后，则我们处于一个
+		 * 将要填充的空洞中，但需要删除后面的页面，
+		 * 因为下面的循环不会再访问它。
 		 */
 		if (olddata != NULL)
 		{
@@ -867,19 +856,19 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 		}
 
 		/*
-		 * Write a brand new page.
+		 * 写入一个全新的页面。
 		 *
-		 * Fill the hole up to the truncation point
+		 * 将空洞填充到截断点
 		 */
 		off = len % LOBLKSIZE;
 		if (off > 0)
 			MemSet(workb, 0, off);
 
-		/* compute length of new page */
+		/* 计算新页面的长度 */
 		SET_VARSIZE(&workbuf.hdr, off + VARHDRSZ);
 
 		/*
-		 * Form and insert new tuple
+		 * 构造并插入新元组
 		 */
 		memset(values, 0, sizeof(values));
 		memset(nulls, false, sizeof(nulls));
@@ -892,8 +881,8 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 	}
 
 	/*
-	 * Delete any pages after the truncation point.  If the initial search
-	 * didn't find a page, then of course there's nothing more to do.
+	 * 删除截断点之后的所有页面。如果初始搜索没有找到页面，
+	 * 那么自然没有更多的事情可做了。
 	 */
 	if (olddata != NULL)
 	{
@@ -908,8 +897,7 @@ inv_truncate(LargeObjectDesc *obj_desc, int64 len)
 	CatalogCloseIndexes(indstate);
 
 	/*
-	 * Advance command counter so that tuple updates will be seen by later
-	 * large-object operations in this transaction.
+	 * 推进命令计数器，使元组更新对本次事务中的后续大对象操作可见。
 	 */
 	CommandCounterIncrement();
 }

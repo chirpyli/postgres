@@ -1,52 +1,44 @@
 src/backend/storage/smgr/README
 
-Storage Managers
+存储管理器
 ================
 
-In the original Berkeley Postgres system, there were several storage managers,
-of which only the "magnetic disk" manager remains.  (At Berkeley there were
-also managers for the Sony WORM optical disk jukebox and persistent main
-memory, but these were never supported in any externally released Postgres,
-nor in any version of PostgreSQL.)  The "magnetic disk" manager is itself
-seriously misnamed, because actually it supports any kind of device for
-which the operating system provides standard filesystem operations; which
-these days is pretty much everything of interest.  However, we retain the
-notion of a storage manager switch in case anyone ever wants to reintroduce
-other kinds of storage managers.  Removing the switch layer would save
-nothing noticeable anyway, since storage-access operations are surely far
-more expensive than one extra layer of C function calls.
+在最初的 Berkeley Postgres 系统中，存在多个存储管理器，其中仅保留了
+“磁盘”（magnetic disk）管理器。（在 Berkeley 还曾有用于 Sony WORM 光盘
+自动换盘机和持久主存的存储管理器，但它们从未在 Berkeley 之外发布的任何
+Postgres 版本，也未在任何 PostgreSQL 版本中得到支持。）“磁盘”管理器这个
+名字其实名不副实，因为它实际上支持任何操作系统提供标准文件系统操作的
+设备；而如今这类设备几乎涵盖了所有我们关心的存储。不过，我们仍然保留了
+存储管理器切换层的概念，以防将来有人希望重新引入其他类型的存储管理器。
+移除这一切换层并不会带来任何明显的收益，因为存储访问操作的开销显然远远
+大于多一层 C 函数调用。
 
-In Berkeley Postgres each relation was tagged with the ID of the storage
-manager to use for it.  This is gone.  It would be probably more reasonable
-to associate storage managers with tablespaces, should we ever re-introduce
-multiple storage managers into the system catalogs.
+在 Berkeley Postgres 中，每个关系都被打上了要使用哪个存储管理器的 ID
+标签。这一点已经不复存在。如果将来要把多个存储管理器重新引入系统目录，
+更合理的做法是将存储管理器与表空间（tablespace）关联起来。
 
-The files in this directory, and their contents, are
+本目录中的文件及其内容如下：
 
-    smgr.c	The storage manager switch dispatch code.  The routines in
-		this file call the appropriate storage manager to do storage
-		accesses requested by higher-level code.  smgr.c also manages
-		the file handle cache (SMgrRelation table).
+    smgr.c	存储管理器切换的派发代码。本文件中的例程会调用相应的
+		存储管理器来执行上层代码所请求的存储访问。smgr.c 还管理
+		文件句柄缓存（SMgrRelation 表）。
 
-    md.c	The "magnetic disk" storage manager, which is really just
-		an interface to the kernel's filesystem operations.
+    md.c	“磁盘”存储管理器，实际上只是对内核文件系统操作的一层
+		接口。
 
-Note that md.c in turn relies on src/backend/storage/file/fd.c.
+注意，md.c 转而依赖于 src/backend/storage/file/fd.c。
 
 
-Relation Forks
+关系的 Fork
 ==============
 
-Since 8.4, a single smgr relation can be comprised of multiple physical
-files, called relation forks. This allows storing additional metadata like
-Free Space information in additional forks, which can be grown and truncated
-independently of the main data file, while still treating it all as a single
-physical relation in system catalogs.
+自 8.4 起，一个 smgr 关系可以由多个物理文件组成，这些文件称为关系的
+fork。这使得额外的元数据（如空闲空间信息）可以存放在额外的 fork 中，
+这些 fork 能够独立于主数据文件进行扩展和截断，同时在系统目录中仍被
+视为一个单一的物理关系。
 
-It is assumed that the main fork, fork number 0 or MAIN_FORKNUM, always
-exists. Fork numbers are assigned in src/include/common/relpath.h.
-Functions in smgr.c and md.c take an extra fork number argument, in addition
-to relfilelocator and block number, to identify which relation fork you want to
-access. Since most code wants to access the main fork, a shortcut version of
-ReadBuffer that accesses MAIN_FORKNUM is provided in the buffer manager for
-convenience.
+假定主 fork（fork 编号 0，即 MAIN_FORKNUM）始终存在。fork 编号在
+src/include/common/relpath.h 中分配。smgr.c 和 md.c 中的函数除了
+relfilelocator 和块号之外，还接受一个额外的 fork 编号参数，用以标识
+你想要访问的是哪个关系 fork。由于大多数代码都想访问主 fork，缓冲区管理
+器中为了方便提供了一个访问 MAIN_FORKNUM 的 ReadBuffer 快捷版本。

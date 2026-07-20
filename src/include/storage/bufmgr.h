@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * bufmgr.h
- *	  POSTGRES buffer manager definitions.
+ *	  POSTGRES 缓冲区管理器定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -26,77 +26,72 @@
 typedef void *Block;
 
 /*
- * Possible arguments for GetAccessStrategy().
+ * GetAccessStrategy() 可能的参数。
  *
- * If adding a new BufferAccessStrategyType, also add a new IOContext so
- * IO statistics using this strategy are tracked.
+ * 如果新增一种 BufferAccessStrategyType，还需新增一个 IOContext，
+ * 以便使用该策略的 I/O 统计被跟踪。
  */
 typedef enum BufferAccessStrategyType
 {
-	BAS_NORMAL,					/* Normal random access */
-	BAS_BULKREAD,				/* Large read-only scan (hint bit updates are
-								 * ok) */
-	BAS_BULKWRITE,				/* Large multi-block write (e.g. COPY IN) */
+	BAS_NORMAL,					/* 普通随机访问 */
+	BAS_BULKREAD,				/* 大型只读扫描（允许 hint bit 更新） */
+	BAS_BULKWRITE,				/* 大型多块写入（例如 COPY IN） */
 	BAS_VACUUM,					/* VACUUM */
 } BufferAccessStrategyType;
 
-/* Possible modes for ReadBufferExtended() */
+/* ReadBufferExtended() 可能的模式 */
 typedef enum
 {
-	RBM_NORMAL,					/* Normal read */
-	RBM_ZERO_AND_LOCK,			/* Don't read from disk, caller will
-								 * initialize. Also locks the page. */
-	RBM_ZERO_AND_CLEANUP_LOCK,	/* Like RBM_ZERO_AND_LOCK, but locks the page
-								 * in "cleanup" mode */
-	RBM_ZERO_ON_ERROR,			/* Read, but return an all-zeros page on error */
-	RBM_NORMAL_NO_LOG,			/* Don't log page as invalid during WAL
-								 * replay; otherwise same as RBM_NORMAL */
+	RBM_NORMAL,					/* 普通读取 */
+	RBM_ZERO_AND_LOCK,			/* 不从磁盘读取，由调用者初始化，
+								 * 同时锁定页面 */
+	RBM_ZERO_AND_CLEANUP_LOCK,	/* 类似于 RBM_ZERO_AND_LOCK，但以
+								 * "cleanup" 模式锁定页面 */
+	RBM_ZERO_ON_ERROR,			/* 读取，但出错时返回全零页面 */
+	RBM_NORMAL_NO_LOG,			/* 在 WAL 重放期间不将页面记录为无效；
+								 * 其他与普通 RBM_NORMAL 相同 */
 } ReadBufferMode;
 
 /*
- * Type returned by PrefetchBuffer().
+ * PrefetchBuffer() 返回的类型。
  */
 typedef struct PrefetchBufferResult
 {
-	Buffer		recent_buffer;	/* If valid, a hit (recheck needed!) */
-	bool		initiated_io;	/* If true, a miss resulting in async I/O */
+	Buffer		recent_buffer;	/* 若有效，则为命中（需重新检查！） */
+	bool		initiated_io;	/* 若为真，则为未命中并触发异步 I/O */
 } PrefetchBufferResult;
 
 /*
- * Flags influencing the behaviour of ExtendBufferedRel*
+ * 影响 ExtendBufferedRel* 行为的标志位
  */
 typedef enum ExtendBufferedFlags
 {
 	/*
-	 * Don't acquire extension lock. This is safe only if the relation isn't
-	 * shared, an access exclusive lock is held or if this is the startup
-	 * process.
+	 * 不获取扩展锁。这仅在关系非共享、持有访问排他锁，或当前为启动进程时才是安全的。
 	 */
 	EB_SKIP_EXTENSION_LOCK = (1 << 0),
 
-	/* Is this extension part of recovery? */
+	/* 该扩展是否属于恢复过程的一部分？ */
 	EB_PERFORMING_RECOVERY = (1 << 1),
 
 	/*
-	 * Should the fork be created if it does not currently exist? This likely
-	 * only ever makes sense for relation forks.
+	 * 如果 fork 当前不存在，是否应当创建它？这很可能只对关系 fork 有意义。
 	 */
 	EB_CREATE_FORK_IF_NEEDED = (1 << 2),
 
-	/* Should the first (possibly only) return buffer be returned locked? */
+	/* 第一个（也可能是唯一的）返回的缓冲区是否应当加锁返回？ */
 	EB_LOCK_FIRST = (1 << 3),
 
-	/* Should the smgr size cache be cleared? */
+	/* 是否应当清除 smgr 的大小缓存？ */
 	EB_CLEAR_SIZE_CACHE = (1 << 4),
 
-	/* internal flags follow */
+	/* 以下为内部标志 */
 	EB_LOCK_TARGET = (1 << 5),
 }			ExtendBufferedFlags;
 
 /*
- * Some functions identify relations either by relation or smgr +
- * relpersistence.  Used via the BMR_REL()/BMR_SMGR() macros below.  This
- * allows us to use the same function for both recovery and normal operation.
+ * 某些函数通过 relation 或 smgr + relpersistence 来标识关系。通过下面的
+ * BMR_REL()/BMR_SMGR() 宏使用。这使我们能对相关恢复和正常操作使用同一个函数。
  */
 typedef struct BufferManagerRelation
 {
@@ -108,29 +103,28 @@ typedef struct BufferManagerRelation
 #define BMR_REL(p_rel) ((BufferManagerRelation){.rel = p_rel})
 #define BMR_SMGR(p_smgr, p_relpersistence) ((BufferManagerRelation){.smgr = p_smgr, .relpersistence = p_relpersistence})
 
-/* Zero out page if reading fails. */
+/* 读取失败时清零页面。 */
 #define READ_BUFFERS_ZERO_ON_ERROR (1 << 0)
-/* Call smgrprefetch() if I/O necessary. */
+/* 若需要 I/O 则调用 smgrprefetch()。 */
 #define READ_BUFFERS_ISSUE_ADVICE (1 << 1)
-/* Don't treat page as invalid due to checksum failures. */
+/* 不将页面因校验和失败而视为无效。 */
 #define READ_BUFFERS_IGNORE_CHECKSUM_FAILURES (1 << 2)
-/* IO will immediately be waited for */
+/* I/O 将立即被等待 */
 #define READ_BUFFERS_SYNCHRONOUSLY (1 << 3)
 
 
 struct ReadBuffersOperation
 {
-	/* The following members should be set by the caller. */
-	Relation	rel;			/* optional */
+	/* 以下成员应由调用者设置。 */
+	Relation	rel;			/* 可选 */
 	struct SMgrRelationData *smgr;
 	char		persistence;
 	ForkNumber	forknum;
 	BufferAccessStrategy strategy;
 
 	/*
-	 * The following private members are private state for communication
-	 * between StartReadBuffers() and WaitReadBuffers(), initialized only if
-	 * an actual read is required, and should not be modified.
+	 * 以下私有成员是 StartReadBuffers() 与 WaitReadBuffers() 之间通信用的私有状态，
+	 * 仅在确实需要读取时才初始化，不应被修改。
 	 */
 	Buffer	   *buffers;
 	BlockNumber blocknum;
@@ -143,16 +137,16 @@ struct ReadBuffersOperation
 
 typedef struct ReadBuffersOperation ReadBuffersOperation;
 
-/* forward declared, to avoid having to expose buf_internals.h here */
+/* 前向声明，以避免在此处暴露 buf_internals.h */
 struct WritebackContext;
 
-/* forward declared, to avoid including smgr.h here */
+/* 前向声明，以避免在此处包含 smgr.h */
 struct SMgrRelationData;
 
-/* in globals.c ... this duplicates miscadmin.h */
+/* 在 globals.c 中……这与 miscadmin.h 重复 */
 extern PGDLLIMPORT int NBuffers;
 
-/* in bufmgr.c */
+/* 在 bufmgr.c 中 */
 extern PGDLLIMPORT bool zero_damaged_pages;
 extern PGDLLIMPORT int bgwriter_lru_maxpages;
 extern PGDLLIMPORT double bgwriter_lru_multiplier;
@@ -165,7 +159,7 @@ extern PGDLLIMPORT int maintenance_io_concurrency;
 
 #define MAX_IO_COMBINE_LIMIT PG_IOV_MAX
 #define DEFAULT_IO_COMBINE_LIMIT Min(MAX_IO_COMBINE_LIMIT, (128 * 1024) / BLCKSZ)
-extern PGDLLIMPORT int io_combine_limit;	/* min of the two GUCs below */
+extern PGDLLIMPORT int io_combine_limit;	/* 以下两个 GUC 中的较小值 */
 extern PGDLLIMPORT int io_combine_limit_guc;
 extern PGDLLIMPORT int io_max_combine_limit;
 
@@ -176,22 +170,22 @@ extern PGDLLIMPORT int bgwriter_flush_after;
 extern PGDLLIMPORT const PgAioHandleCallbacks aio_shared_buffer_readv_cb;
 extern PGDLLIMPORT const PgAioHandleCallbacks aio_local_buffer_readv_cb;
 
-/* in buf_init.c */
+/* 在 buf_init.c 中 */
 extern PGDLLIMPORT char *BufferBlocks;
 
-/* in localbuf.c */
+/* 在 localbuf.c 中 */
 extern PGDLLIMPORT int NLocBuffer;
 extern PGDLLIMPORT Block *LocalBufferBlockPointers;
 extern PGDLLIMPORT int32 *LocalRefCount;
 
-/* upper limit for effective_io_concurrency */
+/* effective_io_concurrency 的上限 */
 #define MAX_IO_CONCURRENCY 1000
 
-/* special block number for ReadBuffer() */
-#define P_NEW	InvalidBlockNumber	/* grow the file to get a new page */
+/* ReadBuffer() 的特殊块号 */
+#define P_NEW	InvalidBlockNumber	/* 扩展文件以获得新页面 */
 
 /*
- * Buffer content lock modes (mode argument for LockBuffer())
+ * 缓冲区内容锁模式（LockBuffer() 的 mode 参数）
  */
 #define BUFFER_LOCK_UNLOCK		0
 #define BUFFER_LOCK_SHARE		1
@@ -199,7 +193,7 @@ extern PGDLLIMPORT int32 *LocalRefCount;
 
 
 /*
- * prototypes for functions in bufmgr.c
+ * bufmgr.c 中函数的原型
  */
 extern PrefetchBufferResult PrefetchSharedBuffer(struct SMgrRelationData *smgr_reln,
 												 ForkNumber forkNum,
@@ -316,14 +310,14 @@ extern void EvictRelUnpinnedBuffers(Relation rel,
 									int32 *buffers_flushed,
 									int32 *buffers_skipped);
 
-/* in buf_init.c */
+/* 在 buf_init.c 中 */
 extern void BufferManagerShmemInit(void);
 extern Size BufferManagerShmemSize(void);
 
-/* in localbuf.c */
+/* 在 localbuf.c 中 */
 extern void AtProcExit_LocalBuffers(void);
 
-/* in freelist.c */
+/* 在 freelist.c 中 */
 
 extern BufferAccessStrategy GetAccessStrategy(BufferAccessStrategyType btype);
 extern BufferAccessStrategy GetAccessStrategyWithSize(BufferAccessStrategyType btype,
@@ -334,35 +328,28 @@ extern int	GetAccessStrategyPinLimit(BufferAccessStrategy strategy);
 extern void FreeAccessStrategy(BufferAccessStrategy strategy);
 
 
-/* inline functions */
+/* 内联函数 */
 
 /*
- * Although this header file is nominally backend-only, certain frontend
- * programs like pg_waldump include it.  For compilers that emit static
- * inline functions even when they're unused, that leads to unsatisfied
- * external references; hence hide these with #ifndef FRONTEND.
+ * 虽然这个头文件名义上仅用于后端，但某些前端程序（如 pg_waldump）也会包含它。
+ * 对于即使函数未被使用也会发出 static inline 函数的编译器，这会导致未满足的
+ * 外部引用；因此用 #ifndef FRONTEND 将这些函数隐藏起来。
  */
 
 #ifndef FRONTEND
 
 /*
  * BufferIsValid
- *		True iff the given buffer number is valid (either as a shared
- *		or local buffer).
+ *		给定的缓冲区号合法（无论共享缓冲区还是本地缓冲区）时返回真。
  *
- * Note: For a long time this was defined the same as BufferIsPinned,
- * that is it would say False if you didn't hold a pin on the buffer.
- * I believe this was bogus and served only to mask logic errors.
- * Code should always know whether it has a buffer reference,
- * independently of the pin state.
+ * 注意：在很长一段时间里，它的定义与 BufferIsPinned 相同，也就是说如果
+ * 你没有持有该缓冲区的 pin，它就会返回 False。我认为这是错误的，只会掩盖
+ * 逻辑错误。代码应当始终知道自己是否持有缓冲区引用，而与 pin 状态无关。
  *
- * Note: For a further long time this was not quite the inverse of the
- * BufferIsInvalid() macro, in that it also did sanity checks to verify
- * that the buffer number was in range.  Most likely, this macro was
- * originally intended only to be used in assertions, but its use has
- * since expanded quite a bit, and the overhead of making those checks
- * even in non-assert-enabled builds can be significant.  Thus, we've
- * now demoted the range checks to assertions within the macro itself.
+ * 注意：在更长的另一段时间里，它并不完全等同于 BufferIsInvalid() 宏的取反，
+ * 因为它还会做合理性检查以验证缓冲区号在范围内。这个宏最初很可能只打算用于
+ * 断言中，但后来使用范围扩大了很多，即便在非断言构建中执行这些检查的开销
+ * 也可能相当可观。因此，我们现在已将这些范围检查降级为宏内部的断言。
  */
 static inline bool
 BufferIsValid(Buffer bufnum)
@@ -375,10 +362,10 @@ BufferIsValid(Buffer bufnum)
 
 /*
  * BufferGetBlock
- *		Returns a reference to a disk page image associated with a buffer.
+ *		返回与缓冲区关联的磁盘页映像的引用。
  *
- * Note:
- *		Assumes buffer is valid.
+ * 注意：
+ *		假定缓冲区合法。
  */
 static inline Block
 BufferGetBlock(Buffer buffer)
@@ -393,15 +380,14 @@ BufferGetBlock(Buffer buffer)
 
 /*
  * BufferGetPageSize
- *		Returns the page size within a buffer.
+ *		返回缓冲区内的页大小。
  *
- * Notes:
- *		Assumes buffer is valid.
+ * 注意：
+ *		假定缓冲区合法。
  *
- *		The buffer can be a raw disk block and need not contain a valid
- *		(formatted) disk page.
+ *		缓冲区可以是一个原始磁盘块，无需包含合法的（已格式化的）磁盘页。
  */
-/* XXX should dig out of buffer descriptor */
+/* XXX 应从缓冲区描述符中获取 */
 static inline Size
 BufferGetPageSize(Buffer buffer)
 {
@@ -411,7 +397,7 @@ BufferGetPageSize(Buffer buffer)
 
 /*
  * BufferGetPage
- *		Returns the page associated with a buffer.
+ *		返回与缓冲区关联的页面。
  */
 static inline Page
 BufferGetPage(Buffer buffer)

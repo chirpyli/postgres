@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * relfilelocator.h
- *	  Physical access information for relations.
+ *	  关系的物理访问信息。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -18,42 +18,38 @@
 #include "storage/procnumber.h"
 
 /*
- * RelFileLocator must provide all that we need to know to physically access
- * a relation, with the exception of the backend's proc number, which can be
- * provided separately.  Note, however, that a "physical" relation is
- * comprised of multiple files on the filesystem, as each fork is stored as
- * a separate file, and each fork can be divided into multiple segments. See
- * md.c.
+ * RelFileLocator 必须提供我们物理访问一个关系所需的全部信息，
+ * 但后端进程号（proc number）除外，后者可以另行提供。不过请注意，
+ * 一个“物理”关系在文件系统上由多个文件组成，因为每个 fork 都作为
+ * 一个单独的文件存储，且每个 fork 还可被划分为多个段。参见 md.c。
  *
- * spcOid identifies the tablespace of the relation.  It corresponds to
- * pg_tablespace.oid.
+ * spcOid 标识该关系所在的表空间，对应 pg_tablespace.oid。
  *
- * dbOid identifies the database of the relation.  It is zero for
- * "shared" relations (those common to all databases of a cluster).
- * Nonzero dbOid values correspond to pg_database.oid.
+ * dbOid 标识该关系所属的数据库。对于“共享”关系
+ * （即集群中所有数据库共有的那些关系），它为零。
+ * 非零的 dbOid 值对应 pg_database.oid。
  *
- * relNumber identifies the specific relation.  relNumber corresponds to
- * pg_class.relfilenode (NOT pg_class.oid, because we need to be able
- * to assign new physical files to relations in some situations).
- * Notice that relNumber is only unique within a database in a particular
- * tablespace.
+ * relNumber 标识具体的关系。relNumber 对应 pg_class.relfilenode
+ * （而非 pg_class.oid，因为我们需要在某些情况下为关系分配新的
+ * 物理文件）。注意，relNumber 仅在特定表空间内的某个数据库中
+ * 唯一。
  *
- * Note: spcOid must be GLOBALTABLESPACE_OID if and only if dbOid is
- * zero.  We support shared relations only in the "global" tablespace.
+ * 注意：当且仅当 dbOid 为零时，spcOid 必须为
+ * GLOBALTABLESPACE_OID。我们只支持将共享关系放在 “global”
+ * 表空间中。
  *
- * Note: in pg_class we allow reltablespace == 0 to denote that the
- * relation is stored in its database's "default" tablespace (as
- * identified by pg_database.dattablespace).  However this shorthand
- * is NOT allowed in RelFileLocator structs --- the real tablespace ID
- * must be supplied when setting spcOid.
+ * 注意：在 pg_class 中，我们允许 reltablespace == 0 表示该关系
+ * 存储在其数据库的 “默认” 表空间中（由 pg_database.dattablespace
+ * 标识）。但这种简写形式在 RelFileLocator 结构体中是不被允许的——
+ * 设置 spcOid 时必须提供真实的表空间 ID。
  *
- * Note: in pg_class, relfilenode can be zero to denote that the relation
- * is a "mapped" relation, whose current true filenode number is available
- * from relmapper.c.  Again, this case is NOT allowed in RelFileLocators.
+ * 注意：在 pg_class 中，relfilenode 可以为零，表示该关系是一个
+ * “被映射的”关系，其当前真实文件节点号可从 relmapper.c 获取。
+ * 同样，这种情况在 RelFileLocator 中也是不允许的。
  *
- * Note: various places use RelFileLocator in hashtable keys.  Therefore,
- * there *must not* be any unused padding bytes in this struct.  That
- * should be safe as long as all the fields are of type Oid.
+ * 注意：有多处将 RelFileLocator 用作哈希表的键。因此，该结构体中
+ * *不得* 存在任何未使用的填充字节。只要所有字段都是 Oid 类型，
+ * 这应当是安全的。
  */
 typedef struct RelFileLocator
 {
@@ -63,12 +59,11 @@ typedef struct RelFileLocator
 } RelFileLocator;
 
 /*
- * Augmenting a relfilelocator with the backend's proc number provides all the
- * information we need to locate the physical storage.  'backend' is
- * INVALID_PROC_NUMBER for regular relations (those accessible to more than
- * one backend), or the owning backend's proc number for backend-local
- * relations.  Backend-local relations are always transient and removed in
- * case of a database crash; they are never WAL-logged or fsync'd.
+ * 为 relfilelocator 补充后端的进程号，就提供了定位物理存储所需的
+ * 全部信息。'backend' 对于普通关系（可被多个后端访问的那些）为
+ * INVALID_PROC_NUMBER，而对于后端本地关系，则是其拥有者后端的
+ * 进程号。后端本地关系总是临时性的，在数据库崩溃时会被清除；
+ * 它们永远不会被 WAL 记录或 fsync。
  */
 typedef struct RelFileLocatorBackend
 {
@@ -80,11 +75,10 @@ typedef struct RelFileLocatorBackend
 	((rlocator).backend != INVALID_PROC_NUMBER)
 
 /*
- * Note: RelFileLocatorEquals and RelFileLocatorBackendEquals compare relNumber
- * first since that is most likely to be different in two unequal
- * RelFileLocators.  It is probably redundant to compare spcOid if the other
- * fields are found equal, but do it anyway to be sure.  Likewise for checking
- * the backend number in RelFileLocatorBackendEquals.
+ * 注意：RelFileLocatorEquals 与 RelFileLocatorBackendEquals 会先比较
+ * relNumber，因为在两个不相等的 RelFileLocator 中，relNumber 最有可能
+ * 是不同的。若其他字段都相等，再比较 spcOid 或许是多余的，但为了
+ * 保险仍照做。RelFileLocatorBackendEquals 中对后端号的比较亦然。
  */
 #define RelFileLocatorEquals(locator1, locator2) \
 	((locator1).relNumber == (locator2).relNumber && \

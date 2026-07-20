@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * sharedfileset.c
- *	  Shared temporary file management.
+ *	  共享临时文件管理。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -9,9 +9,8 @@
  * IDENTIFICATION
  *	  src/backend/storage/file/sharedfileset.c
  *
- * SharedFileSets provide a temporary namespace (think directory) so that
- * files can be discovered by name, and a shared ownership semantics so that
- * shared files survive until the last user detaches.
+ * SharedFileSet 提供一个临时命名空间（可以理解为目录），使得文件可以通过名称被发现，
+ * 并提供共享所有权语义，使共享文件在最后一个用户解除关联（detach）之前一直存在。
  *
  *-------------------------------------------------------------------------
  */
@@ -26,31 +25,29 @@
 static void SharedFileSetOnDetach(dsm_segment *segment, Datum datum);
 
 /*
- * Initialize a space for temporary files that can be opened by other backends.
- * Other backends must attach to it before accessing it.  Associate this
- * SharedFileSet with 'seg'.  Any contained files will be deleted when the
- * last backend detaches.
+ * 初始化一个供其他后端访问的临时文件空间。
+ * 其他后端必须先行关联（attach）才能访问它。将此 SharedFileSet 与 'seg' 绑定。
+ * 当最后一个后端解除关联时，其中包含的所有文件都会被删除。
  *
- * Under the covers the set is one or more directories which will eventually
- * be deleted.
+ * 在底层，这个集合是一个或多个目录，最终会被删除。
  */
 void
 SharedFileSetInit(SharedFileSet *fileset, dsm_segment *seg)
 {
-	/* Initialize the shared fileset specific members. */
+	/* 初始化共享文件集特有的成员。 */
 	SpinLockInit(&fileset->mutex);
 	fileset->refcnt = 1;
 
-	/* Initialize the fileset. */
+	/* 初始化文件集。 */
 	FileSetInit(&fileset->fs);
 
-	/* Register our cleanup callback. */
+	/* 注册清理回调函数。 */
 	if (seg)
 		on_dsm_detach(seg, SharedFileSetOnDetach, PointerGetDatum(fileset));
 }
 
 /*
- * Attach to a set of directories that was created with SharedFileSetInit.
+ * 关联到通过 SharedFileSetInit 创建的目录集合。
  */
 void
 SharedFileSetAttach(SharedFileSet *fileset, dsm_segment *seg)
@@ -72,12 +69,12 @@ SharedFileSetAttach(SharedFileSet *fileset, dsm_segment *seg)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("could not attach to a SharedFileSet that is already destroyed")));
 
-	/* Register our cleanup callback. */
+	/* 注册清理回调函数。 */
 	on_dsm_detach(seg, SharedFileSetOnDetach, PointerGetDatum(fileset));
 }
 
 /*
- * Delete all files in the set.
+ * 删除集合中的所有文件。
  */
 void
 SharedFileSetDeleteAll(SharedFileSet *fileset)
@@ -86,11 +83,10 @@ SharedFileSetDeleteAll(SharedFileSet *fileset)
 }
 
 /*
- * Callback function that will be invoked when this backend detaches from a
- * DSM segment holding a SharedFileSet that it has created or attached to.  If
- * we are the last to detach, then try to remove the directories and
- * everything in them.  We can't raise an error on failures, because this runs
- * in error cleanup paths.
+ * 回调函数：当此后端从持有 SharedFileSet 的 DSM 段中解除关联时被调用，
+ * 该 SharedFileSet 是此后端创建或关联过的。如果我们是最后一个解除关联的，
+ * 则尝试删除目录及其中的所有内容。失败时不能抛出错误，因为此函数运行在
+ * 错误清理路径中。
  */
 static void
 SharedFileSetOnDetach(dsm_segment *segment, Datum datum)
@@ -105,9 +101,9 @@ SharedFileSetOnDetach(dsm_segment *segment, Datum datum)
 	SpinLockRelease(&fileset->mutex);
 
 	/*
-	 * If we are the last to detach, we delete the directory in all
-	 * tablespaces.  Note that we are still actually attached for the rest of
-	 * this function so we can safely access its data.
+	 * 如果我们是最后一个解除关联的，则删除所有表空间中的目录。
+	 * 注意，在此函数的剩余部分，我们实际上仍然处于关联状态，
+	 * 因此可以安全地访问其数据。
 	 */
 	if (unlink_all)
 		FileSetDeleteAll(&fileset->fs);

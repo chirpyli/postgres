@@ -13,10 +13,10 @@
  *
  * NOTES:
  *
- *	This is similar to the FSM used for heap, in freespace.c, but instead
- *	of tracking the amount of free space on pages, we only track whether
- *	pages are completely free or in-use. We use the same FSM implementation
- *	as for heaps, using 0 to denote used pages, and (BLCKSZ - 1) for unused.
+ *	这与 freespace.c 中用于堆的 FSM 类似，但不同之处在于：我们不跟踪
+ *	页面上的空闲空间大小，而只跟踪页面是完全空闲还是在使用中。我们
+ *	使用与堆相同的 FSM 实现，用 0 表示已使用的页面，用 (BLCKSZ - 1)
+ *	表示未使用的页面。
  *
  *-------------------------------------------------------------------------
  */
@@ -26,13 +26,13 @@
 #include "storage/indexfsm.h"
 
 /*
- * Exported routines
+ * 导出例程
  */
 
 /*
- * GetFreeIndexPage - return a free page from the FSM
+ * GetFreeIndexPage - 从 FSM 中返回一个空闲页面
  *
- * As a side effect, the page is marked as used in the FSM.
+ * 作为副作用，该页面会在 FSM 中被标记为已使用。
  */
 BlockNumber
 GetFreeIndexPage(Relation rel)
@@ -46,7 +46,7 @@ GetFreeIndexPage(Relation rel)
 }
 
 /*
- * RecordFreeIndexPage - mark a page as free in the FSM
+ * RecordFreeIndexPage - 在 FSM 中将一个页面标记为空闲
  */
 void
 RecordFreeIndexPage(Relation rel, BlockNumber freeBlock)
@@ -56,7 +56,7 @@ RecordFreeIndexPage(Relation rel, BlockNumber freeBlock)
 
 
 /*
- * RecordUsedIndexPage - mark a page as used in the FSM
+ * RecordUsedIndexPage - 在 FSM 中将一个页面标记为已使用
  */
 void
 RecordUsedIndexPage(Relation rel, BlockNumber usedBlock)
@@ -65,7 +65,7 @@ RecordUsedIndexPage(Relation rel, BlockNumber usedBlock)
 }
 
 /*
- * IndexFreeSpaceMapVacuum - scan and fix any inconsistencies in the FSM
+ * IndexFreeSpaceMapVacuum - 扫描并修复 FSM 中的任何不一致
  */
 void
 IndexFreeSpaceMapVacuum(Relation rel)

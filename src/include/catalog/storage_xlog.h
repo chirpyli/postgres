@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * storage_xlog.h
- *	  prototypes for XLog support for backend/catalog/storage.c
+ *	  backend/catalog/storage.c 的 XLog 支持的声明
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -20,13 +20,13 @@
 #include "storage/relfilelocator.h"
 
 /*
- * Declarations for smgr-related XLOG records
+ * 与 smgr 相关的 XLOG 记录的声明
  *
- * Note: we log file creation and truncation here, but logging of deletion
- * actions is handled by xact.c, because it is part of transaction commit.
+ * 注意：我们在此记录文件的创建与截断，但删除动作的记录
+ * 由 xact.c 处理，因为它属于事务提交的一部分。
  */
 
-/* XLOG gives us high 4 bits */
+/* XLOG 占用高 4 位 */
 #define XLOG_SMGR_CREATE	0x10
 #define XLOG_SMGR_TRUNCATE	0x20
 
@@ -36,7 +36,7 @@ typedef struct xl_smgr_create
 	ForkNumber	forkNum;
 } xl_smgr_create;
 
-/* flags for xl_smgr_truncate */
+/* xl_smgr_truncate 的标志位 */
 #define SMGR_TRUNCATE_HEAP		0x0001
 #define SMGR_TRUNCATE_VM		0x0002
 #define SMGR_TRUNCATE_FSM		0x0004

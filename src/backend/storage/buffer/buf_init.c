@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * buf_init.c
- *	  buffer manager initialization routines
+ *	  缓冲区管理器初始化例程
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -26,43 +26,40 @@ CkptSortItem *CkptBufferIds;
 
 
 /*
- * Data Structures:
- *		buffers live in a freelist and a lookup data structure.
+ * 数据结构：
+ *		缓冲区存在于 freelist（空闲链表）和一个查找数据结构中。
  *
  *
- * Buffer Lookup:
- *		Two important notes.  First, the buffer has to be
- *		available for lookup BEFORE an IO begins.  Otherwise
- *		a second process trying to read the buffer will
- *		allocate its own copy and the buffer pool will
- *		become inconsistent.
+ * 缓冲区查找：
+ *		有两点重要说明。首先，缓冲区必须在 IO 开始之前就可用于查找。
+ *		否则，第二个试图读取该缓冲区的进程会分配它自己的副本，
+ *		从而导致缓冲池出现不一致。
  *
- * Buffer Replacement:
- *		see freelist.c.  A buffer cannot be replaced while in
- *		use either by data manager or during IO.
+ * 缓冲区替换：
+ *		见 freelist.c。缓冲区在使用过程中（无论是数据管理器使用，
+ *		还是处于 IO 期间）都不能被替换。
  *
  *
- * Synchronization/Locking:
+ * 同步/加锁：
  *
- * IO_IN_PROGRESS -- this is a flag in the buffer descriptor.
- *		It must be set when an IO is initiated and cleared at
- *		the end of the IO.  It is there to make sure that one
- *		process doesn't start to use a buffer while another is
- *		faulting it in.  see WaitIO and related routines.
+ * IO_IN_PROGRESS —— 这是缓冲区描述符中的一个标志位。
+ *		必须在发起 IO 时设置，并在 IO 结束时清除。它的作用是确保一个进程
+ *		不会在另一个进程正将缓冲区换入（fault in）时就开始使用该缓冲区。
+ *		见 WaitIO 及相关例程。
  *
- * refcount --	Counts the number of processes holding pins on a buffer.
- *		A buffer is pinned during IO and immediately after a BufferAlloc().
- *		Pins must be released before end of transaction.  For efficiency the
- *		shared refcount isn't increased if an individual backend pins a buffer
- *		multiple times. Check the PrivateRefCount infrastructure in bufmgr.c.
+ * refcount —— 统计持有某缓冲区 pin 的进程数量。
+ *		缓冲区在 IO 期间以及 BufferAlloc() 调用之后会立即被 pin 住。
+ *		pin 必须在事务结束前释放。出于效率考虑，若单个后端对同一个缓冲区
+ *		多次 pin，共享引用计数不会重复增加。详见 bufmgr.c 中的
+ *		PrivateRefCount 机制。
  */
 
 
 /*
- * Initialize shared buffer pool
+ * 初始化共享缓冲池
  *
- * This is called once during shared-memory initialization (either in the
- * postmaster, or in a standalone backend).
+ * 在共享内存初始化期间会被调用一次（无论是在 postmaster 中，
+ * 还是在独立后端中）。
  */
 void
 BufferManagerShmemInit(void)
@@ -72,31 +69,29 @@ BufferManagerShmemInit(void)
 				foundIOCV,
 				foundBufCkpt;
 
-	/* Align descriptors to a cacheline boundary. */
+	/* 将描述符对齐到缓存行边界。 */
 	BufferDescriptors = (BufferDescPadded *)
 		ShmemInitStruct("Buffer Descriptors",
 						NBuffers * sizeof(BufferDescPadded),
 						&foundDescs);
 
-	/* Align buffer pool on IO page size boundary. */
+	/* 将缓冲池对齐到 IO 页大小边界。 */
 	BufferBlocks = (char *)
 		TYPEALIGN(PG_IO_ALIGN_SIZE,
 				  ShmemInitStruct("Buffer Blocks",
 								  NBuffers * (Size) BLCKSZ + PG_IO_ALIGN_SIZE,
 								  &foundBufs));
 
-	/* Align condition variables to cacheline boundary. */
+	/* 将条件变量对齐到缓存行边界。 */
 	BufferIOCVArray = (ConditionVariableMinimallyPadded *)
 		ShmemInitStruct("Buffer IO Condition Variables",
 						NBuffers * sizeof(ConditionVariableMinimallyPadded),
 						&foundIOCV);
 
 	/*
-	 * The array used to sort to-be-checkpointed buffer ids is located in
-	 * shared memory, to avoid having to allocate significant amounts of
-	 * memory at runtime. As that'd be in the middle of a checkpoint, or when
-	 * the checkpointer is restarted, memory allocation failures would be
-	 * painful.
+	 * 用于对即将做检查点的缓冲区 id 进行排序的数组位于共享内存中，
+	 * 以避免在运行时分配大量内存。因为该分配可能发生在检查点进行过程中，
+	 * 或检查点进程重启时，此时内存分配失败将非常麻烦。
 	 */
 	CkptBufferIds = (CkptSortItem *)
 		ShmemInitStruct("Checkpoint BufferIds",
@@ -104,16 +99,16 @@ BufferManagerShmemInit(void)
 
 	if (foundDescs || foundBufs || foundIOCV || foundBufCkpt)
 	{
-		/* should find all of these, or none of them */
+		/* 要么全部找到，要么一个都找不到 */
 		Assert(foundDescs && foundBufs && foundIOCV && foundBufCkpt);
-		/* note: this path is only taken in EXEC_BACKEND case */
+		/* 注意：此分支仅在 EXEC_BACKEND 情况下才会走到 */
 	}
 	else
 	{
 		int			i;
 
 		/*
-		 * Initialize all the buffer headers.
+		 * 初始化所有缓冲区头。
 		 */
 		for (i = 0; i < NBuffers; i++)
 		{
@@ -129,8 +124,8 @@ BufferManagerShmemInit(void)
 			pgaio_wref_clear(&buf->io_wref);
 
 			/*
-			 * Initially link all the buffers together as unused. Subsequent
-			 * management of this list is done by freelist.c.
+			 * 初始时将所有缓冲区作为未使用状态链接在一起。
+			 * 该链表的后续管理由 freelist.c 负责。
 			 */
 			buf->freeNext = i + 1;
 
@@ -140,14 +135,14 @@ BufferManagerShmemInit(void)
 			ConditionVariableInit(BufferDescriptorGetIOCV(buf));
 		}
 
-		/* Correct last entry of linked list */
+		/* 修正链表的最后一个结点 */
 		GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 	}
 
-	/* Init other shared buffer-management stuff */
+	/* 初始化其他共享缓冲管理相关内容 */
 	StrategyInitialize(!foundDescs);
 
-	/* Initialize per-backend file flush context */
+	/* 初始化每后端文件刷写上下文 */
 	WritebackContextInit(&BackendWritebackContext,
 						 &backend_flush_after);
 }
@@ -155,33 +150,32 @@ BufferManagerShmemInit(void)
 /*
  * BufferManagerShmemSize
  *
- * compute the size of shared memory for the buffer pool including
- * data pages, buffer descriptors, hash tables, etc.
+ * 计算缓冲池所需的共享内存大小，包括数据页、缓冲区描述符、哈希表等。
  */
 Size
 BufferManagerShmemSize(void)
 {
 	Size		size = 0;
 
-	/* size of buffer descriptors */
+	/* 缓冲区描述符的大小 */
 	size = add_size(size, mul_size(NBuffers, sizeof(BufferDescPadded)));
-	/* to allow aligning buffer descriptors */
+	/* 用于对齐缓冲区描述符 */
 	size = add_size(size, PG_CACHE_LINE_SIZE);
 
-	/* size of data pages, plus alignment padding */
+	/* 数据页大小，外加对齐填充 */
 	size = add_size(size, PG_IO_ALIGN_SIZE);
 	size = add_size(size, mul_size(NBuffers, BLCKSZ));
 
-	/* size of stuff controlled by freelist.c */
+	/* freelist.c 所管理内容的大小 */
 	size = add_size(size, StrategyShmemSize());
 
-	/* size of I/O condition variables */
+	/* I/O 条件变量的大小 */
 	size = add_size(size, mul_size(NBuffers,
 								   sizeof(ConditionVariableMinimallyPadded)));
-	/* to allow aligning the above */
+	/* 用于对齐上述结构 */
 	size = add_size(size, PG_CACHE_LINE_SIZE);
 
-	/* size of checkpoint sort array in bufmgr.c */
+	/* bufmgr.c 中检查点排序数组的大小 */
 	size = add_size(size, mul_size(NBuffers, sizeof(CkptSortItem)));
 
 	return size;
