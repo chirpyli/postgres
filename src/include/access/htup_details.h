@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * htup_details.h
- *	  POSTGRES heap tuple header definitions.
+ *	  POSTGRES 堆元组头部定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -22,131 +22,103 @@
 #include "varatt.h"
 
 /*
- * MaxTupleAttributeNumber limits the number of (user) columns in a tuple.
- * The key limit on this value is that the size of the fixed overhead for
- * a tuple, plus the size of the null-values bitmap (at 1 bit per column),
- * plus MAXALIGN alignment, must fit into t_hoff which is uint8.  On most
- * machines the upper limit without making t_hoff wider would be a little
- * over 1700.  We use round numbers here and for MaxHeapAttributeNumber
- * so that alterations in HeapTupleHeaderData layout won't change the
- * supported max number of columns.
+ * MaxTupleAttributeNumber 限制了元组中（用户）列的数量。
+ * 该值的关键限制在于：元组的固定开销大小，加上 null 值位图的大小
+ * （每列 1 比特），再加上 MAXALIGN 对齐，必须能放进 t_hoff 中，
+ * 而 t_hoff 是 uint8。在大多数机器上，在不加宽 t_hoff 的情况下，
+ * 上限会略高于 1700。这里以及 MaxHeapAttributeNumber 处我们取整，
+ * 这样 HeapTupleHeaderData 布局的变动不会改变所支持的最大列数。
  */
 #define MaxTupleAttributeNumber 1664	/* 8 * 208 */
 
 /*
- * MaxHeapAttributeNumber limits the number of (user) columns in a table.
- * This should be somewhat less than MaxTupleAttributeNumber.  It must be
- * at least one less, else we will fail to do UPDATEs on a maximal-width
- * table (because UPDATE has to form working tuples that include CTID).
- * In practice we want some additional daylight so that we can gracefully
- * support operations that add hidden "resjunk" columns, for example
- * SELECT * FROM wide_table ORDER BY foo, bar, baz.
- * In any case, depending on column data types you will likely be running
- * into the disk-block-based limit on overall tuple size if you have more
- * than a thousand or so columns.  TOAST won't help.
+ * MaxHeapAttributeNumber 限制了表中的（用户）列数量。
+ * 它应该比 MaxTupleAttributeNumber 略小。它必须至少小 1，否则我们将
+ * 无法对最大宽度的表执行 UPDATE（因为 UPDATE 必须构造包含 CTID 的
+ * 工作元组）。在实践中我们希望留出一定的余量，以便能够优雅地支持
+ * 添加隐藏"resjunk"列的操作，例如
+ * SELECT * FROM wide_table ORDER BY foo, bar, baz。
+ * 无论如何，取决于列的数据类型，如果你有超过一千列左右，很可能会
+ * 撞上基于磁盘块的元组总大小限制。TOAST 对此无能为力。
  */
 #define MaxHeapAttributeNumber	1600	/* 8 * 200 */
 
 /*
- * Heap tuple header.  To avoid wasting space, the fields should be
- * laid out in such a way as to avoid structure padding.
+ * 堆元组头部。为了避免浪费空间，字段的布局方式应避免结构体填充（padding）。
  *
- * Datums of composite types (row types) share the same general structure
- * as on-disk tuples, so that the same routines can be used to build and
- * examine them.  However the requirements are slightly different: a Datum
- * does not need any transaction visibility information, and it does need
- * a length word and some embedded type information.  We can achieve this
- * by overlaying the xmin/cmin/xmax/cmax/xvac fields of a heap tuple
- * with the fields needed in the Datum case.  Typically, all tuples built
- * in-memory will be initialized with the Datum fields; but when a tuple is
- * about to be inserted in a table, the transaction fields will be filled,
- * overwriting the datum fields.
+ * 组合类型（行类型）的 Datum 与磁盘元组共享相同的通用结构，因此可以使用
+ * 相同的例程来构造和检查它们。但需求略有不同：Datum 不需要任何事务可见性
+ * 信息，而它确实需要一个长度字和一些内嵌的类型信息。我们可以通过将堆元组
+ * 的 xmin/cmin/xmax/cmax/xvac 字段与 Datum 情况下所需的字段进行重叠（overlay）
+ * 来实现这一点。通常，所有在内存中构造的元组都会用 Datum 字段来初始化；
+ * 但当元组即将被插入表中时，事务字段会被填充，从而覆盖掉 Datum 字段。
  *
- * The overall structure of a heap tuple looks like:
- *			fixed fields (HeapTupleHeaderData struct)
- *			nulls bitmap (if HEAP_HASNULL is set in t_infomask)
- *			alignment padding (as needed to make user data MAXALIGN'd)
- *			object ID (if HEAP_HASOID_OLD is set in t_infomask, not created
- *          anymore)
- *			user data fields
+ * 堆元组的整体结构如下：
+ *			固定字段（HeapTupleHeaderData 结构体）
+ *			null 位图（如果 t_infomask 中设置了 HEAP_HASNULL）
+ *			对齐填充（按需使UserData 按 MAXALIGN 对齐）
+ *			对象 ID（如果 t_infomask 中设置了 HEAP_HASOID_OLD，已不再创建）
+ *			用户数据字段
  *
- * We store five "virtual" fields Xmin, Cmin, Xmax, Cmax, and Xvac in three
- * physical fields.  Xmin and Xmax are always really stored, but Cmin, Cmax
- * and Xvac share a field.  This works because we know that Cmin and Cmax
- * are only interesting for the lifetime of the inserting and deleting
- * transaction respectively.  If a tuple is inserted and deleted in the same
- * transaction, we store a "combo" command id that can be mapped to the real
- * cmin and cmax, but only by use of local state within the originating
- * backend.  See combocid.c for more details.  Meanwhile, Xvac is only set by
- * old-style VACUUM FULL, which does not have any command sub-structure and so
- * does not need either Cmin or Cmax.  (This requires that old-style VACUUM
- * FULL never try to move a tuple whose Cmin or Cmax is still interesting,
- * ie, an insert-in-progress or delete-in-progress tuple.)
+ * 我们将五个"虚拟"字段 Xmin、Cmin、Xmax、Cmax 和 Xvac 存放在三个物理字段中。
+ * Xmin 和 Xmax 总是真正存储的，但 Cmin、Cmax 和 Xvac 共享一个字段。这之所以
+ * 可行，是因为我们知道 Cmin 和 Cmax 分别只在插入事务和删除事务的生命周期内有意义。
+ * 如果一个元组在同一事务中被插入又删除，我们会存储一个"组合"命令 ID，它可以被
+ * 映射回真正的 cmin 和 cmax，但这只能通过发起事务的后端进程中的本地状态来实现。
+ * 详见 combocid.c。同时，Xvac 仅由旧式 VACUUM FULL 设置，它没有任何命令子结构，
+ * 因此既不需要 Cmin 也不需要 Cmax。（这要求旧式 VACUUM FULL 绝不尝试移动一个
+ * Cmin 或 Cmax 仍有意义的元组，即仍在插入中或删除中的元组。）
  *
- * A word about t_ctid: whenever a new tuple is stored on disk, its t_ctid
- * is initialized with its own TID (location).  If the tuple is ever updated,
- * its t_ctid is changed to point to the replacement version of the tuple.  Or
- * if the tuple is moved from one partition to another, due to an update of
- * the partition key, t_ctid is set to a special value to indicate that
- * (see ItemPointerSetMovedPartitions).  Thus, a tuple is the latest version
- * of its row iff XMAX is invalid or
- * t_ctid points to itself (in which case, if XMAX is valid, the tuple is
- * either locked or deleted).  One can follow the chain of t_ctid links
- * to find the newest version of the row, unless it was moved to a different
- * partition.  Beware however that VACUUM might
- * erase the pointed-to (newer) tuple before erasing the pointing (older)
- * tuple.  Hence, when following a t_ctid link, it is necessary to check
- * to see if the referenced slot is empty or contains an unrelated tuple.
- * Check that the referenced tuple has XMIN equal to the referencing tuple's
- * XMAX to verify that it is actually the descendant version and not an
- * unrelated tuple stored into a slot recently freed by VACUUM.  If either
- * check fails, one may assume that there is no live descendant version.
+ * 关于 t_ctid：每当一个新元组被存入磁盘，它的 t_ctid 会用自身的 TID（位置）
+ * 初始化。如果元组被更新，它的 t_ctid 会被改为指向该元组的替换版本。或者，如果
+ * 由于分区键被更新，元组从一个分区移动到另一个分区，t_ctid 会被设为一个特殊值
+ * 以表示这一点（见 ItemPointerSetMovedPartitions）。因此，一个元组是其行的最新版本，
+ * 当且仅当 XMAX 无效，或 t_ctid 指向自身（在后一种情况下，如果 XMAX 有效，
+ * 则该元组要么被锁定，要么被删除）。人们可以沿着 t_ctid 链接链找到该行的最新版本，
+ * 除非它被移动到了不同的分区。但是要注意，VACUUM 可能会在被指向的（较新）元组
+ * 之前擦除指向它的（较旧）元组。因此，在跟随 t_ctid 链接时，有必要检查
+ * 被引用的槽位是否为空或包含一个无关的元组。需检查被引用元组的 XMIN 是否
+ * 等于引用元组的 XMAX，以验证它确实是后代版本，而非一个填入最近被 VACUUM 释放的
+ * 槽位中的无关元组。如果其中任一检查失败，可以认为不存在存活的后代版本。
  *
- * t_ctid is sometimes used to store a speculative insertion token, instead
- * of a real TID.  A speculative token is set on a tuple that's being
- * inserted, until the inserter is sure that it wants to go ahead with the
- * insertion.  Hence a token should only be seen on a tuple with an XMAX
- * that's still in-progress, or invalid/aborted.  The token is replaced with
- * the tuple's real TID when the insertion is confirmed.  One should never
- * see a speculative insertion token while following a chain of t_ctid links,
- * because they are not used on updates, only insertions.
+ * t_ctid 有时用于存储一个推测插入令牌（speculative insertion token），而不是
+ * 真正的 TID。推测令牌会被设置在一个正在被插入的元组上，直到插入者确定它
+ * 想要继续完成插入。因此令牌只应出现在一个 XMAX 仍处于进行中、或无效/已中止的
+ * 元组上。当插入被确认时，令牌会被替换为该元组的真实 TID。在跟随 t_ctid 链接链时
+ * 绝不应看到推测插入令牌，因为它们不用于更新，只用于插入。
  *
- * Following the fixed header fields, the nulls bitmap is stored (beginning
- * at t_bits).  The bitmap is *not* stored if t_infomask shows that there
- * are no nulls in the tuple.  If an OID field is present (as indicated by
- * t_infomask), then it is stored just before the user data, which begins at
- * the offset shown by t_hoff.  Note that t_hoff must be a multiple of
- * MAXALIGN.
+ * 在固定头部字段之后，存储 null 位图（从 t_bits 开始）。如果 t_infomask 表明
+ * 元组中没有 null，则不存储该位图。如果存在 OID 字段（由 t_infomask 指示），
+ * 则它存储在UserData 之前，而用户数据从 t_hoff 所示偏移处开始。注意 t_hoff 必须
+ * 是 MAXALIGN 的倍数。
  */
 
 typedef struct HeapTupleFields
 {
-	TransactionId t_xmin;		/* inserting xact ID */
-	TransactionId t_xmax;		/* deleting or locking xact ID */
+	TransactionId t_xmin;		/* 插入该元组的事务 ID */
+	TransactionId t_xmax;		/* 删除或锁定该元组的事务 ID */
 
 	union
 	{
-		CommandId	t_cid;		/* inserting or deleting command ID, or both */
-		TransactionId t_xvac;	/* old-style VACUUM FULL xact ID */
+		CommandId	t_cid;		/* 插入或删除的命令 ID，或两者兼有 */
+		TransactionId t_xvac;	/* 旧式 VACUUM FULL 的事务 ID */
 	}			t_field3;
 } HeapTupleFields;
 
 typedef struct DatumTupleFields
 {
-	int32		datum_len_;		/* varlena header (do not touch directly!) */
+	int32		datum_len_;		/* varlena 头部（不要直接修改！） */
 
-	int32		datum_typmod;	/* -1, or identifier of a record type */
+	int32		datum_typmod;	/* -1，或记录类型的标识符 */
 
-	Oid			datum_typeid;	/* composite type OID, or RECORDOID */
+	Oid			datum_typeid;	/* 组合类型的 OID，或 RECORDOID */
 
 	/*
-	 * datum_typeid cannot be a domain over composite, only plain composite,
-	 * even if the datum is meant as a value of a domain-over-composite type.
-	 * This is in line with the general principle that CoerceToDomain does not
-	 * change the physical representation of the base type value.
+	 * datum_typeid 不能是组合类型之上的域，只能是普通组合类型，
+	 * 即使该 Datum 本意是 domain-over-composite 类型的值。
+	 * 这与 CoerceToDomain 不改变基础类型值的物理表示这一通用原则一致。
 	 *
-	 * Note: field ordering is chosen with thought that Oid might someday
-	 * widen to 64 bits.
+	 * 注意：字段顺序的选择考虑到了 Oid 将来某天可能扩展到 64 位。
 	 */
 } DatumTupleFields;
 
@@ -158,73 +130,70 @@ struct HeapTupleHeaderData
 		DatumTupleFields t_datum;
 	}			t_choice;
 
-	ItemPointerData t_ctid;		/* current TID of this or newer tuple (or a
-								 * speculative insertion token) */
+	ItemPointerData t_ctid;		/* 本元组或更新元组的当前 TID（或
+								 * 一个推测插入令牌） */
 
-	/* Fields below here must match MinimalTupleData! */
+	/* 此行以下的字段必须与 MinimalTupleData 匹配！ */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_INFOMASK2 2
-	uint16		t_infomask2;	/* number of attributes + various flags */
+	uint16		t_infomask2;	/* 属性数量 + 各种标志位 */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_INFOMASK 3
-	uint16		t_infomask;		/* various flag bits, see below */
+	uint16		t_infomask;		/* 各种标志位，见下文 */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_HOFF 4
-	uint8		t_hoff;			/* sizeof header incl. bitmap, padding */
+	uint8		t_hoff;			/* 包含位图和填充的头部大小 */
 
-	/* ^ - 23 bytes - ^ */
+	/* ^ - 23 字节 - ^ */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_BITS 5
-	bits8		t_bits[FLEXIBLE_ARRAY_MEMBER];	/* bitmap of NULLs */
+	bits8		t_bits[FLEXIBLE_ARRAY_MEMBER];	/* NULL 位图 */
 
-	/* MORE DATA FOLLOWS AT END OF STRUCT */
+	/* 结构体末尾后还有更多数据 */
 };
 
-/* typedef appears in htup.h */
+/* 类型定义在 htup.h 中 */
 
 #define SizeofHeapTupleHeader offsetof(HeapTupleHeaderData, t_bits)
 
 /*
- * information stored in t_infomask:
+ * 存放在 t_infomask 中的信息：
  */
-#define HEAP_HASNULL			0x0001	/* has null attribute(s) */
-#define HEAP_HASVARWIDTH		0x0002	/* has variable-width attribute(s) */
-#define HEAP_HASEXTERNAL		0x0004	/* has external stored attribute(s) */
-#define HEAP_HASOID_OLD			0x0008	/* has an object-id field */
-#define HEAP_XMAX_KEYSHR_LOCK	0x0010	/* xmax is a key-shared locker */
-#define HEAP_COMBOCID			0x0020	/* t_cid is a combo CID */
-#define HEAP_XMAX_EXCL_LOCK		0x0040	/* xmax is exclusive locker */
-#define HEAP_XMAX_LOCK_ONLY		0x0080	/* xmax, if valid, is only a locker */
+#define HEAP_HASNULL			0x0001	/* 含有 null 属性 */
+#define HEAP_HASVARWIDTH		0x0002	/* 含有变宽属性 */
+#define HEAP_HASEXTERNAL		0x0004	/* 含有外部存储的属性 */
+#define HEAP_HASOID_OLD			0x0008	/* 含有一个对象 ID 字段 */
+#define HEAP_XMAX_KEYSHR_LOCK	0x0010	/* xmax 是一个键共享锁持有者 */
+#define HEAP_COMBOCID			0x0020	/* t_cid 是一个组合 CID */
+#define HEAP_XMAX_EXCL_LOCK		0x0040	/* xmax 是一个排他锁持有者 */
+#define HEAP_XMAX_LOCK_ONLY		0x0080	/* xmax 如果有效，则仅仅是一个锁持有者 */
 
- /* xmax is a shared locker */
+ /* xmax 是一个共享锁持有者 */
 #define HEAP_XMAX_SHR_LOCK	(HEAP_XMAX_EXCL_LOCK | HEAP_XMAX_KEYSHR_LOCK)
 
 #define HEAP_LOCK_MASK	(HEAP_XMAX_SHR_LOCK | HEAP_XMAX_EXCL_LOCK | \
 						 HEAP_XMAX_KEYSHR_LOCK)
-#define HEAP_XMIN_COMMITTED		0x0100	/* t_xmin committed */
-#define HEAP_XMIN_INVALID		0x0200	/* t_xmin invalid/aborted */
+#define HEAP_XMIN_COMMITTED		0x0100	/* t_xmin 已提交 */
+#define HEAP_XMIN_INVALID		0x0200	/* t_xmin 无效/已中止 */
 #define HEAP_XMIN_FROZEN		(HEAP_XMIN_COMMITTED|HEAP_XMIN_INVALID)
-#define HEAP_XMAX_COMMITTED		0x0400	/* t_xmax committed */
-#define HEAP_XMAX_INVALID		0x0800	/* t_xmax invalid/aborted */
-#define HEAP_XMAX_IS_MULTI		0x1000	/* t_xmax is a MultiXactId */
-#define HEAP_UPDATED			0x2000	/* this is UPDATEd version of row */
-#define HEAP_MOVED_OFF			0x4000	/* moved to another place by pre-9.0
-										 * VACUUM FULL; kept for binary
-										 * upgrade support */
-#define HEAP_MOVED_IN			0x8000	/* moved from another place by pre-9.0
-										 * VACUUM FULL; kept for binary
-										 * upgrade support */
+#define HEAP_XMAX_COMMITTED		0x0400	/* t_xmax 已提交 */
+#define HEAP_XMAX_INVALID		0x0800	/* t_xmax 无效/已中止 */
+#define HEAP_XMAX_IS_MULTI		0x1000	/* t_xmax 是一个 MultiXactId */
+#define HEAP_UPDATED			0x2000	/* 这是该行的 UPDATEd 版本 */
+#define HEAP_MOVED_OFF			0x4000	/* 被 9.0 之前的 VACUUM FULL 移动到了
+										 * 别处；为二进制升级兼容而保留 */
+#define HEAP_MOVED_IN			0x8000	/* 被 9.0 之前的 VACUUM FULL 从
+										 * 别处移入；为二进制升级兼容而保留 */
 #define HEAP_MOVED (HEAP_MOVED_OFF | HEAP_MOVED_IN)
 
-#define HEAP_XACT_MASK			0xFFF0	/* visibility-related bits */
+#define HEAP_XACT_MASK			0xFFF0	/* 与可见性相关的位 */
 
 /*
- * A tuple is only locked (i.e. not updated by its Xmax) if the
- * HEAP_XMAX_LOCK_ONLY bit is set; or, for pg_upgrade's sake, if the Xmax is
- * not a multi and the EXCL_LOCK bit is set.
+ * 一个元组仅在设置了 HEAP_XMAX_LOCK_ONLY 位时才是被锁定的（即未被其 Xmax
+ * 更新）；或者，为了 pg_upgrade 的兼容，如果 Xmax 不是 multi 且设置了
+ * EXCL_LOCK 位，也算锁定。
  *
- * See also HeapTupleHeaderIsOnlyLocked, which also checks for a possible
- * aborted updater transaction.
+ * 另见 HeapTupleHeaderIsOnlyLocked，它还会检查可能存在的已中止更新者事务。
  */
 static inline bool
 HEAP_XMAX_IS_LOCKED_ONLY(uint16 infomask)
@@ -234,22 +203,19 @@ HEAP_XMAX_IS_LOCKED_ONLY(uint16 infomask)
 }
 
 /*
- * A tuple that has HEAP_XMAX_IS_MULTI and HEAP_XMAX_LOCK_ONLY but neither of
- * HEAP_XMAX_EXCL_LOCK and HEAP_XMAX_KEYSHR_LOCK must come from a tuple that was
- * share-locked in 9.2 or earlier and then pg_upgrade'd.
+ * 一个元组同时具有 HEAP_XMAX_IS_MULTI 和 HEAP_XMAX_LOCK_ONLY，但不具有
+ * HEAP_XMAX_EXCL_LOCK 也不具有 HEAP_XMAX_KEYSHR_LOCK，必然来自一个在 9.2 或更早
+ * 版本中被共享锁定、然后经过 pg_upgrade 的元组。
  *
- * In 9.2 and prior, HEAP_XMAX_IS_MULTI was only set when there were multiple
- * FOR SHARE lockers of that tuple.  That set HEAP_XMAX_LOCK_ONLY (with a
- * different name back then) but neither of HEAP_XMAX_EXCL_LOCK and
- * HEAP_XMAX_KEYSHR_LOCK.  That combination is no longer possible in 9.3 and
- * up, so if we see that combination we know for certain that the tuple was
- * locked in an earlier release; since all such lockers are gone (they cannot
- * survive through pg_upgrade), such tuples can safely be considered not
- * locked.
+ * 在 9.2 及更早版本中，HEAP_XMAX_IS_MULTI 仅在该元组有多个 FOR SHARE 锁持有者时
+ * 才会被设置。这会设置 HEAP_XMAX_LOCK_ONLY（当时名字不同），但既不设置
+ * HEAP_XMAX_EXCL_LOCK 也不设置 HEAP_XMAX_KEYSHR_LOCK。这种组合在 9.3 及之后
+ * 不再可能出现，因此如果我们看到这种组合，就可以确定该元组是在更早的版本中
+ * 被锁定的；由于所有此类锁持有者都早已消失（它们无法在 pg_upgrade 中存活），
+ * 这样的元组可以安全地被视为未被锁定。
  *
- * We must not resolve such multixacts locally, because the result would be
- * bogus, regardless of where they stand with respect to the current valid
- * multixact range.
+ * 我们绝不能本地解析此类 multixact，因为无论它们相对于当前有效 multixact 范围
+ * 处于何种位置，结果都是错误的。
  */
 static inline bool
 HEAP_LOCKED_UPGRADED(uint16 infomask)
@@ -261,7 +227,7 @@ HEAP_LOCKED_UPGRADED(uint16 infomask)
 }
 
 /*
- * Use these to test whether a particular lock is applied to a tuple
+ * 使用这些宏来测试某个特定的锁是否应用于元组
  */
 static inline bool
 HEAP_XMAX_IS_SHR_LOCKED(int16 infomask)
@@ -281,43 +247,40 @@ HEAP_XMAX_IS_KEYSHR_LOCKED(int16 infomask)
 	return (infomask & HEAP_LOCK_MASK) == HEAP_XMAX_KEYSHR_LOCK;
 }
 
-/* turn these all off when Xmax is to change */
+/* 当 Xmax 即将改变时，将这些位全部关闭 */
 #define HEAP_XMAX_BITS (HEAP_XMAX_COMMITTED | HEAP_XMAX_INVALID | \
 						HEAP_XMAX_IS_MULTI | HEAP_LOCK_MASK | HEAP_XMAX_LOCK_ONLY)
 
 /*
- * information stored in t_infomask2:
+ * 存放在 t_infomask2 中的信息：
  */
-#define HEAP_NATTS_MASK			0x07FF	/* 11 bits for number of attributes */
-/* bits 0x1800 are available */
-#define HEAP_KEYS_UPDATED		0x2000	/* tuple was updated and key cols
-										 * modified, or tuple deleted */
-#define HEAP_HOT_UPDATED		0x4000	/* tuple was HOT-updated */
-#define HEAP_ONLY_TUPLE			0x8000	/* this is heap-only tuple */
+#define HEAP_NATTS_MASK			0x07FF	/* 用于属性数量的 11 位 */
+/* 0x1800 位可用 */
+#define HEAP_KEYS_UPDATED		0x2000	/* 元组被更新且键列被修改，
+										 * 或元组被删除 */
+#define HEAP_HOT_UPDATED		0x4000	/* 元组被 HOT 更新 */
+#define HEAP_ONLY_TUPLE			0x8000	/* 这是一个 heap-only 元组 */
 
-#define HEAP2_XACT_MASK			0xE000	/* visibility-related bits */
+#define HEAP2_XACT_MASK			0xE000	/* 与可见性相关的位 */
 
 /*
- * HEAP_TUPLE_HAS_MATCH is a temporary flag used during hash joins.  It is
- * only used in tuples that are in the hash table, and those don't need
- * any visibility information, so we can overlay it on a visibility flag
- * instead of using up a dedicated bit.
+ * HEAP_TUPLE_HAS_MATCH 是哈希连接期间使用的临时标志。它仅用于哈希表中的
+ * 元组，而那些元组不需要任何可见性信息，因此我们可以将其叠加在一个可见性
+ * 标志上，而不必占用一个专用位。
  */
-#define HEAP_TUPLE_HAS_MATCH	HEAP_ONLY_TUPLE /* tuple has a join match */
+#define HEAP_TUPLE_HAS_MATCH	HEAP_ONLY_TUPLE /* 元组有连接匹配 */
 
 /*
- * HeapTupleHeader accessor functions
+ * HeapTupleHeader 访问器函数
  */
 
 static bool HeapTupleHeaderXminFrozen(const HeapTupleHeaderData *tup);
 
 /*
- * HeapTupleHeaderGetRawXmin returns the "raw" xmin field, which is the xid
- * originally used to insert the tuple.  However, the tuple might actually
- * be frozen (via HeapTupleHeaderSetXminFrozen) in which case the tuple's xmin
- * is visible to every snapshot.  Prior to PostgreSQL 9.4, we actually changed
- * the xmin to FrozenTransactionId, and that value may still be encountered
- * on disk.
+ * HeapTupleHeaderGetRawXmin 返回"原始"的 xmin 字段，即最初用于插入该元组的 xid。
+ * 不过，该元组实际上可能已被冻结（通过 HeapTupleHeaderSetXminFrozen），在这种
+ * 情况下该元组的 xmin 对所有快照都可见。在 PostgreSQL 9.4 之前，我们实际上是
+ * 将 xmin 改为 FrozenTransactionId，该值仍可能在磁盘上遇到。
  */
 static inline TransactionId
 HeapTupleHeaderGetRawXmin(const HeapTupleHeaderData *tup)
@@ -392,11 +355,10 @@ HeapTupleHeaderSetXmax(HeapTupleHeaderData *tup, TransactionId xid)
 
 #ifndef FRONTEND
 /*
- * HeapTupleHeaderGetRawXmax gets you the raw Xmax field.  To find out the Xid
- * that updated a tuple, you might need to resolve the MultiXactId if certain
- * bits are set.  HeapTupleHeaderGetUpdateXid checks those bits and takes care
- * to resolve the MultiXactId if necessary.  This might involve multixact I/O,
- * so it should only be used if absolutely necessary.
+ * HeapTupleHeaderGetRawXmax 返回原始的 Xmax 字段。要找出更新某元组的 Xid，
+ * 在某些位被设置的情况下可能需要解析 MultiXactId。HeapTupleHeaderGetUpdateXid
+ * 会检查这些位，并在必要时负责解析 MultiXactId。这可能涉及 multixact 的 I/O，
+ * 因此应仅在绝对必要时使用。
  */
 static inline TransactionId
 HeapTupleHeaderGetUpdateXid(const HeapTupleHeaderData *tup)
@@ -411,10 +373,9 @@ HeapTupleHeaderGetUpdateXid(const HeapTupleHeaderData *tup)
 #endif							/* FRONTEND */
 
 /*
- * HeapTupleHeaderGetRawCommandId will give you what's in the header whether
- * it is useful or not.  Most code should use HeapTupleHeaderGetCmin or
- * HeapTupleHeaderGetCmax instead, but note that those Assert that you can
- * get a legitimate result, ie you are in the originating transaction!
+ * HeapTupleHeaderGetRawCommandId 会给出头部中的内容，无论它是否有用。
+ * 大多数代码应使用 HeapTupleHeaderGetCmin 或 HeapTupleHeaderGetCmax 代替，
+ * 但要注意那些函数会断言你能得到一个合法的结果，即你正处于发起事务中！
  */
 static inline CommandId
 HeapTupleHeaderGetRawCommandId(const HeapTupleHeaderData *tup)
@@ -422,8 +383,7 @@ HeapTupleHeaderGetRawCommandId(const HeapTupleHeaderData *tup)
 	return tup->t_choice.t_heap.t_field3.t_cid;
 }
 
-/* SetCmin is reasonably simple since we never need a combo CID */
-static inline void
+/* SetCmin 相当简单，因为我们从不需要组合 CID */static inline void
 HeapTupleHeaderSetCmin(HeapTupleHeaderData *tup, CommandId cid)
 {
 	Assert(!(tup->t_infomask & HEAP_MOVED));
@@ -431,7 +391,7 @@ HeapTupleHeaderSetCmin(HeapTupleHeaderData *tup, CommandId cid)
 	tup->t_infomask &= ~HEAP_COMBOCID;
 }
 
-/* SetCmax must be used after HeapTupleHeaderAdjustCmax; see combocid.c */
+/* SetCmax 必须在 HeapTupleHeaderAdjustCmax 之后使用；见 combocid.c */
 static inline void
 HeapTupleHeaderSetCmax(HeapTupleHeaderData *tup, CommandId cid, bool iscombo)
 {
@@ -530,10 +490,9 @@ HeapTupleHeaderSetTypMod(HeapTupleHeaderData *tup, int32 typmod)
 }
 
 /*
- * Note that we stop considering a tuple HOT-updated as soon as it is known
- * aborted or the would-be updating transaction is known aborted.  For best
- * efficiency, check tuple visibility before using this function, so that the
- * INVALID bits will be as up to date as possible.
+ * 注意：一旦得知元组已中止，或本应更新它的事务已知中止，我们就不再将其视为
+ * HOT 更新。为了获得最佳效率，在使用本函数前先检查元组的可见性，以使
+ * INVALID 位尽可能保持最新。
  */
 static inline bool
 HeapTupleHeaderIsHotUpdated(const HeapTupleHeaderData *tup)
@@ -575,8 +534,7 @@ HeapTupleHeaderClearHeapOnly(HeapTupleHeaderData *tup)
 }
 
 /*
- * These are used with both HeapTuple and MinimalTuple, so they must be
- * macros.
+ * 这些同时用于 HeapTuple 和 MinimalTuple，因此它们必须是宏。
  */
 
 #define HeapTupleHeaderGetNatts(tup) \
@@ -593,7 +551,7 @@ HeapTupleHeaderClearHeapOnly(HeapTupleHeaderData *tup)
 
 /*
  * BITMAPLEN(NATTS) -
- *		Computes size of null bitmap given number of data columns.
+ *		根据数据列的数量计算 null 位图的大小。
  */
 static inline int
 BITMAPLEN(int NATTS)
@@ -602,74 +560,62 @@ BITMAPLEN(int NATTS)
 }
 
 /*
- * MaxHeapTupleSize is the maximum allowed size of a heap tuple, including
- * header and MAXALIGN alignment padding.  Basically it's BLCKSZ minus the
- * other stuff that has to be on a disk page.  Since heap pages use no
- * "special space", there's no deduction for that.
+ * MaxHeapTupleSize 是堆元组允许的最大尺寸，包含头部和 MAXALIGN 对齐填充。
+ * 基本上它是 BLCKSZ 减去磁盘页上必须存在的其他东西。由于堆页面不使用
+ * "特殊空间"（special space），因此无需为此扣除。
  *
- * NOTE: we allow for the ItemId that must point to the tuple, ensuring that
- * an otherwise-empty page can indeed hold a tuple of this size.  Because
- * ItemIds and tuples have different alignment requirements, don't assume that
- * you can, say, fit 2 tuples of size MaxHeapTupleSize/2 on the same page.
+ * 注意：我们为必须指向该元组的 ItemId 预留了空间，以确保一个原本为空的页
+ * 确实能容纳下这个尺寸的元组。由于 ItemId 和元组有不同的对齐要求，不要假设
+ * 例如可以在同一页上放得下 2 个大小为 MaxHeapTupleSize/2 的元组。
  */
 #define MaxHeapTupleSize  (BLCKSZ - MAXALIGN(SizeOfPageHeaderData + sizeof(ItemIdData)))
 #define MinHeapTupleSize  MAXALIGN(SizeofHeapTupleHeader)
 
 /*
- * MaxHeapTuplesPerPage is an upper bound on the number of tuples that can
- * fit on one heap page.  (Note that indexes could have more, because they
- * use a smaller tuple header.)  We arrive at the divisor because each tuple
- * must be maxaligned, and it must have an associated line pointer.
+ * MaxHeapTuplesPerPage 是单个堆页所能容纳元组数量的上界。（注意索引可以有
+ * 更多，因为它们使用更小的元组头部。）分母的得出是因为每个元组必须
+ * 按 MAXALIGN 对齐，并且必须有一个相关联的行指针。
  *
- * Note: with HOT, there could theoretically be more line pointers (not actual
- * tuples) than this on a heap page.  However we constrain the number of line
- * pointers to this anyway, to avoid excessive line-pointer bloat and not
- * require increases in the size of work arrays.
+ * 注意：在 HOT 情况下，理论上堆页上的行指针（而非实际元组）数量可能多于
+ * 此值。但我们仍将行指针数量约束为此值，以避免过度的行指针膨胀，并且
+ * 不需要增大工作数组的尺寸。
  */
 #define MaxHeapTuplesPerPage	\
 	((int) ((BLCKSZ - SizeOfPageHeaderData) / \
 			(MAXALIGN(SizeofHeapTupleHeader) + sizeof(ItemIdData))))
 
 /*
- * MaxAttrSize is a somewhat arbitrary upper limit on the declared size of
- * data fields of char(n) and similar types.  It need not have anything
- * directly to do with the *actual* upper limit of varlena values, which
- * is currently 1Gb (see TOAST structures in postgres.h).  I've set it
- * at 10Mb which seems like a reasonable number --- tgl 8/6/00.
+ * MaxAttrSize 是对 char(n) 及类似类型数据字段声明大小的一个有些随意的上限。
+ * 它无需与 varlena 值的*实际*上限有任何直接关系，后者目前是 1Gb
+ * （见 postgres.h 中的 TOAST 结构）。我将其设为 10Mb，这看起来是个合理的
+ * 数值 --- tgl 2000/8/6。
  */
 #define MaxAttrSize		(10 * 1024 * 1024)
 
 
 /*
- * MinimalTuple is an alternative representation that is used for transient
- * tuples inside the executor, in places where transaction status information
- * is not required, the tuple rowtype is known, and shaving off a few bytes
- * is worthwhile because we need to store many tuples.  The representation
- * is chosen so that tuple access routines can work with either full or
- * minimal tuples via a HeapTupleData pointer structure.  The access routines
- * see no difference, except that they must not access the transaction status
- * or t_ctid fields because those aren't there.
+ * MinimalTuple 是一种替代表示，用于执行器内部的临时元组，适用于不需要事务状态
+ * 信息、元组行类型已知、并且由于需要存储大量元组而值得省下几个字节的场景。
+ * 这种表示方式的选择使得元组访问例程可以通过 HeapTupleData 指针结构来操作
+ * 完整体元组或最小元组的任一种。访问例程看不出区别，只是它们不能访问事务状态
+ * 或 t_ctid 字段，因为那些字段不存在。
  *
- * For the most part, MinimalTuples should be accessed via TupleTableSlot
- * routines.  These routines will prevent access to the "system columns"
- * and thereby prevent accidental use of the nonexistent fields.
+ * 在大多数情况下，MinimalTuple 应通过 TupleTableSlot 例程来访问。这些例程会
+ * 阻止访问"系统列"，从而防止意外使用那些不存在的字段。
  *
- * MinimalTupleData contains a length word, some padding, and fields matching
- * HeapTupleHeaderData beginning with t_infomask2. The padding is chosen so
- * that offsetof(t_infomask2) is the same modulo MAXIMUM_ALIGNOF in both
- * structs.   This makes data alignment rules equivalent in both cases.
+ * MinimalTupleData 包含一个长度字、一些填充，以及从 t_infomask2 开始与
+ * HeapTupleHeaderData 匹配的字段。填充的选择使得 offsetof(t_infomask2) 在两个
+ * 结构体中按 MAXIMUM_ALIGNOF 取模后相同。这使得两种情况下数据对齐规则一致。
  *
- * When a minimal tuple is accessed via a HeapTupleData pointer, t_data is
- * set to point MINIMAL_TUPLE_OFFSET bytes before the actual start of the
- * minimal tuple --- that is, where a full tuple matching the minimal tuple's
- * data would start.  This trick is what makes the structs seem equivalent.
+ * 当通过 HeapTupleData 指针访问最小元组时，t_data 被设为指向实际最小元组起始
+ * 位置之前 MINIMAL_TUPLE_OFFSET 字节处 --- 也就是与一个最小元组数据相匹配的
+ * 完整体元组的起始位置。正是这个技巧让这两个结构看起来是等价的。
  *
- * Note that t_hoff is computed the same as in a full tuple, hence it includes
- * the MINIMAL_TUPLE_OFFSET distance.  t_len does not include that, however.
+ * 注意 t_hoff 的计算方式与完整体元组相同，因此它包含了 MINIMAL_TUPLE_OFFSET
+ * 这段距离。但 t_len 不包含这段距离。
  *
- * MINIMAL_TUPLE_DATA_OFFSET is the offset to the first useful (non-pad) data
- * other than the length word.  tuplesort.c and tuplestore.c use this to avoid
- * writing the padding to disk.
+ * MINIMAL_TUPLE_DATA_OFFSET 是第一个有用（非填充）数据的偏移量，不包括长度字。
+ * tuplesort.c 和 tuplestore.c 使用它来避免将填充写入磁盘。
  */
 #define MINIMAL_TUPLE_OFFSET \
 	((offsetof(HeapTupleHeaderData, t_infomask2) - sizeof(uint32)) / MAXIMUM_ALIGNOF * MAXIMUM_ALIGNOF)
@@ -680,31 +626,31 @@ BITMAPLEN(int NATTS)
 
 struct MinimalTupleData
 {
-	uint32		t_len;			/* actual length of minimal tuple */
+	uint32		t_len;			/* 最小元组的实际长度 */
 
 	char		mt_padding[MINIMAL_TUPLE_PADDING];
 
-	/* Fields below here must match HeapTupleHeaderData! */
+	/* 此行以下的字段必须与 HeapTupleHeaderData 匹配！ */
 
-	uint16		t_infomask2;	/* number of attributes + various flags */
+	uint16		t_infomask2;	/* 属性数量 + 各种标志位 */
 
-	uint16		t_infomask;		/* various flag bits, see below */
+	uint16		t_infomask;		/* 各种标志位，见下文 */
 
-	uint8		t_hoff;			/* sizeof header incl. bitmap, padding */
+	uint8		t_hoff;			/* 包含位图和填充的头部大小 */
 
-	/* ^ - 23 bytes - ^ */
+	/* ^ - 23 字节 - ^ */
 
-	bits8		t_bits[FLEXIBLE_ARRAY_MEMBER];	/* bitmap of NULLs */
+	bits8		t_bits[FLEXIBLE_ARRAY_MEMBER];	/* NULL 位图 */
 
-	/* MORE DATA FOLLOWS AT END OF STRUCT */
+	/* 结构体末尾后还有更多数据 */
 };
 
-/* typedef appears in htup.h */
+/* 类型定义在 htup.h 中 */
 
 #define SizeofMinimalTupleHeader offsetof(MinimalTupleData, t_bits)
 
 /*
- * MinimalTuple accessor functions
+ * MinimalTuple 访问器函数
  */
 
 static inline bool
@@ -727,7 +673,7 @@ HeapTupleHeaderClearMatch(MinimalTupleData *tup)
 
 
 /*
- * GETSTRUCT - given a HeapTuple pointer, return address of the user data
+ * GETSTRUCT - 给定一个 HeapTuple 指针，返回用户数据的地址
  */
 static inline void *
 GETSTRUCT(const HeapTupleData *tuple)
@@ -736,7 +682,7 @@ GETSTRUCT(const HeapTupleData *tuple)
 }
 
 /*
- * Accessor functions to be used with HeapTuple pointers.
+ * 用于 HeapTuple 指针的访问器函数。
  */
 
 static inline bool
@@ -805,7 +751,7 @@ HeapTupleClearHeapOnly(const HeapTupleData *tuple)
 	HeapTupleHeaderClearHeapOnly(tuple->t_data);
 }
 
-/* prototypes for functions in common/heaptuple.c */
+/* common/heaptuple.c 中函数的原型声明 */
 extern Size heap_compute_data_size(TupleDesc tupleDesc,
 								   const Datum *values, const bool *isnull);
 extern void heap_fill_tuple(TupleDesc tupleDesc,
@@ -852,15 +798,14 @@ extern MinimalTuple minimal_expand_tuple(HeapTuple sourceTuple, TupleDesc tupleD
 #ifndef FRONTEND
 /*
  *	fastgetattr
- *		Fetch a user attribute's value as a Datum (might be either a
- *		value, or a pointer into the data area of the tuple).
+ *		获取一个用户属性的值，以 Datum 形式返回（可能是一个值，
+ *		也可能是指向元组数据区的指针）。
  *
- *		This must not be used when a system attribute might be requested.
- *		Furthermore, the passed attnum MUST be valid.  Use heap_getattr()
- *		instead, if in doubt.
+ *		当可能请求系统属性时，不得使用本函数。此外，传入的 attnum
+ *		必须是有效的。如有疑问，请改用 heap_getattr()。
  *
- *		This gets called many times, so we macro the cacheable and NULL
- *		lookups, and call nocachegetattr() for the rest.
+ *		本函数被频繁调用，因此我们将可缓存的查找和 NULL 查找
+ *		做了宏内联优化，其余情况调用 nocachegetattr()。
  */
 static inline Datum
 fastgetattr(HeapTuple tup, int attnum, TupleDesc tupleDesc, bool *isnull)
@@ -893,16 +838,15 @@ fastgetattr(HeapTuple tup, int attnum, TupleDesc tupleDesc, bool *isnull)
 
 /*
  *	heap_getattr
- *		Extract an attribute of a heap tuple and return it as a Datum.
- *		This works for either system or user attributes.  The given attnum
- *		is properly range-checked.
+ *		提取堆元组的一个属性并以 Datum 形式返回。
+ *		这同时适用于系统属性和用户属性。给定的 attnum 会经过
+ *		恰当的范围检查。
  *
- *		If the field in question has a NULL value, we return a zero Datum
- *		and set *isnull == true.  Otherwise, we set *isnull == false.
+ *		如果相关字段的值为 NULL，我们返回一个零 Datum 并将 *isnull 设为 true。
+ *		否则，我们将 *isnull 设为 false。
  *
- *		<tup> is the pointer to the heap tuple.  <attnum> is the attribute
- *		number of the column (field) caller wants.  <tupleDesc> is a
- *		pointer to the structure describing the row and all its fields.
+ *		<tup> 是指向堆元组的指针。<attnum> 是调用方想要的列（字段）的
+ *		属性编号。<tupleDesc> 是指向描述该行及其所有字段的结构的指针。
  *
  */
 static inline Datum

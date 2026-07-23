@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * pruneheap.c
- *	  heap page pruning and HOT-chain management code
+ *	  堆页面剪枝（pruning）与 HOT 链管理代码
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -29,48 +29,47 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
-/* Working data for heap_page_prune_and_freeze() and subroutines */
+/* heap_page_prune_and_freeze() 及其子例程使用的工作数据 */
 typedef struct
 {
 	/*-------------------------------------------------------
-	 * Arguments passed to heap_page_prune_and_freeze()
+	 * 传递给 heap_page_prune_and_freeze() 的参数
 	 *-------------------------------------------------------
 	 */
 
-	/* tuple visibility test, initialized for the relation */
+	/* 元组可见性测试，针对该关系初始化 */
 	GlobalVisState *vistest;
-	/* whether or not dead items can be set LP_UNUSED during pruning */
+	/* 剪枝过程中是否可将 dead 项设为 LP_UNUSED */
 	bool		mark_unused_now;
-	/* whether to attempt freezing tuples */
+	/* 是否尝试冻结元组 */
 	bool		freeze;
 	struct VacuumCutoffs *cutoffs;
 
 	/*-------------------------------------------------------
-	 * Fields describing what to do to the page
+	 * 描述需对页面执行的操作的字段
 	 *-------------------------------------------------------
 	 */
-	TransactionId new_prune_xid;	/* new prune hint value */
+	TransactionId new_prune_xid;	/* 新的剪枝提示值 */
 	TransactionId latest_xid_removed;
-	int			nredirected;	/* numbers of entries in arrays below */
+	int			nredirected;	/* 以下数组中的条目数量 */
 	int			ndead;
 	int			nunused;
 	int			nfrozen;
-	/* arrays that accumulate indexes of items to be changed */
+	/* 累积待更改项索引的数组 */
 	OffsetNumber redirected[MaxHeapTuplesPerPage * 2];
 	OffsetNumber nowdead[MaxHeapTuplesPerPage];
 	OffsetNumber nowunused[MaxHeapTuplesPerPage];
 	HeapTupleFreeze frozen[MaxHeapTuplesPerPage];
 
 	/*-------------------------------------------------------
-	 * Working state for HOT chain processing
+	 * HOT 链处理的工作状态
 	 *-------------------------------------------------------
 	 */
 
 	/*
-	 * 'root_items' contains offsets of all LP_REDIRECT line pointers and
-	 * normal non-HOT tuples.  They can be stand-alone items or the first item
-	 * in a HOT chain.  'heaponly_items' contains heap-only tuples which can
-	 * only be removed as part of a HOT chain.
+	 * 'root_items' 包含全部 LP_REDIRECT 行指针以及普通非 HOT 元组的偏移量。
+	 * 它们可以是独立项，也可以是 HOT 链中的第一个项。'heaponly_items' 包含
+	 * 只能作为 HOT 链的一部分被移除的堆内（heap-only）元组。
 	 */
 	int			nroot_items;
 	OffsetNumber root_items[MaxHeapTuplesPerPage];
@@ -78,32 +77,30 @@ typedef struct
 	OffsetNumber heaponly_items[MaxHeapTuplesPerPage];
 
 	/*
-	 * processed[offnum] is true if item at offnum has been processed.
+	 * processed[offnum] 为 true 表示位于 offnum 的项已经被处理过。
 	 *
-	 * This needs to be MaxHeapTuplesPerPage + 1 long as FirstOffsetNumber is
-	 * 1. Otherwise every access would need to subtract 1.
+	 * 因为 FirstOffsetNumber 为 1，数组需要是 MaxHeapTuplesPerPage + 1 长，
+	 * 否则每次访问都需要减 1。
 	 */
 	bool		processed[MaxHeapTuplesPerPage + 1];
 
 	/*
-	 * Tuple visibility is only computed once for each tuple, for correctness
-	 * and efficiency reasons; see comment in heap_page_prune_and_freeze() for
-	 * details.  This is of type int8[], instead of HTSV_Result[], so we can
-	 * use -1 to indicate no visibility has been computed, e.g. for LP_DEAD
-	 * items.
+	 * 出于正确性与效率的考虑，每个元组的可见性只计算一次；详见
+	 * heap_page_prune_and_freeze() 中的说明。其类型为 int8[] 而非
+	 * HTSV_Result[]，以便用 -1 表示尚未计算可见性（例如 LP_DEAD 项）。
 	 *
-	 * This needs to be MaxHeapTuplesPerPage + 1 long as FirstOffsetNumber is
-	 * 1. Otherwise every access would need to subtract 1.
+	 * 因为 FirstOffsetNumber 为 1，数组需要是 MaxHeapTuplesPerPage + 1 长，
+	 * 否则每次访问都需要减 1。
 	 */
 	int8		htsv[MaxHeapTuplesPerPage + 1];
 
 	/*
-	 * Freezing-related state.
+	 * 与冻结相关的状态。
 	 */
 	HeapPageFreeze pagefrz;
 
 	/*-------------------------------------------------------
-	 * Information about what was done
+	 * 关于已完成工作的信息
 	 *
 	 * These fields are not used by pruning itself for the most part, but are
 	 * used to collect information about what was pruned and what state the
@@ -112,47 +109,43 @@ typedef struct
 	 * -------------------------------------------------------
 	 */
 
-	int			ndeleted;		/* Number of tuples deleted from the page */
+	int			ndeleted;		/* 从页面中删除的元组数量 */
 
-	/* Number of live and recently dead tuples, after pruning */
+	/* 剪枝后存活与最近死亡的元组数量 */
 	int			live_tuples;
 	int			recently_dead_tuples;
 
-	/* Whether or not the page makes rel truncation unsafe */
+	/* 该页面是否会让关系截断变得不安全 */
 	bool		hastup;
 
 	/*
-	 * LP_DEAD items on the page after pruning.  Includes existing LP_DEAD
-	 * items
+	 * 剪枝完成后页面上的 LP_DEAD 项。包含已有的 LP_DEAD 项
 	 */
 	int			lpdead_items;	/* number of items in the array */
 	OffsetNumber *deadoffsets;	/* points directly to presult->deadoffsets */
 
 	/*
-	 * all_visible and all_frozen indicate if the all-visible and all-frozen
-	 * bits in the visibility map can be set for this page after pruning.
+	 * all_visible 和 all_frozen 表示剪枝完成后，可见性映射（visibility map）
+	 * 中该页面的全可见位和全冻结位是否可以被置位。
 	 *
-	 * visibility_cutoff_xid is the newest xmin of live tuples on the page.
-	 * The caller can use it as the conflict horizon, when setting the VM
-	 * bits.  It is only valid if we froze some tuples, and all_frozen is
-	 * true.
+	 * visibility_cutoff_xid 是页面上存活元组的最新 xmin。调用方在设置 VM 位
+	 * 时，可将其用作冲突边界（conflict horizon）。仅当我们冻结了某些元组且
+	 * all_frozen 为 true 时，它才有效。
 	 *
-	 * NOTE: all_visible and all_frozen don't include LP_DEAD items.  That's
-	 * convenient for heap_page_prune_and_freeze(), to use them to decide
-	 * whether to freeze the page or not.  The all_visible and all_frozen
-	 * values returned to the caller are adjusted to include LP_DEAD items at
-	 * the end.
+	 * 注意：all_visible 和 all_frozen 不包含 LP_DEAD 项。这对
+	 * heap_page_prune_and_freeze() 来说很方便，可以用它们来决定是否冻结该
+	 * 页面。返回给调用方的 all_visible 和 all_frozen 值会在最后被调整为包含
+	 * LP_DEAD 项。
 	 *
-	 * all_frozen should only be considered valid if all_visible is also set;
-	 * we don't bother to clear the all_frozen flag every time we clear the
-	 * all_visible flag.
+	 * 仅当 all_visible 也被置位时，all_frozen 才应被视为有效；我们不会在每次
+	 * 清除 all_visible 标志时都去清除 all_frozen 标志。
 	 */
 	bool		all_visible;
 	bool		all_frozen;
 	TransactionId visibility_cutoff_xid;
 } PruneState;
 
-/* Local functions */
+/* 本地函数 */
 static HTSV_Result heap_prune_satisfies_vacuum(PruneState *prstate,
 											   HeapTuple tup,
 											   Buffer buffer);
@@ -178,16 +171,14 @@ static void page_verify_redirects(Page page);
 
 
 /*
- * Optionally prune and repair fragmentation in the specified page.
+ * 对指定页面进行可选的剪枝，并修复碎片。
  *
- * This is an opportunistic function.  It will perform housekeeping
- * only if the page heuristically looks like a candidate for pruning and we
- * can acquire buffer cleanup lock without blocking.
+ * 这是一个“顺手而为”的函数。只有当页面根据启发式判断看起来像是剪枝的候选，
+ * 并且我们能在不阻塞的情况下获取 buffer cleanup 锁时，才会执行清理工作。
  *
- * Note: this is called quite often.  It's important that it fall out quickly
- * if there's not any use in pruning.
+ * 注意：该函数的调用非常频繁。如果剪枝没有任何意义，就必须尽快退出。
  *
- * Caller must have pin on the buffer, and must *not* have a lock on it.
+ * 调用方必须持有该 buffer 的 pin，并且*不能*持有其上的锁。
  */
 void
 heap_page_prune_opt(Relation relation, Buffer buffer)
@@ -198,25 +189,22 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	Size		minfree;
 
 	/*
-	 * We can't write WAL in recovery mode, so there's no point trying to
-	 * clean the page. The primary will likely issue a cleaning WAL record
-	 * soon anyway, so this is no particular loss.
+	 * 在恢复（recovery）模式下无法写 WAL，因此尝试清理该页面没有意义。
+	 * 主库很可能很快会发出一条清理用的 WAL 记录，所以这样做并没有什么损失。
 	 */
 	if (RecoveryInProgress())
 		return;
 
 	/*
-	 * First check whether there's any chance there's something to prune,
-	 * determining the appropriate horizon is a waste if there's no prune_xid
-	 * (i.e. no updates/deletes left potentially dead tuples around).
+	 * 先检查是否有可能存在需要剪枝的内容；如果没有 prune_xid（即没有
+	 * 更新/删除操作留下潜在的 dead 元组），去确定合适的边界就是浪费。
 	 */
 	prune_xid = ((PageHeader) page)->pd_prune_xid;
 	if (!TransactionIdIsValid(prune_xid))
 		return;
 
 	/*
-	 * Check whether prune_xid indicates that there may be dead rows that can
-	 * be cleaned up.
+	 * 检查 prune_xid 是否表明可能存在可被清理的 dead 行。
 	 */
 	vistest = GlobalVisTestFor(relation);
 
@@ -224,16 +212,13 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		return;
 
 	/*
-	 * We prune when a previous UPDATE failed to find enough space on the page
-	 * for a new tuple version, or when free space falls below the relation's
-	 * fill-factor target (but not less than 10%).
+	 * 当先前的 UPDATE 未能在页面上为新的元组版本找到足够空间，或者空闲空间
+	 * 低于关系的填充因子（fill-factor）目标（但不低于 10%）时，我们进行剪枝。
 	 *
-	 * Checking free space here is questionable since we aren't holding any
-	 * lock on the buffer; in the worst case we could get a bogus answer. It's
-	 * unlikely to be *seriously* wrong, though, since reading either pd_lower
-	 * or pd_upper is probably atomic.  Avoiding taking a lock seems more
-	 * important than sometimes getting a wrong answer in what is after all
-	 * just a heuristic estimate.
+	 * 这里检查空闲空间是有疑问的，因为我们没有持有 buffer 上的任何锁；在最
+	 * 坏情况下我们可能得到一个错误的答案。不过它不太可能*严重*错误，因为读取
+	 * pd_lower 或 pd_upper 大概都是原子的。避免获取锁，似乎比在毕竟只是
+	 * 启发式估计的情况下偶尔得到错误答案更为重要。
 	 */
 	minfree = RelationGetTargetPageFreeSpace(relation,
 											 HEAP_DEFAULT_FILLFACTOR);
@@ -241,14 +226,13 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
-		/* OK, try to get exclusive buffer lock */
+		/* 尝试获取独占的 buffer 锁 */
 		if (!ConditionalLockBufferForCleanup(buffer))
 			return;
 
 		/*
-		 * Now that we have buffer lock, get accurate information about the
-		 * page's free space, and recheck the heuristic about whether to
-		 * prune.
+		 * 既然我们已经持有了 buffer 锁，就获取关于页面空闲空间的准确信息，
+		 * 并重新检查关于是否剪枝的启发式判断。
 		 */
 		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
@@ -256,95 +240,82 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 			PruneFreezeResult presult;
 
 			/*
-			 * For now, pass mark_unused_now as false regardless of whether or
-			 * not the relation has indexes, since we cannot safely determine
-			 * that during on-access pruning with the current implementation.
+			 * 目前，无论关系是否有索引，都将 mark_unused_now 传为 false，因为
+			 * 在当前实现下，我们无法在“访问时剪枝”（on-access pruning）期间
+			 * 安全地确定这一点。
 			 */
 			heap_page_prune_and_freeze(relation, buffer, vistest, 0,
 									   NULL, &presult, PRUNE_ON_ACCESS, &dummy_off_loc, NULL, NULL);
 
 			/*
-			 * Report the number of tuples reclaimed to pgstats.  This is
-			 * presult.ndeleted minus the number of newly-LP_DEAD-set items.
+			 * 向 pgstats 报告回收到的元组数量。它等于 presult.ndeleted 减去
+			 * 新被设为 LP_DEAD 的项的数量。
 			 *
-			 * We derive the number of dead tuples like this to avoid totally
-			 * forgetting about items that were set to LP_DEAD, since they
-			 * still need to be cleaned up by VACUUM.  We only want to count
-			 * heap-only tuples that just became LP_UNUSED in our report,
-			 * which don't.
+			 * 我们这样来推导 dead 元组的数量，是为了避免完全遗忘那些被设为
+			 * LP_DEAD 的项，因为它们仍需由 VACUUM 来清理。在我们的报告中，
+			 * 我们只想统计刚刚变成 LP_UNUSED 的堆内（heap-only）元组，而
+			 * 那些 LP_DEAD 项不算在内。
 			 *
-			 * VACUUM doesn't have to compensate in the same way when it
-			 * tracks ndeleted, since it will set the same LP_DEAD items to
-			 * LP_UNUSED separately.
+			 * VACUUM 在跟踪 ndeleted 时不必以同样的方式进行补偿，因为它会
+			 * 另行将相同的 LP_DEAD 项设为 LP_UNUSED。
 			 */
 			if (presult.ndeleted > presult.nnewlpdead)
 				pgstat_update_heap_dead_tuples(relation,
 											   presult.ndeleted - presult.nnewlpdead);
 		}
 
-		/* And release buffer lock */
+		/* 释放 buffer 锁 */
 		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 
 		/*
-		 * We avoid reuse of any free space created on the page by unrelated
-		 * UPDATEs/INSERTs by opting to not update the FSM at this point.  The
-		 * free space should be reused by UPDATEs to *this* page.
+		 * 我们选择在此时不更新 FSM，以避免页面上产生的空闲空间被无关的
+		 * UPDATE/INSERT 复用。这些空闲空间应由对*本*页面的 UPDATE 来复用。
 		 */
 	}
 }
 
 
 /*
- * Prune and repair fragmentation and potentially freeze tuples on the
- * specified page.
+ * 对指定页面进行剪枝、修复碎片，并可能冻结元组。
  *
- * Caller must have pin and buffer cleanup lock on the page.  Note that we
- * don't update the FSM information for page on caller's behalf.  Caller might
- * also need to account for a reduction in the length of the line pointer
- * array following array truncation by us.
+ * 调用方必须持有该页面的 pin 和 buffer cleanup 锁。注意我们不会代表调用方
+ * 更新页面的 FSM 信息。调用方可能还需要考虑由于我们对行指针数组的截断而导致
+ * 的数组长度缩减。
  *
- * If the HEAP_PRUNE_FREEZE option is set, we will also freeze tuples if it's
- * required in order to advance relfrozenxid / relminmxid, or if it's
- * considered advantageous for overall system performance to do so now.  The
- * 'cutoffs', 'presult', 'new_relfrozen_xid' and 'new_relmin_mxid' arguments
- * are required when freezing.  When HEAP_PRUNE_FREEZE option is set, we also
- * set presult->all_visible and presult->all_frozen on exit, to indicate if
- * the VM bits can be set.  They are always set to false when the
- * HEAP_PRUNE_FREEZE option is not set, because at the moment only callers
- * that also freeze need that information.
+ * 如果设置了 HEAP_PRUNE_FREEZE 选项，我们也会在需要时冻结元组，以便推进
+ * relfrozenxid / relminmxid，或者在当前这样做被认为对整体系统性能有利时
+ * 冻结。冻结时需要使用 'cutoffs'、'presult'、'new_relfrozen_xid' 和
+ * 'new_relmin_mxid' 这几个参数。当设置了 HEAP_PRUNE_FREEZE 选项时，我们还会
+ * 在退出时设置 presult->all_visible 和 presult->all_frozen，以指示是否可以
+ * 设置 VM 位。当未设置 HEAP_PRUNE_FREEZE 选项时，它们总被设为 false，因为目前
+ * 只有同时进行冻结的调用方才需要这些信息。
  *
- * vistest is used to distinguish whether tuples are DEAD or RECENTLY_DEAD
- * (see heap_prune_satisfies_vacuum).
+ * vistest 用于区分元组是 DEAD 还是 RECENTLY_DEAD（见
+ * heap_prune_satisfies_vacuum）。
  *
  * options:
- *   MARK_UNUSED_NOW indicates that dead items can be set LP_UNUSED during
- *   pruning.
+ *   MARK_UNUSED_NOW 表示 dead 项可以在剪枝过程中被设为 LP_UNUSED。
  *
- *   FREEZE indicates that we will also freeze tuples, and will return
- *   'all_visible', 'all_frozen' flags to the caller.
+ *   FREEZE 表示我们同时会冻结元组，并向调用方返回 'all_visible'、'all_frozen'
+ *   标志。
  *
- * cutoffs contains the freeze cutoffs, established by VACUUM at the beginning
- * of vacuuming the relation.  Required if HEAP_PRUNE_FREEZE option is set.
- * cutoffs->OldestXmin is also used to determine if dead tuples are
- * HEAPTUPLE_RECENTLY_DEAD or HEAPTUPLE_DEAD.
+ * cutoffs 包含由 VACUUM 在开始对关系进行清理时建立的冻结截止点。若设置了
+ * HEAP_PRUNE_FREEZE 选项则为必需。cutoffs->OldestXmin 也用于判断 dead 元组是
+ * HEAPTUPLE_RECENTLY_DEAD 还是 HEAPTUPLE_DEAD。
  *
- * presult contains output parameters needed by callers, such as the number of
- * tuples removed and the offsets of dead items on the page after pruning.
- * heap_page_prune_and_freeze() is responsible for initializing it.  Required
- * by all callers.
+ * presult 包含调用方所需的输出参数，例如被移除的元组数量以及剪枝完成后页面上
+ * dead 项的偏移量。heap_page_prune_and_freeze() 负责对其进行初始化。所有调用方
+ * 都需要提供。
  *
- * reason indicates why the pruning is performed.  It is included in the WAL
- * record for debugging and analysis purposes, but otherwise has no effect.
+ * reason 表示执行剪枝的原因。它被包含在 WAL 记录中，用于调试与分析，除此之外
+ * 没有别的作用。
  *
- * off_loc is the offset location required by the caller to use in error
- * callback.
+ * off_loc 是调用方在错误回调中需要用到的偏移位置。
  *
- * new_relfrozen_xid and new_relmin_mxid must provided by the caller if the
- * HEAP_PRUNE_FREEZE option is set.  On entry, they contain the oldest XID and
- * multi-XID seen on the relation so far.  They will be updated with oldest
- * values present on the page after pruning.  After processing the whole
- * relation, VACUUM can use these values as the new relfrozenxid/relminmxid
- * for the relation.
+ * new_relfrozen_xid 和 new_relmin_mxid 在设置了 HEAP_PRUNE_FREEZE 选项时必须由
+ * 调用方提供。在进入时，它们包含目前为止在关系上看到的最旧 XID 与多事务
+ * XID。它们会被更新为剪枝完成后页面上存在的最旧值。在处理完整个关系后，
+ * VACUUM 可以使用这些值作为该关系新的 relfrozenxid/relminmxid。
  */
 void
 heap_page_prune_and_freeze(Relation relation, Buffer buffer,
@@ -369,22 +340,20 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	bool		hint_bit_fpi;
 	int64		fpi_before = pgWalUsage.wal_fpi;
 
-	/* Copy parameters to prstate */
+	/* 将参数复制到 prstate */
 	prstate.vistest = vistest;
 	prstate.mark_unused_now = (options & HEAP_PAGE_PRUNE_MARK_UNUSED_NOW) != 0;
 	prstate.freeze = (options & HEAP_PAGE_PRUNE_FREEZE) != 0;
 	prstate.cutoffs = cutoffs;
 
 	/*
-	 * Our strategy is to scan the page and make lists of items to change,
-	 * then apply the changes within a critical section.  This keeps as much
-	 * logic as possible out of the critical section, and also ensures that
-	 * WAL replay will work the same as the normal case.
+	 * 我们的策略是：扫描页面，列出需要更改的项，然后在临界区内应用这些更改。
+	 * 这样可以让尽可能多的逻辑脱离临界区，同时也能够保证 WAL 重放与正常情况
+	 * 表现一致。
 	 *
-	 * First, initialize the new pd_prune_xid value to zero (indicating no
-	 * prunable tuples).  If we find any tuples which may soon become
-	 * prunable, we will save the lowest relevant XID in new_prune_xid. Also
-	 * initialize the rest of our working state.
+	 * 首先，将新的 pd_prune_xid 值初始化为零（表示没有可剪枝的元组）。如果
+	 * 我们发现任何可能很快变得可剪枝的元组，就会把相关的最旧 XID 保存到
+	 * new_prune_xid 中。同时初始化其余的工作状态。
 	 */
 	prstate.new_prune_xid = InvalidTransactionId;
 	prstate.latest_xid_removed = InvalidTransactionId;
@@ -392,7 +361,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	prstate.nroot_items = 0;
 	prstate.nheaponly_items = 0;
 
-	/* initialize page freezing working state */
+	/* 初始化页面冻结工作状态 */
 	prstate.pagefrz.freeze_required = false;
 	if (prstate.freeze)
 	{
@@ -419,27 +388,21 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	prstate.deadoffsets = presult->deadoffsets;
 
 	/*
-	 * Caller may update the VM after we're done.  We can keep track of
-	 * whether the page will be all-visible and all-frozen after pruning and
-	 * freezing to help the caller to do that.
+	 * 调用方在我们完成之后可能会更新 VM。我们可以跟踪页面在剪枝与冻结之后
+	 * 是否会是全可见和全冻结的，以帮助调用方完成这项工作。
 	 *
-	 * Currently, only VACUUM sets the VM bits.  To save the effort, only do
-	 * the bookkeeping if the caller needs it.  Currently, that's tied to
-	 * HEAP_PAGE_PRUNE_FREEZE, but it could be a separate flag if you wanted
-	 * to update the VM bits without also freezing or freeze without also
-	 * setting the VM bits.
+	 * 目前，只有 VACUUM 会设置 VM 位。为了节省开销，只有在调用方需要时才做
+	 * 这个记账工作。目前，这与 HEAP_PAGE_PRUNE_FREEZE 绑定在一起，但如果你
+	 * 想在不冻结的情况下更新 VM 位，或者在不设置 VM 位的情况下冻结，它也可以
+	 * 是一个独立的标志。
 	 *
-	 * In addition to telling the caller whether it can set the VM bit, we
-	 * also use 'all_visible' and 'all_frozen' for our own decision-making. If
-	 * the whole page would become frozen, we consider opportunistically
-	 * freezing tuples.  We will not be able to freeze the whole page if there
-	 * are tuples present that are not visible to everyone or if there are
-	 * dead tuples which are not yet removable.  However, dead tuples which
-	 * will be removed by the end of vacuuming should not preclude us from
-	 * opportunistically freezing.  Because of that, we do not clear
-	 * all_visible when we see LP_DEAD items.  We fix that at the end of the
-	 * function, when we return the value to the caller, so that the caller
-	 * doesn't set the VM bit incorrectly.
+	 * 除了告诉调用方是否可以设置 VM 位之外，我们也把 'all_visible' 和
+	 * 'all_frozen' 用于我们自己的决策。如果整个页面将变为冻结状态，我们会考虑
+	 * 顺手冻结元组。如果页面上存在对所有人不可见的元组，或者存在尚不可移除的
+	 * dead 元组，我们就无法冻结整个页面。不过，那些会在清理结束时被移除的
+	 * dead 元组，不应妨碍我们顺手进行冻结。因此，当看到 LP_DEAD 项时，我们
+	 * 不会清除 all_visible。我们会在函数末尾把值返回给调用方时对此进行修正，
+	 * 以免调用方错误地设置了 VM 位。
 	 */
 	if (prstate.freeze)
 	{
@@ -449,20 +412,19 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	else
 	{
 		/*
-		 * Initializing to false allows skipping the work to update them in
-		 * heap_prune_record_unchanged_lp_normal().
+		 * 初始化为 false 可以让我们跳过在
+		 * heap_prune_record_unchanged_lp_normal() 中更新它们的工作。
 		 */
 		prstate.all_visible = false;
 		prstate.all_frozen = false;
 	}
 
 	/*
-	 * The visibility cutoff xid is the newest xmin of live tuples on the
-	 * page.  In the common case, this will be set as the conflict horizon the
-	 * caller can use for updating the VM.  If, at the end of freezing and
-	 * pruning, the page is all-frozen, there is no possibility that any
-	 * running transaction on the standby does not see tuples on the page as
-	 * all-visible, so the conflict horizon remains InvalidTransactionId.
+	 * 可见性截止 xid 是页面上存活元组的最新 xmin。在通常情况下，它会被设为
+	 * 冲突边界（conflict horizon），调用方可以用它来更新 VM。如果在冻结与
+	 * 剪枝结束时页面是全冻结的，那么备库（standby）上任何正在运行的事务都
+	 * 不可能不把页面上的元组视为全可见，因此冲突边界保持为
+	 * InvalidTransactionId。
 	 */
 	prstate.visibility_cutoff_xid = InvalidTransactionId;
 
@@ -470,24 +432,18 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	tup.t_tableOid = RelationGetRelid(relation);
 
 	/*
-	 * Determine HTSV for all tuples, and queue them up for processing as HOT
-	 * chain roots or as heap-only items.
+	 * 对所有元组确定 HTSV，并将它们排队，以待作为 HOT 链的根或堆内项来处理。
 	 *
-	 * Determining HTSV only once for each tuple is required for correctness,
-	 * to deal with cases where running HTSV twice could result in different
-	 * results.  For example, RECENTLY_DEAD can turn to DEAD if another
-	 * checked item causes GlobalVisTestIsRemovableFullXid() to update the
-	 * horizon, or INSERT_IN_PROGRESS can change to DEAD if the inserting
-	 * transaction aborts.
+	 * 每个元组只确定一次 HTSV，这是为了保证正确性，以应对两次运行 HTSV
+	 * 可能得到不同结果的情况。例如，如果另一个被检查的项导致
+	 * GlobalVisTestIsRemovableFullXid() 更新了边界，RECENTLY_DEAD 可能变为
+	 * DEAD；或者，如果插入事务中止，INSERT_IN_PROGRESS 可能变为 DEAD。
 	 *
-	 * It's also good for performance. Most commonly tuples within a page are
-	 * stored at decreasing offsets (while the items are stored at increasing
-	 * offsets). When processing all tuples on a page this leads to reading
-	 * memory at decreasing offsets within a page, with a variable stride.
-	 * That's hard for CPU prefetchers to deal with. Processing the items in
-	 * reverse order (and thus the tuples in increasing order) increases
-	 * prefetching efficiency significantly / decreases the number of cache
-	 * misses.
+	 * 这对性能也有好处。最常见的情况是，页面内的元组存储在递减的偏移量处
+	 * （而项存储在递增的偏移量处）。当处理一个页面上的所有元组时，这会导致
+	 * 以递减的偏移量、且步长可变地读取页面内的内存。这对 CPU 预取器来说很难
+	 * 处理。以逆序处理项（从而以递增顺序处理元组）能显著提高预取效率 /
+	 * 减少缓存未命中次数。
 	 */
 	for (offnum = maxoff;
 		 offnum >= FirstOffsetNumber;
@@ -497,15 +453,14 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		HeapTupleHeader htup;
 
 		/*
-		 * Set the offset number so that we can display it along with any
-		 * error that occurred while processing this tuple.
+		 * 设置偏移号，以便在处理此元组时发生的任何错误中一并显示它。
 		 */
 		*off_loc = offnum;
 
 		prstate.processed[offnum] = false;
 		prstate.htsv[offnum] = -1;
 
-		/* Nothing to do if slot doesn't contain a tuple */
+		/* 如果 slot 中不包含元组，无事可做 */
 		if (!ItemIdIsUsed(itemid))
 		{
 			heap_prune_record_unchanged_lp_unused(page, &prstate, offnum);
@@ -515,8 +470,8 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		if (ItemIdIsDead(itemid))
 		{
 			/*
-			 * If the caller set mark_unused_now true, we can set dead line
-			 * pointers LP_UNUSED now.
+			 * 如果调用方将 mark_unused_now 设为 true，我们现在就可以把 dead
+			 * 行指针设为 LP_UNUSED。
 			 */
 			if (unlikely(prstate.mark_unused_now))
 				heap_prune_record_unused(&prstate, offnum, false);
@@ -527,7 +482,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 
 		if (ItemIdIsRedirected(itemid))
 		{
-			/* This is the start of a HOT chain */
+			/* 这是一个 HOT 链的起点 */
 			prstate.root_items[prstate.nroot_items++] = offnum;
 			continue;
 		}
@@ -535,7 +490,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		Assert(ItemIdIsNormal(itemid));
 
 		/*
-		 * Get the tuple's visibility status and queue it up for processing.
+		 * 获取元组的可见性状态，并将其排队等待处理。
 		 */
 		htup = (HeapTupleHeader) PageGetItem(page, itemid);
 		tup.t_data = htup;
@@ -552,40 +507,36 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	}
 
 	/*
-	 * If checksums are enabled, heap_prune_satisfies_vacuum() may have caused
-	 * an FPI to be emitted.
+	 * 如果启用了校验和（checksums），heap_prune_satisfies_vacuum() 可能已经
+	 * 导致发出了一个 FPI（全页镜像）。
 	 */
 	hint_bit_fpi = fpi_before != pgWalUsage.wal_fpi;
 
 	/*
-	 * Process HOT chains.
+	 * 处理 HOT 链。
 	 *
-	 * We added the items to the array starting from 'maxoff', so by
-	 * processing the array in reverse order, we process the items in
-	 * ascending offset number order.  The order doesn't matter for
-	 * correctness, but some quick micro-benchmarking suggests that this is
-	 * faster.  (Earlier PostgreSQL versions, which scanned all the items on
-	 * the page instead of using the root_items array, also did it in
-	 * ascending offset number order.)
+	 * 我们是从 'maxoff' 开始把项加入数组的，因此通过逆序处理该数组，我们就
+	 * 以递增的偏移量顺序来处理这些项。这个顺序对正确性没有影响，但一些快速的
+	 * 微基准测试表明这样更快。（早期的 PostgreSQL 版本不是使用 root_items
+	 * 数组，而是扫描页面上的所有项，它们同样是以递增偏移量顺序进行的。）
 	 */
 	for (int i = prstate.nroot_items - 1; i >= 0; i--)
 	{
 		offnum = prstate.root_items[i];
 
-		/* Ignore items already processed as part of an earlier chain */
+		/* 忽略作为更早的链的一部分已经被处理过的项 */
 		if (prstate.processed[offnum])
 			continue;
 
 		/* see preceding loop */
 		*off_loc = offnum;
 
-		/* Process this item or chain of items */
+		/* 处理该项或该项组成的链 */
 		heap_prune_chain(page, blockno, maxoff, offnum, &prstate);
 	}
 
 	/*
-	 * Process any heap-only tuples that were not already processed as part of
-	 * a HOT chain.
+	 * 处理任何尚未作为 HOT 链的一部分被处理过的堆内元组。
 	 */
 	for (int i = prstate.nheaponly_items - 1; i >= 0; i--)
 	{
@@ -598,17 +549,15 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		*off_loc = offnum;
 
 		/*
-		 * If the tuple is DEAD and doesn't chain to anything else, mark it
-		 * unused.  (If it does chain, we can only remove it as part of
-		 * pruning its chain.)
+		 * 如果元组是 DEAD 且不与任何其它元组形成链，就将其标记为 unused。
+		 * （如果它确实成链，我们只能作为剪枝其所在链的一部分来移除它。）
 		 *
-		 * We need this primarily to handle aborted HOT updates, that is,
-		 * XMIN_INVALID heap-only tuples.  Those might not be linked to by any
-		 * chain, since the parent tuple might be re-updated before any
-		 * pruning occurs.  So we have to be able to reap them separately from
-		 * chain-pruning.  (Note that HeapTupleHeaderIsHotUpdated will never
-		 * return true for an XMIN_INVALID tuple, so this code will work even
-		 * when there were sequential updates within the aborted transaction.)
+		 * 我们主要需要这样做来处理被中止的 HOT 更新，即 XMIN_INVALID 的
+		 * 堆内元组。这些元组可能不被任何链所链接，因为其父元组可能在任何
+		 * 剪枝发生之前就被重新更新了。因此我们必须能够将它们与链剪枝分开
+		 * 单独回收。（注意，HeapTupleHeaderIsHotUpdated 永远不会为
+		 * XMIN_INVALID 元组返回 true，所以即使被中止的事务中存在连续的
+		 * 更新，这段代码也能正常工作。）
 		 */
 		if (prstate.htsv[offnum] == HEAPTUPLE_DEAD)
 		{
@@ -639,7 +588,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 			heap_prune_record_unchanged_lp_normal(page, &prstate, offnum);
 	}
 
-	/* We should now have processed every tuple exactly once  */
+	/* 我们现在应该已经对每个元组恰好处理过一次 */
 #ifdef USE_ASSERT_CHECKING
 	for (offnum = FirstOffsetNumber;
 		 offnum <= maxoff;
@@ -651,7 +600,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	}
 #endif
 
-	/* Clear the offset information once we have processed the given page. */
+	/* 处理完给定页面后，清除偏移信息。 */
 	*off_loc = InvalidOffsetNumber;
 
 	do_prune = prstate.nredirected > 0 ||
@@ -659,16 +608,14 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		prstate.nunused > 0;
 
 	/*
-	 * Even if we don't prune anything, if we found a new value for the
-	 * pd_prune_xid field or the page was marked full, we will update the hint
-	 * bit.
+	 * 即使我们没有剪枝任何内容，如果我们为 pd_prune_xid 字段找到了新值，或者
+	 * 页面被标记为已满，我们也会更新提示位（hint bit）。
 	 */
 	do_hint = ((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid ||
 		PageIsFull(page);
 
 	/*
-	 * Decide if we want to go ahead with freezing according to the freeze
-	 * plans we prepared, or not.
+	 * 根据我们准备的冻结计划，决定是否要继续进行冻结。
 	 */
 	do_freeze = false;
 	if (prstate.freeze)
@@ -676,31 +623,28 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		if (prstate.pagefrz.freeze_required)
 		{
 			/*
-			 * heap_prepare_freeze_tuple indicated that at least one XID/MXID
-			 * from before FreezeLimit/MultiXactCutoff is present.  Must
-			 * freeze to advance relfrozenxid/relminmxid.
+			 * heap_prepare_freeze_tuple 指示存在至少一个来自 FreezeLimit/
+			 * MultiXactCutoff 之前的 XID/MXID。必须冻结以推进
+			 * relfrozenxid/relminmxid。
 			 */
 			do_freeze = true;
 		}
 		else
 		{
 			/*
-			 * Opportunistically freeze the page if we are generating an FPI
-			 * anyway and if doing so means that we can set the page
-			 * all-frozen afterwards (might not happen until VACUUM's final
-			 * heap pass).
+			 * 如果我们反正要生成 FPI，并且这样做意味着我们可以在之后将页面设为
+			 * 全冻结（可能要等到 VACUUM 的最后一次堆扫描才会发生），则顺手
+			 * 冻结该页面。
 			 *
-			 * XXX: Previously, we knew if pruning emitted an FPI by checking
-			 * pgWalUsage.wal_fpi before and after pruning.  Once the freeze
-			 * and prune records were combined, this heuristic couldn't be
-			 * used anymore.  The opportunistic freeze heuristic must be
-			 * improved; however, for now, try to approximate the old logic.
+			 * XXX：以前，我们通过对比剪枝前后的 pgWalUsage.wal_fpi 来判断剪枝
+			 * 是否发出了 FPI。自从冻结与剪枝记录被合并后，这个启发式方法就
+			 * 无法再使用了。顺手冻结的启发式方法必须改进；不过眼下，先尝试
+			 * 近似还原旧的逻辑。
 			 */
 			if (prstate.all_visible && prstate.all_frozen && prstate.nfrozen > 0)
 			{
 				/*
-				 * Freezing would make the page all-frozen.  Have already
-				 * emitted an FPI or will do so anyway?
+				 * 冻结会使页面变为全冻结。是否已经发出了 FPI，或者反正会发出？
 				 */
 				if (RelationNeedsWAL(relation))
 				{
@@ -724,16 +668,15 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	if (do_freeze)
 	{
 		/*
-		 * Validate the tuples we will be freezing before entering the
-		 * critical section.
+		 * 在进入临界区之前，验证我们将要冻结的元组。
 		 */
 		heap_pre_freeze_checks(buffer, prstate.frozen, prstate.nfrozen);
 	}
 	else if (prstate.nfrozen > 0)
 	{
 		/*
-		 * The page contained some tuples that were not already frozen, and we
-		 * chose not to freeze them now.  The page won't be all-frozen then.
+		 * 页面上包含一些尚未冻结的元组，而我们选择现在不冻结它们。那样的话
+		 * 页面就不会是全冻结的。
 		 */
 		Assert(!prstate.pagefrz.freeze_required);
 
@@ -743,35 +686,33 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	else
 	{
 		/*
-		 * We have no freeze plans to execute.  The page might already be
-		 * all-frozen (perhaps only following pruning), though.  Such pages
-		 * can be marked all-frozen in the VM by our caller, even though none
-		 * of its tuples were newly frozen here.
+		 * 我们没有要执行的冻结计划。不过，页面可能已经是全冻结的了（也许仅在
+		 * 剪枝之后）。这样的页面可以被我们的调用方在 VM 中标记为全冻结，即使
+		 * 它没有任何元组是在此处新冻结的。
 		 */
 	}
 
-	/* Any error while applying the changes is critical */
+	/* 应用更改时发生的任何错误都是致命的 */
 	START_CRIT_SECTION();
 
 	if (do_hint)
 	{
 		/*
-		 * Update the page's pd_prune_xid field to either zero, or the lowest
-		 * XID of any soon-prunable tuple.
+		 * 将页面的 pd_prune_xid 字段更新为零，或者更新为任何即将可剪枝元组的
+		 * 最旧 XID。
 		 */
 		((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
 
 		/*
-		 * Also clear the "page is full" flag, since there's no point in
-		 * repeating the prune/defrag process until something else happens to
-		 * the page.
+		 * 同时清除“页面已满”标志，因为在页面发生其它变化之前，重复进行
+		 * 剪枝/碎片整理过程没有意义。
 		 */
 		PageClearFull(page);
 
 		/*
-		 * If that's all we had to do to the page, this is a non-WAL-logged
-		 * hint.  If we are going to freeze or prune the page, we will mark
-		 * the buffer dirty below.
+		 * 如果这就是我们要对该页面做的全部事情，那么这是一个不写 WAL 日志的
+		 * 提示（hint）。如果我们打算冻结或剪枝该页面，我们会在下面把 buffer
+		 * 标记为脏。
 		 */
 		if (!do_freeze && !do_prune)
 			MarkBufferDirtyHint(buffer, true);
@@ -779,7 +720,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 
 	if (do_prune || do_freeze)
 	{
-		/* Apply the planned item changes and repair page fragmentation. */
+		/* 应用计划中的项更改，并修复页面碎片。 */
 		if (do_prune)
 		{
 			heap_page_prune_execute(buffer, false,
@@ -794,28 +735,24 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		MarkBufferDirty(buffer);
 
 		/*
-		 * Emit a WAL XLOG_HEAP2_PRUNE_FREEZE record showing what we did
+		 * 发出一条 XLOG_HEAP2_PRUNE_FREEZE 的 WAL 记录，记录我们所做的工作
 		 */
 		if (RelationNeedsWAL(relation))
 		{
 			/*
-			 * The snapshotConflictHorizon for the whole record should be the
-			 * most conservative of all the horizons calculated for any of the
-			 * possible modifications.  If this record will prune tuples, any
-			 * transactions on the standby older than the youngest xmax of the
-			 * most recently removed tuple this record will prune will
-			 * conflict.  If this record will freeze tuples, any transactions
-			 * on the standby with xids older than the youngest tuple this
-			 * record will freeze will conflict.
+			 * 整条记录的 snapshotConflictHorizon 应该取所有可能修改中计算出的
+			 * 所有边界里最保守的一个。如果这条记录要剪枝元组，那么备库上任何
+			 * 比本记录将剪枝掉的最新被移除元组的 youngest xmax 更老的事务都会
+			 * 发生冲突。如果这条记录要冻结元组，那么备库上任何 xid 比本记录
+			 * 将冻结的最新元组更老的事务都会发生冲突。
 			 */
 			TransactionId frz_conflict_horizon = InvalidTransactionId;
 			TransactionId conflict_xid;
 
 			/*
-			 * We can use the visibility_cutoff_xid as our cutoff for
-			 * conflicts when the whole page is eligible to become all-frozen
-			 * in the VM once we're done with it.  Otherwise we generate a
-			 * conservative cutoff by stepping back from OldestXmin.
+			 * 当整个页面在我们完成后有资格在 VM 中变为全冻结时，我们可以使用
+			 * visibility_cutoff_xid 作为冲突的截止点。否则，我们通过从
+			 * OldestXmin 回退一步来生成一个保守的截止点。
 			 */
 			if (do_freeze)
 			{
@@ -823,7 +760,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 					frz_conflict_horizon = prstate.visibility_cutoff_xid;
 				else
 				{
-					/* Avoids false conflicts when hot_standby_feedback in use */
+					/* 在启用 hot_standby_feedback 时，避免误报冲突 */
 					frz_conflict_horizon = prstate.cutoffs->OldestXmin;
 					TransactionIdRetreat(frz_conflict_horizon);
 				}
@@ -854,16 +791,13 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	presult->recently_dead_tuples = prstate.recently_dead_tuples;
 
 	/*
-	 * It was convenient to ignore LP_DEAD items in all_visible earlier on to
-	 * make the choice of whether or not to freeze the page unaffected by the
-	 * short-term presence of LP_DEAD items.  These LP_DEAD items were
-	 * effectively assumed to be LP_UNUSED items in the making.  It doesn't
-	 * matter which vacuum heap pass (initial pass or final pass) ends up
-	 * setting the page all-frozen, as long as the ongoing VACUUM does it.
+	 * 早先为了方便，我们在 all_visible 中忽略了 LP_DEAD 项，以使是否冻结页面的
+	 * 决定不受 LP_DEAD 项短期存在的影响。这些 LP_DEAD 项实际上被假定为正在
+	 * 形成中的 LP_UNUSED 项。只要当前正在进行的 VACUUM 完成了它，究竟是哪一次
+	 * 堆扫描（初次扫描还是最后一次扫描）最终将页面设为全冻结都无关紧要。
 	 *
-	 * Now that freezing has been finalized, unset all_visible if there are
-	 * any LP_DEAD items on the page.  It needs to reflect the present state
-	 * of the page, as expected by our caller.
+	 * 既然冻结已经确定下来，如果页面上存在任何 LP_DEAD 项，就取消 all_visible。
+	 * 它需要反映页面当前的状态，正如调用方所期望的那样。
 	 */
 	if (prstate.all_visible && prstate.lpdead_items == 0)
 	{
@@ -879,12 +813,10 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 	presult->hastup = prstate.hastup;
 
 	/*
-	 * For callers planning to update the visibility map, the conflict horizon
-	 * for that record must be the newest xmin on the page.  However, if the
-	 * page is completely frozen, there can be no conflict and the
-	 * vm_conflict_horizon should remain InvalidTransactionId.  This includes
-	 * the case that we just froze all the tuples; the prune-freeze record
-	 * included the conflict XID already so the caller doesn't need it.
+	 * 对于计划更新可见性映射的调用方，该记录的冲突边界必须是页面上最新的 xmin。
+	 * 不过，如果页面被完全冻结，就不会有冲突，vm_conflict_horizon 应当保持为
+	 * InvalidTransactionId。这也包括我们刚刚冻结了所有元组的情况；剪枝-冻结
+	 * 记录中已经包含了冲突 XID，所以调用方不再需要它。
 	 */
 	if (presult->all_frozen)
 		presult->vm_conflict_horizon = InvalidTransactionId;
@@ -892,7 +824,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 		presult->vm_conflict_horizon = prstate.visibility_cutoff_xid;
 
 	presult->lpdead_items = prstate.lpdead_items;
-	/* the presult->deadoffsets array was already filled in */
+	/* presult->deadoffsets 数组已经被填充 */
 
 	if (prstate.freeze)
 	{
@@ -911,7 +843,7 @@ heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 
 
 /*
- * Perform visibility checks for heap pruning.
+ * 执行堆剪枝的可见性检查。
  */
 static HTSV_Result
 heap_prune_satisfies_vacuum(PruneState *prstate, HeapTuple tup, Buffer buffer)
@@ -925,10 +857,9 @@ heap_prune_satisfies_vacuum(PruneState *prstate, HeapTuple tup, Buffer buffer)
 		return res;
 
 	/*
-	 * For VACUUM, we must be sure to prune tuples with xmax older than
-	 * OldestXmin -- a visibility cutoff determined at the beginning of
-	 * vacuuming the relation. OldestXmin is used for freezing determination
-	 * and we cannot freeze dead tuples' xmaxes.
+	 * 对于 VACUUM，我们必须确保剪枝掉 xmax 早于 OldestXmin 的元组——OldestXmin
+	 * 是在开始清理该关系时确定的可见性截止点。OldestXmin 用于冻结判断，而
+	 * 我们无法冻结 dead 元组的 xmax。
 	 */
 	if (prstate->cutoffs &&
 		TransactionIdIsValid(prstate->cutoffs->OldestXmin) &&
@@ -936,12 +867,10 @@ heap_prune_satisfies_vacuum(PruneState *prstate, HeapTuple tup, Buffer buffer)
 		return HEAPTUPLE_DEAD;
 
 	/*
-	 * Determine whether or not the tuple is considered dead when compared
-	 * with the provided GlobalVisState. On-access pruning does not provide
-	 * VacuumCutoffs. And for vacuum, even if the tuple's xmax is not older
-	 * than OldestXmin, GlobalVisTestIsRemovableXid() could find the row dead
-	 * if the GlobalVisState has been updated since the beginning of vacuuming
-	 * the relation.
+	 * 判断与所提供的 GlobalVisState 相比，该元组是否被视为 dead。访问时剪枝
+	 * 不会提供 VacuumCutoffs。而对于 vacuum，即使元组的 xmax 不比 OldestXmin
+	 * 更旧，如果 GlobalVisState 自开始清理该关系以来已经更新，
+	 * GlobalVisTestIsRemovableXid() 仍可能判定该行为 dead。
 	 */
 	if (GlobalVisTestIsRemovableXid(prstate->vistest, dead_after))
 		return HEAPTUPLE_DEAD;
@@ -951,10 +880,8 @@ heap_prune_satisfies_vacuum(PruneState *prstate, HeapTuple tup, Buffer buffer)
 
 
 /*
- * Pruning calculates tuple visibility once and saves the results in an array
- * of int8.  See PruneState.htsv for details.  This helper function is meant
- * to guard against examining visibility status array members which have not
- * yet been computed.
+ * 剪枝只计算一次元组可见性，并将结果保存在一个 int8 数组中。详见 PruneState.htsv。
+ * 这个辅助函数的作用，是防止去检查那些尚未计算出的可见性状态数组成员。
  */
 static inline HTSV_Result
 htsv_get_valid_status(int status)
@@ -965,35 +892,29 @@ htsv_get_valid_status(int status)
 }
 
 /*
- * Prune specified line pointer or a HOT chain originating at line pointer.
+ * 剪枝指定的行指针，或剪枝从该指针起始的 HOT 链。
  *
- * Tuple visibility information is provided in prstate->htsv.
+ * 元组的可见性信息由 prstate->htsv 提供。
  *
- * If the item is an index-referenced tuple (i.e. not a heap-only tuple),
- * the HOT chain is pruned by removing all DEAD tuples at the start of the HOT
- * chain.  We also prune any RECENTLY_DEAD tuples preceding a DEAD tuple.
- * This is OK because a RECENTLY_DEAD tuple preceding a DEAD tuple is really
- * DEAD, our visibility test is just too coarse to detect it.
+ * 如果该项是一个被索引引用的元组（即不是堆内元组），则通过移除 HOT 链开头
+ * 所有的 DEAD 元组来剪枝该 HOT 链。我们也会剪枝位于 DEAD 元组之前的任何
+ * RECENTLY_DEAD 元组。这样做是可以的，因为一个位于 DEAD 元组之前的 RECENTLY_DEAD
+ * 元组实际上已经是 DEAD 了，只是我们的可见性测试太粗略，无法检测到它。
  *
- * Pruning must never leave behind a DEAD tuple that still has tuple storage.
- * VACUUM isn't prepared to deal with that case.
+ * 剪枝绝不能留下一个仍然拥有元组存储的 DEAD 元组。VACUUM 没有准备好处理那种
+ * 情况。
  *
- * The root line pointer is redirected to the tuple immediately after the
- * latest DEAD tuple.  If all tuples in the chain are DEAD, the root line
- * pointer is marked LP_DEAD.  (This includes the case of a DEAD simple
- * tuple, which we treat as a chain of length 1.)
+ * 根行指针会被重定向到最后一个 DEAD 元组紧邻其后的那个元组。如果链中的全部
+ * 元组都是 DEAD，根行指针会被标记为 LP_DEAD。（这也包括 DEAD 普通元组的情况，
+ * 我们将其视为长度为 1 的链。）
  *
- * We don't actually change the page here. We just add entries to the arrays in
- * prstate showing the changes to be made.  Items to be redirected are added
- * to the redirected[] array (two entries per redirection); items to be set to
- * LP_DEAD state are added to nowdead[]; and items to be set to LP_UNUSED
- * state are added to nowunused[].  We perform bookkeeping of live tuples,
- * visibility etc. based on what the page will look like after the changes
- * applied.  All that bookkeeping is performed in the heap_prune_record_*()
- * subroutines.  The division of labor is that heap_prune_chain() decides the
- * fate of each tuple, ie. whether it's going to be removed, redirected or
- * left unchanged, and the heap_prune_record_*() subroutines update PruneState
- * based on that outcome.
+ * 我们在这里并不真正修改页面。我们只是往 prstate 的数组中添加记录，表示将要
+ * 进行的更改。要被重定向的项被加入 redirected[] 数组（每次重定向占两个条目）；
+ * 要被设为 LP_DEAD 状态的项被加入 nowdead[]；要被设为 LP_UNUSED 状态的项被加入
+ * nowunused[]。我们会基于页面在应用这些更改之后的样子，来进行存活元组、可见性
+ * 等方面的记账。所有这些记账都在 heap_prune_record_*() 子例程中完成。分工上，
+ * heap_prune_chain() 决定每个元组的命运，即它将被移除、被重定向还是保持不变，
+ * 而 heap_prune_record_*() 子例程则根据该结果更新 PruneState。
  */
 static void
 heap_prune_chain(Page page, BlockNumber blockno, OffsetNumber maxoff,
@@ -1005,52 +926,50 @@ heap_prune_chain(Page page, BlockNumber blockno, OffsetNumber maxoff,
 	OffsetNumber chainitems[MaxHeapTuplesPerPage];
 
 	/*
-	 * After traversing the HOT chain, ndeadchain is the index in chainitems
-	 * of the first live successor after the last dead item.
+	 * 在遍历完 HOT 链之后，ndeadchain 是 chainitems 中最后一个 dead 项之后第一个
+	 * 存活后继项的索引。
 	 */
 	int			ndeadchain = 0,
 				nchain = 0;
 
 	rootlp = PageGetItemId(page, rootoffnum);
 
-	/* Start from the root tuple */
+	/* 从根元组开始 */
 	offnum = rootoffnum;
 
-	/* while not end of the chain */
+	/* 当还未到达链的末尾时 */
 	for (;;)
 	{
 		HeapTupleHeader htup;
 		ItemId		lp;
 
-		/* Sanity check (pure paranoia) */
+		/* 合理性检查（纯粹出于谨慎） */
 		if (offnum < FirstOffsetNumber)
 			break;
 
 		/*
-		 * An offset past the end of page's line pointer array is possible
-		 * when the array was truncated (original item must have been unused)
+		 * 当行指针数组被截断时，可能会出现偏移量超出了页面行指针数组末尾的情况
+		 * （原始项一定是 unused 的）
 		 */
 		if (offnum > maxoff)
 			break;
 
-		/* If item is already processed, stop --- it must not be same chain */
+		/* 如果项已经被处理过，停止——它一定不属于同一条链 */
 		if (prstate->processed[offnum])
 			break;
 
 		lp = PageGetItemId(page, offnum);
 
 		/*
-		 * Unused item obviously isn't part of the chain. Likewise, a dead
-		 * line pointer can't be part of the chain.  Both of those cases were
-		 * already marked as processed.
+		 * 未使用的项显然不属于这条链。同样地，dead 行指针也不能属于这条链。
+		 * 这两种情况都已经被标记为已处理。
 		 */
 		Assert(ItemIdIsUsed(lp));
 		Assert(!ItemIdIsDead(lp));
 
 		/*
-		 * If we are looking at the redirected root line pointer, jump to the
-		 * first normal tuple in the chain.  If we find a redirect somewhere
-		 * else, stop --- it must not be same chain.
+		 * 如果我们正在看的是被重定向的根行指针，就跳到链中的第一个普通元组。
+		 * 如果我们在别处发现了一个重定向项，则停止——它一定不属于同一条链。
 		 */
 		if (ItemIdIsRedirected(lp))
 		{
@@ -1085,27 +1004,23 @@ heap_prune_chain(Page page, BlockNumber blockno, OffsetNumber maxoff,
 				ndeadchain = nchain;
 				HeapTupleHeaderAdvanceConflictHorizon(htup,
 													  &prstate->latest_xid_removed);
-				/* Advance to next chain member */
+				/* 前进到链的下一个成员 */
 				break;
 
 			case HEAPTUPLE_RECENTLY_DEAD:
 
-				/*
-				 * We don't need to advance the conflict horizon for
-				 * RECENTLY_DEAD tuples, even if we are removing them.  This
-				 * is because we only remove RECENTLY_DEAD tuples if they
-				 * precede a DEAD tuple, and the DEAD tuple must have been
-				 * inserted by a newer transaction than the RECENTLY_DEAD
-				 * tuple by virtue of being later in the chain.  We will have
-				 * advanced the conflict horizon for the DEAD tuple.
-				 */
+			/*
+			 * 即使我们在移除 RECENTLY_DEAD 元组，也无需推进冲突边界。这是因为
+			 * 我们只有在 RECENTLY_DEAD 元组位于 DEAD 元组之前时才会移除它们，
+			 * 而由于 DEAD 元组在链中更靠后，它一定是由比 RECENTLY_DEAD 元组
+			 * 更新的事务插入的。对于那个 DEAD 元组，我们已经推进过冲突边界了。
+			 */
 
-				/*
-				 * Advance past RECENTLY_DEAD tuples just in case there's a
-				 * DEAD one after them.  We have to make sure that we don't
-				 * miss any DEAD tuples, since DEAD tuples that still have
-				 * tuple storage after pruning will confuse VACUUM.
-				 */
+			/*
+			 * 越过 RECENTLY_DEAD 元组，以防它们后面还有 DEAD 元组。我们必须
+			 * 确保不会漏掉任何 DEAD 元组，因为剪枝之后仍然拥有元组存储的 DEAD
+			 * 元组会让 VACUUM 感到困惑。
+			 */
 				break;
 
 			case HEAPTUPLE_DELETE_IN_PROGRESS:
@@ -1119,17 +1034,16 @@ heap_prune_chain(Page page, BlockNumber blockno, OffsetNumber maxoff,
 		}
 
 		/*
-		 * If the tuple is not HOT-updated, then we are at the end of this
-		 * HOT-update chain.
+		 * 如果元组不是 HOT 更新的，那么我们就到达了这条 HOT 更新链的末尾。
 		 */
 		if (!HeapTupleHeaderIsHotUpdated(htup))
 			goto process_chain;
 
-		/* HOT implies it can't have moved to different partition */
+		/* HOT 意味着它不可能被移动到不同的分区 */
 		Assert(!HeapTupleHeaderIndicatesMovedPartitions(htup));
 
 		/*
-		 * Advance to next chain member.
+		 * 前进到链的下一个成员。
 		 */
 		Assert(ItemPointerGetBlockNumber(&htup->t_ctid) == blockno);
 		offnum = ItemPointerGetOffsetNumber(&htup->t_ctid);
@@ -1139,12 +1053,10 @@ heap_prune_chain(Page page, BlockNumber blockno, OffsetNumber maxoff,
 	if (ItemIdIsRedirected(rootlp) && nchain < 2)
 	{
 		/*
-		 * We found a redirect item that doesn't point to a valid follow-on
-		 * item.  This can happen if the loop in heap_page_prune_and_freeze()
-		 * caused us to visit the dead successor of a redirect item before
-		 * visiting the redirect item.  We can clean up by setting the
-		 * redirect item to LP_DEAD state or LP_UNUSED if the caller
-		 * indicated.
+		 * 我们发现了一个重定向项，但它指向的后续项无效。如果
+		 * heap_page_prune_and_freeze() 中的循环导致我们在访问重定向项之前
+		 * 先访问了它的 dead 后继项，就可能出现这种情况。如果调用方有指示，
+		 * 我们可以把重定向项设为 LP_DEAD 状态或 LP_UNUSED 来进行清理。
 		 */
 		heap_prune_record_dead_or_unused(prstate, rootoffnum, false);
 		return;
@@ -1155,8 +1067,8 @@ process_chain:
 	if (ndeadchain == 0)
 	{
 		/*
-		 * No DEAD tuple was found, so the chain is entirely composed of
-		 * normal, unchanged tuples.  Leave it alone.
+		 * 没有发现 DEAD 元组，因此这条链完全由普通的、未更改的元组组成。
+		 * 保持原样不动。
 		 */
 		int			i = 0;
 
@@ -1171,8 +1083,7 @@ process_chain:
 	else if (ndeadchain == nchain)
 	{
 		/*
-		 * The entire chain is dead.  Mark the root line pointer LP_DEAD, and
-		 * fully remove the other tuples in the chain.
+		 * 整条链都已死亡。将根行指针标记为 LP_DEAD，并彻底移除链中的其它元组。
 		 */
 		heap_prune_record_dead_or_unused(prstate, rootoffnum, ItemIdIsNormal(rootlp));
 		for (int i = 1; i < nchain; i++)
@@ -1181,28 +1092,27 @@ process_chain:
 	else
 	{
 		/*
-		 * We found a DEAD tuple in the chain.  Redirect the root line pointer
-		 * to the first non-DEAD tuple, and mark as unused each intermediate
-		 * item that we are able to remove from the chain.
+		 * 我们在链中发现了一个 DEAD 元组。将根行指针重定向到第一个非 DEAD 元组，
+		 * 并把我们能够从中移除的每个中间项标记为 unused。
 		 */
 		heap_prune_record_redirect(prstate, rootoffnum, chainitems[ndeadchain],
 								   ItemIdIsNormal(rootlp));
 		for (int i = 1; i < ndeadchain; i++)
 			heap_prune_record_unused(prstate, chainitems[i], true);
 
-		/* the rest of tuples in the chain are normal, unchanged tuples */
+		/* 链中其余的元组都是普通、未更改的元组 */
 		for (int i = ndeadchain; i < nchain; i++)
 			heap_prune_record_unchanged_lp_normal(page, prstate, chainitems[i]);
 	}
 }
 
-/* Record lowest soon-prunable XID */
+/* 记录最早的“很快可剪枝”XID */
 static void
 heap_prune_record_prunable(PruneState *prstate, TransactionId xid)
 {
 	/*
-	 * This should exactly match the PageSetPrunable macro.  We can't store
-	 * directly into the page header yet, so we update working state.
+	 * 这应该与 PageSetPrunable 宏完全一致。我们还不能把数据直接写入页头，
+	 * 因此先更新工作状态。
 	 */
 	Assert(TransactionIdIsNormal(xid));
 	if (!TransactionIdIsValid(prstate->new_prune_xid) ||
@@ -1210,7 +1120,7 @@ heap_prune_record_prunable(PruneState *prstate, TransactionId xid)
 		prstate->new_prune_xid = xid;
 }
 
-/* Record line pointer to be redirected */
+/* 记录将要被重定向的行指针 */
 static void
 heap_prune_record_redirect(PruneState *prstate,
 						   OffsetNumber offnum, OffsetNumber rdoffnum,
@@ -1220,8 +1130,7 @@ heap_prune_record_redirect(PruneState *prstate,
 	prstate->processed[offnum] = true;
 
 	/*
-	 * Do not mark the redirect target here.  It needs to be counted
-	 * separately as an unchanged tuple.
+	 * 不要在这里标记重定向目标。它需要作为未更改的元组被单独计数。
 	 */
 
 	Assert(prstate->nredirected < MaxHeapTuplesPerPage);
@@ -1231,9 +1140,8 @@ heap_prune_record_redirect(PruneState *prstate,
 	prstate->nredirected++;
 
 	/*
-	 * If the root entry had been a normal tuple, we are deleting it, so count
-	 * it in the result.  But changing a redirect (even to DEAD state) doesn't
-	 * count.
+	 * 如果根项原本是一个普通元组，那么我们正在删除它，所以把它计入结果中。
+	 * 但是把重定向项改为其它状态（即使是改成 DEAD 状态）则不计入。
 	 */
 	if (was_normal)
 		prstate->ndeleted++;
@@ -1241,7 +1149,7 @@ heap_prune_record_redirect(PruneState *prstate,
 	prstate->hastup = true;
 }
 
-/* Record line pointer to be marked dead */
+/* 记录将要被标记为 dead 的行指针 */
 static void
 heap_prune_record_dead(PruneState *prstate, OffsetNumber offnum,
 					   bool was_normal)
@@ -1254,37 +1162,34 @@ heap_prune_record_dead(PruneState *prstate, OffsetNumber offnum,
 	prstate->ndead++;
 
 	/*
-	 * Deliberately delay unsetting all_visible until later during pruning.
-	 * Removable dead tuples shouldn't preclude freezing the page.
+	 * 故意把取消 all_visible 的操作推迟到剪枝过程的稍后进行。可移除的 dead
+	 * 元组不应妨碍冻结该页面。
 	 */
 
-	/* Record the dead offset for vacuum */
+	/* 记录供 vacuum 使用的 dead 偏移 */
 	prstate->deadoffsets[prstate->lpdead_items++] = offnum;
 
 	/*
-	 * If the root entry had been a normal tuple, we are deleting it, so count
-	 * it in the result.  But changing a redirect (even to DEAD state) doesn't
-	 * count.
+	 * 如果根项原本是一个普通元组，那么我们正在删除它，所以把它计入结果中。
+	 * 但是把重定向项改为其它状态（即使是改成 DEAD 状态）则不计入。
 	 */
 	if (was_normal)
 		prstate->ndeleted++;
 }
 
 /*
- * Depending on whether or not the caller set mark_unused_now to true, record that a
- * line pointer should be marked LP_DEAD or LP_UNUSED. There are other cases in
- * which we will mark line pointers LP_UNUSED, but we will not mark line
- * pointers LP_DEAD if mark_unused_now is true.
+ * 根据调用方是否将 mark_unused_now 设为 true，记录一个行指针应当被标记为
+ * LP_DEAD 还是 LP_UNUSED。还有其它一些情况我们会把行指针标记为 LP_UNUSED，
+ * 但如果 mark_unused_now 为 true，我们就不会把行指针标记为 LP_DEAD。
  */
 static void
 heap_prune_record_dead_or_unused(PruneState *prstate, OffsetNumber offnum,
 								 bool was_normal)
 {
 	/*
-	 * If the caller set mark_unused_now to true, we can remove dead tuples
-	 * during pruning instead of marking their line pointers dead. Set this
-	 * tuple's line pointer LP_UNUSED. We hint that this option is less
-	 * likely.
+	 * 如果调用方将 mark_unused_now 设为 true，我们就可以在剪枝过程中移除 dead
+	 * 元组，而不必把它们的行指针标记为 dead。把该元组的行指针设为 LP_UNUSED。
+	 * 我们暗示这种情况出现的可能性较小。
 	 */
 	if (unlikely(prstate->mark_unused_now))
 		heap_prune_record_unused(prstate, offnum, was_normal);
@@ -1292,7 +1197,7 @@ heap_prune_record_dead_or_unused(PruneState *prstate, OffsetNumber offnum,
 		heap_prune_record_dead(prstate, offnum, was_normal);
 }
 
-/* Record line pointer to be marked unused */
+/* 记录将要被标记为 unused 的行指针 */
 static void
 heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum, bool was_normal)
 {
@@ -1304,9 +1209,8 @@ heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum, bool was_norm
 	prstate->nunused++;
 
 	/*
-	 * If the root entry had been a normal tuple, we are deleting it, so count
-	 * it in the result.  But changing a redirect (even to DEAD state) doesn't
-	 * count.
+	 * 如果根项原本是一个普通元组，那么我们正在删除它，所以把它计入结果中。
+	 * 但是把重定向项改为其它状态（即使是改成 DEAD 状态）则不计入。
 	 */
 	if (was_normal)
 		prstate->ndeleted++;
@@ -1334,7 +1238,7 @@ heap_prune_record_unchanged_lp_normal(Page page, PruneState *prstate, OffsetNumb
 	Assert(!prstate->processed[offnum]);
 	prstate->processed[offnum] = true;
 
-	prstate->hastup = true;		/* the page is not empty */
+	prstate->hastup = true;		/* 页面非空 */
 
 	/*
 	 * The criteria for counting a tuple as live in this block need to match
@@ -1525,7 +1429,7 @@ heap_prune_record_unchanged_lp_dead(Page page, PruneState *prstate, OffsetNumber
 	 * visibility map, this will be correct.
 	 */
 
-	/* Record the dead offset for vacuum */
+	/* 记录供 vacuum 使用的 dead 偏移 */
 	prstate->deadoffsets[prstate->lpdead_items++] = offnum;
 }
 
@@ -1847,7 +1751,7 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 		 */
 		for (;;)
 		{
-			/* Sanity check (pure paranoia) */
+			/* 合理性检查（纯粹出于谨慎） */
 			if (offnum < FirstOffsetNumber)
 				break;
 
@@ -1877,7 +1781,7 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 			if (!HeapTupleHeaderIsHotUpdated(htup))
 				break;
 
-			/* HOT implies it can't have moved to different partition */
+			/* HOT 意味着它不可能被移动到不同的分区 */
 			Assert(!HeapTupleHeaderIndicatesMovedPartitions(htup));
 
 			nextoffnum = ItemPointerGetOffsetNumber(&htup->t_ctid);

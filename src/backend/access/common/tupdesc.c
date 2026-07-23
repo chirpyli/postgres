@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * tupdesc.c
- *	  POSTGRES tuple descriptor support code
+ *	  POSTGRES 元组描述符支持代码
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -10,9 +10,8 @@
  * IDENTIFICATION
  *	  src/backend/access/common/tupdesc.c
  *
- * NOTES
- *	  some of the executor utility code such as "ExecTypeFromTL" should be
- *	  moved here.
+ * 注意
+ *	  部分执行器工具代码（如 "ExecTypeFromTL"）应被移动到此处。
  *
  *-------------------------------------------------------------------------
  */
@@ -31,7 +30,7 @@
 #include "utils/resowner.h"
 #include "utils/syscache.h"
 
-/* ResourceOwner callbacks to hold tupledesc references  */
+/* 用于持有 tupledesc 引用的 ResourceOwner 回调  */
 static void ResOwnerReleaseTupleDesc(Datum res);
 static char *ResOwnerPrintTupleDesc(Datum res);
 
@@ -44,7 +43,7 @@ static const ResourceOwnerDesc tupdesc_resowner_desc =
 	.DebugPrint = ResOwnerPrintTupleDesc
 };
 
-/* Convenience wrappers over ResourceOwnerRemember/Forget */
+/* ResourceOwnerRemember/Forget 之上的便捷封装 */
 static inline void
 ResourceOwnerRememberTupleDesc(ResourceOwner owner, TupleDesc tupdesc)
 {
@@ -59,7 +58,7 @@ ResourceOwnerForgetTupleDesc(ResourceOwner owner, TupleDesc tupdesc)
 
 /*
  * populate_compact_attribute_internal
- *		Helper function for populate_compact_attribute()
+ *		populate_compact_attribute() 的辅助函数
  */
 static inline void
 populate_compact_attribute_internal(Form_pg_attribute src,
@@ -77,10 +76,9 @@ populate_compact_attribute_internal(Form_pg_attribute src,
 	dst->attgenerated = (src->attgenerated != '\0');
 
 	/*
-	 * Assign nullability status for this column.  Assuming that a constraint
-	 * exists, at this point we don't know if a not-null constraint is valid,
-	 * so we assign UNKNOWN unless the table is a catalog, in which case we
-	 * know it's valid.
+	 * 为这一列指定可空性状态。假设存在一个约束，此时我们并不知道
+	 * not-null 约束是否有效，因此我们将其设为 UNKNOWN，除非该表是
+	 * 系统目录表，这种情况下我们知道它是有效的。
 	 */
 	dst->attnullability = !src->attnotnull ? ATTNULLABLE_UNRESTRICTED :
 		IsCatalogRelationOid(src->attrelid) ? ATTNULLABLE_VALID :
@@ -109,9 +107,9 @@ populate_compact_attribute_internal(Form_pg_attribute src,
 
 /*
  * populate_compact_attribute
- *		Fill in the corresponding CompactAttribute element from the
- *		Form_pg_attribute for the given attribute number.  This must be called
- *		whenever a change is made to a Form_pg_attribute in the TupleDesc.
+ *		用给定属性编号对应的 Form_pg_attribute 填充相应的
+ *		CompactAttribute 元素。只要 TupleDesc 中的某个 Form_pg_attribute
+ *		被修改，就必须调用本函数。
  */
 void
 populate_compact_attribute(TupleDesc tupdesc, int attnum)
@@ -120,8 +118,7 @@ populate_compact_attribute(TupleDesc tupdesc, int attnum)
 	CompactAttribute *dst;
 
 	/*
-	 * Don't use TupleDescCompactAttr to prevent infinite recursion in assert
-	 * builds.
+	 * 不要使用 TupleDescCompactAttr，以避免在开启断言的构建中出现无限递归。
 	 */
 	dst = &tupdesc->compact_attrs[attnum];
 
@@ -130,13 +127,12 @@ populate_compact_attribute(TupleDesc tupdesc, int attnum)
 
 /*
  * verify_compact_attribute
- *		In Assert enabled builds, we verify that the CompactAttribute is
- *		populated correctly.  This helps find bugs in places such as ALTER
- *		TABLE where code makes changes to the FormData_pg_attribute but
- *		forgets to call populate_compact_attribute().
+ *		在开启断言的构建中，我们校验 CompactAttribute 是否被正确填充。
+ *		这有助于发现类似 ALTER TABLE 那样修改了 FormData_pg_attribute
+ *		却忘记调用 populate_compact_attribute() 的代码缺陷。
  *
- * This is used in TupleDescCompactAttr(), but declared here to allow access
- * to populate_compact_attribute_internal().
+ * 本函数在 TupleDescCompactAttr() 中被使用，但在此处声明以便能够访问
+ * populate_compact_attribute_internal()。
  */
 void
 verify_compact_attribute(TupleDesc tupdesc, int attnum)
@@ -147,36 +143,33 @@ verify_compact_attribute(TupleDesc tupdesc, int attnum)
 	CompactAttribute tmp;
 
 	/*
-	 * Make a temp copy of the TupleDesc's CompactAttribute.  This may be a
-	 * shared TupleDesc and the attcacheoff might get changed by another
-	 * backend.
+	 * 制作 TupleDesc 的 CompactAttribute 的一个临时副本。这可能是共享的
+	 * TupleDesc，其 attcacheoff 可能被另一个后端进程修改。
 	 */
 	memcpy(&cattr, &tupdesc->compact_attrs[attnum], sizeof(CompactAttribute));
 
 	/*
-	 * Populate the temporary CompactAttribute from the corresponding
-	 * Form_pg_attribute
+	 * 用对应的 Form_pg_attribute 填充这个临时 CompactAttribute
 	 */
 	populate_compact_attribute_internal(attr, &tmp);
 
 	/*
-	 * Make the attcacheoff match since it's been reset to -1 by
-	 * populate_compact_attribute_internal.  Same with attnullability.
+	 * 让 attcacheoff 保持一致，因为它已被 populate_compact_attribute_internal
+	 * 重置为 -1。attnullability 同理。
 	 */
 	tmp.attcacheoff = cattr.attcacheoff;
 	tmp.attnullability = cattr.attnullability;
 
-	/* Check the freshly populated CompactAttribute matches the TupleDesc's */
+	/* 校验新填充的 CompactAttribute 与 TupleDesc 中的相匹配 */
 	Assert(memcmp(&tmp, &cattr, sizeof(CompactAttribute)) == 0);
 #endif
 }
 
 /*
  * CreateTemplateTupleDesc
- *		This function allocates an empty tuple descriptor structure.
+ *		本函数分配一个空的元组描述符结构。
  *
- * Tuple type ID information is initially set for an anonymous record type;
- * caller can overwrite this if needed.
+ * 元组类型 ID 信息初始时被设为匿名记录类型；调用方如有需要可覆盖它。
  */
 TupleDesc
 CreateTemplateTupleDesc(int natts)
@@ -184,46 +177,42 @@ CreateTemplateTupleDesc(int natts)
 	TupleDesc	desc;
 
 	/*
-	 * sanity checks
+	 * 合理性检查
 	 */
 	Assert(natts >= 0);
 
 	/*
-	 * Allocate enough memory for the tuple descriptor, the CompactAttribute
-	 * array and also an array of FormData_pg_attribute.
+	 * 为元组描述符、CompactAttribute 数组以及一个 FormData_pg_attribute
+	 * 数组分配足够的内存。
 	 *
-	 * Note: the FormData_pg_attribute array stride is
-	 * sizeof(FormData_pg_attribute), since we declare the array elements as
-	 * FormData_pg_attribute for notational convenience.  However, we only
-	 * guarantee that the first ATTRIBUTE_FIXED_PART_SIZE bytes of each entry
-	 * are valid; most code that copies tupdesc entries around copies just
-	 * that much.  In principle that could be less due to trailing padding,
-	 * although with the current definition of pg_attribute there probably
-	 * isn't any padding.
+	 * 注意：FormData_pg_attribute 数组的步长是
+	 * sizeof(FormData_pg_attribute)，因为我们把数组元素声明为
+	 * FormData_pg_attribute 只是为了方便记法。不过，我们只保证每个条目
+	 * 的前 ATTRIBUTE_FIXED_PART_SIZE 字节是有效的；大多数复制 tupdesc
+	 * 条目的代码也只复制这么多。原则上由于尾部填充它可能更少，但就
+	 * pg_attribute 当前的定义而言可能并没有任何填充。
 	 */
 	desc = (TupleDesc) palloc(offsetof(struct TupleDescData, compact_attrs) +
 							  natts * sizeof(CompactAttribute) +
 							  natts * sizeof(FormData_pg_attribute));
 
 	/*
-	 * Initialize other fields of the tupdesc.
+	 * 初始化 tupdesc 的其他字段。
 	 */
 	desc->natts = natts;
 	desc->constr = NULL;
 	desc->tdtypeid = RECORDOID;
 	desc->tdtypmod = -1;
-	desc->tdrefcount = -1;		/* assume not reference-counted */
+	desc->tdrefcount = -1;		/* 假定不进行引用计数 */
 
 	return desc;
 }
 
 /*
  * CreateTupleDesc
- *		This function allocates a new TupleDesc by copying a given
- *		Form_pg_attribute array.
+ *		本函数通过复制给定的 Form_pg_attribute 数组来分配一个新的 TupleDesc。
  *
- * Tuple type ID information is initially set for an anonymous record type;
- * caller can overwrite this if needed.
+ * 元组类型 ID 信息初始时被设为匿名记录类型；调用方如有需要可覆盖它。
  */
 TupleDesc
 CreateTupleDesc(int natts, Form_pg_attribute *attrs)
@@ -243,10 +232,9 @@ CreateTupleDesc(int natts, Form_pg_attribute *attrs)
 
 /*
  * CreateTupleDescCopy
- *		This function creates a new TupleDesc by copying from an existing
- *		TupleDesc.
+ *		本函数通过从已有 TupleDesc 复制来创建一个新的 TupleDesc。
  *
- * !!! Constraints and defaults are not copied !!!
+ * !!! 约束和默认值不会被复制 !!!
  */
 TupleDesc
 CreateTupleDescCopy(TupleDesc tupdesc)
@@ -256,14 +244,13 @@ CreateTupleDescCopy(TupleDesc tupdesc)
 
 	desc = CreateTemplateTupleDesc(tupdesc->natts);
 
-	/* Flat-copy the attribute array */
+	/* 扁平复制属性数组 */
 	memcpy(TupleDescAttr(desc, 0),
 		   TupleDescAttr(tupdesc, 0),
 		   desc->natts * sizeof(FormData_pg_attribute));
 
 	/*
-	 * Since we're not copying constraints and defaults, clear fields
-	 * associated with them.
+	 * 由于我们不会复制约束和默认值，因此清除与之相关的字段。
 	 */
 	for (i = 0; i < desc->natts; i++)
 	{
@@ -278,7 +265,7 @@ CreateTupleDescCopy(TupleDesc tupdesc)
 		populate_compact_attribute(desc, i);
 	}
 
-	/* We can copy the tuple type identification, too */
+	/* 我们也可以复制元组类型标识 */
 	desc->tdtypeid = tupdesc->tdtypeid;
 	desc->tdtypmod = tupdesc->tdtypmod;
 
@@ -287,10 +274,9 @@ CreateTupleDescCopy(TupleDesc tupdesc)
 
 /*
  * CreateTupleDescTruncatedCopy
- *		This function creates a new TupleDesc with only the first 'natts'
- *		attributes from an existing TupleDesc
+ *		本函数创建一个仅包含已有 TupleDesc 前 'natts' 个属性的新 TupleDesc。
  *
- * !!! Constraints and defaults are not copied !!!
+ * !!! 约束和默认值不会被复制 !!!
  */
 TupleDesc
 CreateTupleDescTruncatedCopy(TupleDesc tupdesc, int natts)
@@ -302,14 +288,13 @@ CreateTupleDescTruncatedCopy(TupleDesc tupdesc, int natts)
 
 	desc = CreateTemplateTupleDesc(natts);
 
-	/* Flat-copy the attribute array */
+	/* 扁平复制属性数组 */
 	memcpy(TupleDescAttr(desc, 0),
 		   TupleDescAttr(tupdesc, 0),
 		   desc->natts * sizeof(FormData_pg_attribute));
 
 	/*
-	 * Since we're not copying constraints and defaults, clear fields
-	 * associated with them.
+	 * 由于我们不会复制约束和默认值，因此清除与之相关的字段。
 	 */
 	for (i = 0; i < desc->natts; i++)
 	{
@@ -324,7 +309,7 @@ CreateTupleDescTruncatedCopy(TupleDesc tupdesc, int natts)
 		populate_compact_attribute(desc, i);
 	}
 
-	/* We can copy the tuple type identification, too */
+	/* 我们也可以复制元组类型标识 */
 	desc->tdtypeid = tupdesc->tdtypeid;
 	desc->tdtypmod = tupdesc->tdtypmod;
 
@@ -333,8 +318,7 @@ CreateTupleDescTruncatedCopy(TupleDesc tupdesc, int natts)
 
 /*
  * CreateTupleDescCopyConstr
- *		This function creates a new TupleDesc by copying from an existing
- *		TupleDesc (including its constraints and defaults).
+ *		本函数通过从已有 TupleDesc（连同其约束和默认值）复制来创建新的 TupleDesc。
  */
 TupleDesc
 CreateTupleDescCopyConstr(TupleDesc tupdesc)
@@ -345,7 +329,7 @@ CreateTupleDescCopyConstr(TupleDesc tupdesc)
 
 	desc = CreateTemplateTupleDesc(tupdesc->natts);
 
-	/* Flat-copy the attribute array */
+	/* 扁平复制属性数组 */
 	memcpy(TupleDescAttr(desc, 0),
 		   TupleDescAttr(tupdesc, 0),
 		   desc->natts * sizeof(FormData_pg_attribute));
@@ -358,7 +342,7 @@ CreateTupleDescCopyConstr(TupleDesc tupdesc)
 			TupleDescCompactAttr(tupdesc, i)->attnullability;
 	}
 
-	/* Copy the TupleConstr data structure, if any */
+	/* 如有约束结构则复制它 */
 	if (constr)
 	{
 		TupleConstr *cpy = (TupleConstr *) palloc0(sizeof(TupleConstr));
@@ -409,7 +393,7 @@ CreateTupleDescCopyConstr(TupleDesc tupdesc)
 		desc->constr = cpy;
 	}
 
-	/* We can copy the tuple type identification, too */
+	/* 我们也可以复制元组类型标识 */
 	desc->tdtypeid = tupdesc->tdtypeid;
 	desc->tdtypmod = tupdesc->tdtypmod;
 
@@ -418,23 +402,22 @@ CreateTupleDescCopyConstr(TupleDesc tupdesc)
 
 /*
  * TupleDescCopy
- *		Copy a tuple descriptor into caller-supplied memory.
- *		The memory may be shared memory mapped at any address, and must
- *		be sufficient to hold TupleDescSize(src) bytes.
+ *		将元组描述符复制到调用方提供的内存中。
+ *		该内存可以是映射到任意地址的共享内存，且必须足以容纳
+ *		TupleDescSize(src) 字节。
  *
- * !!! Constraints and defaults are not copied !!!
+ * !!! 约束和默认值不会被复制 !!!
  */
 void
 TupleDescCopy(TupleDesc dst, TupleDesc src)
 {
 	int			i;
 
-	/* Flat-copy the header and attribute arrays */
+	/* 扁平复制头部和属性数组 */
 	memcpy(dst, src, TupleDescSize(src));
 
 	/*
-	 * Since we're not copying constraints and defaults, clear fields
-	 * associated with them.
+	 * 由于我们不会复制约束和默认值，因此清除与之相关的字段。
 	 */
 	for (i = 0; i < dst->natts; i++)
 	{
@@ -451,18 +434,17 @@ TupleDescCopy(TupleDesc dst, TupleDesc src)
 	dst->constr = NULL;
 
 	/*
-	 * Also, assume the destination is not to be ref-counted.  (Copying the
-	 * source's refcount would be wrong in any case.)
+	 * 此外，假定目标描述符不进行引用计数。（无论如何，复制源端的
+	 * 引用计数值都是错误的。）
 	 */
 	dst->tdrefcount = -1;
 }
 
 /*
  * TupleDescCopyEntry
- *		This function copies a single attribute structure from one tuple
- *		descriptor to another.
+ *		本函数将单个属性结构从一个元组描述符复制到另一个。
  *
- * !!! Constraints and defaults are not copied !!!
+ * !!! 约束和默认值不会被复制 !!!
  */
 void
 TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
@@ -472,7 +454,7 @@ TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
 	Form_pg_attribute srcAtt = TupleDescAttr(src, srcAttno - 1);
 
 	/*
-	 * sanity checks
+	 * 合理性检查
 	 */
 	Assert(PointerIsValid(src));
 	Assert(PointerIsValid(dst));
@@ -485,7 +467,7 @@ TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
 
 	dstAtt->attnum = dstAttno;
 
-	/* since we're not copying constraints or defaults, clear these */
+	/* 由于我们不会复制约束和默认值，因此清除这些字段 */
 	dstAtt->attnotnull = false;
 	dstAtt->atthasdef = false;
 	dstAtt->atthasmissing = false;
@@ -496,7 +478,7 @@ TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
 }
 
 /*
- * Free a TupleDesc including all substructure
+ * 释放一个 TupleDesc 及其所有子结构
  */
 void
 FreeTupleDesc(TupleDesc tupdesc)
@@ -504,8 +486,8 @@ FreeTupleDesc(TupleDesc tupdesc)
 	int			i;
 
 	/*
-	 * Possibly this should assert tdrefcount == 0, to disallow explicit
-	 * freeing of un-refcounted tupdescs?
+	 * 或许此处应断言 tdrefcount == 0，以禁止对未引用计数的 tupdesc
+	 * 进行显式释放？
 	 */
 	Assert(tupdesc->tdrefcount <= 0);
 
@@ -549,11 +531,10 @@ FreeTupleDesc(TupleDesc tupdesc)
 }
 
 /*
- * Increment the reference count of a tupdesc, and log the reference in
- * CurrentResourceOwner.
+ * 增加 tupdesc 的引用计数，并将该引用记录到 CurrentResourceOwner 中。
  *
- * Do not apply this to tupdescs that are not being refcounted.  (Use the
- * macro PinTupleDesc for tupdescs of uncertain status.)
+ * 不要将其用于未进行引用计数的 tupdesc。（对状态不明的 tupdesc 请使用
+ * PinTupleDesc 宏。）
  */
 void
 IncrTupleDescRefCount(TupleDesc tupdesc)
@@ -566,12 +547,11 @@ IncrTupleDescRefCount(TupleDesc tupdesc)
 }
 
 /*
- * Decrement the reference count of a tupdesc, remove the corresponding
- * reference from CurrentResourceOwner, and free the tupdesc if no more
- * references remain.
+ * 减少 tupdesc 的引用计数，从 CurrentResourceOwner 中移除对应的引用，
+ * 并在不再有引用剩余时释放该 tupdesc。
  *
- * Do not apply this to tupdescs that are not being refcounted.  (Use the
- * macro ReleaseTupleDesc for tupdescs of uncertain status.)
+ * 不要将其用于未进行引用计数的 tupdesc。（对状态不明的 tupdesc 请使用
+ * ReleaseTupleDesc 宏。）
  */
 void
 DecrTupleDescRefCount(TupleDesc tupdesc)
@@ -584,7 +564,7 @@ DecrTupleDescRefCount(TupleDesc tupdesc)
 }
 
 /*
- * Compare two TupleDesc structures for logical equality
+ * 比较两个 TupleDesc 结构在逻辑上是否相等
  */
 bool
 equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
@@ -597,7 +577,7 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 	if (tupdesc1->tdtypeid != tupdesc2->tdtypeid)
 		return false;
 
-	/* tdtypmod and tdrefcount are not checked */
+	/* 不检查 tdtypmod 和 tdrefcount */
 
 	for (i = 0; i < tupdesc1->natts; i++)
 	{
@@ -605,16 +585,14 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 		Form_pg_attribute attr2 = TupleDescAttr(tupdesc2, i);
 
 		/*
-		 * We do not need to check every single field here: we can disregard
-		 * attrelid and attnum (which were used to place the row in the attrs
-		 * array in the first place).  It might look like we could dispense
-		 * with checking attlen/attbyval/attalign, since these are derived
-		 * from atttypid; but in the case of dropped columns we must check
-		 * them (since atttypid will be zero for all dropped columns) and in
-		 * general it seems safer to check them always.
+		 * 我们不需要在这里检查每一个字段：可以忽略 attrelid 和 attnum
+		 * （它们仅用于将行放入 attrs 数组中）。看起来我们似乎可以省去
+		 * 对 attlen/attbyval/attalign 的检查，因为它们是由 atttypid 派生
+		 * 出来的；但对于被删除的列，我们必须检查它们（因为所有被删除
+		 * 列的 atttypid 都为零），而且一般来说始终检查它们似乎更安全。
 		 *
-		 * We intentionally ignore atthasmissing, since that's not very
-		 * relevant in tupdescs, which lack the attmissingval field.
+		 * 我们有意忽略 atthasmissing，因为它在 tupdesc 中并不十分重要，
+		 * tupdesc 中并不包含 attmissingval 字段。
 		 */
 		if (strcmp(NameStr(attr1->attname), NameStr(attr2->attname)) != 0)
 			return false;
@@ -638,9 +616,8 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 			return false;
 
 		/*
-		 * When the column has a not-null constraint, we also need to consider
-		 * its validity aspect, which only manifests in CompactAttribute->
-		 * attnullability, so verify that.
+		 * 当列带有 not-null 约束时，我们还需要考虑其有效性方面，这一点
+		 * 仅体现在 CompactAttribute->attnullability 中，因此要对其进行校验。
 		 */
 		if (attr1->attnotnull)
 		{
@@ -668,7 +645,7 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 			return false;
 		if (attr1->attcollation != attr2->attcollation)
 			return false;
-		/* variable-length fields are not even present... */
+		/* 变长字段根本不存在…… */
 	}
 
 	if (tupdesc1->constr != NULL)
@@ -687,7 +664,7 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 		n = constr1->num_defval;
 		if (n != (int) constr2->num_defval)
 			return false;
-		/* We assume here that both AttrDefault arrays are in adnum order */
+		/* 此处我们假设两个 AttrDefault 数组都按 adnum 顺序排列 */
 		for (i = 0; i < n; i++)
 		{
 			AttrDefault *defval1 = constr1->defval + i;
@@ -726,9 +703,8 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 			return false;
 
 		/*
-		 * Similarly, we rely here on the ConstrCheck entries being sorted by
-		 * name.  If there are duplicate names, the outcome of the comparison
-		 * is uncertain, but that should not happen.
+		 * 类似地，这里依赖 ConstrCheck 条目按名称排序。如果存在重复的名称，
+		 * 比较结果将不确定，但这种情况不应发生。
 		 */
 		for (i = 0; i < n; i++)
 		{
@@ -751,27 +727,22 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 /*
  * equalRowTypes
  *
- * This determines whether two tuple descriptors have equal row types.  This
- * only checks those fields in pg_attribute that are applicable for row types,
- * while ignoring those fields that define the physical row storage or those
- * that define table column metadata.
+ * 本函数判断两个元组描述符是否具有相等的行类型。它仅检查 pg_attribute 中
+ * 适用于行类型的那些字段，而忽略那些定义物理行存储或表列元数据的字段。
  *
- * Specifically, this checks:
+ * 具体来说，它检查：
  *
- * - same number of attributes
- * - same composite type ID (but could both be zero)
- * - corresponding attributes (in order) have same the name, type, typmod,
- *   collation
+ * - 属性数量相同
+ * - 组合类型 ID 相同（但两者也可能都为零）
+ * - 对应的属性（按顺序）具有相同的名称、类型、typmod 和排序规则
  *
- * This is used to check whether two record types are compatible, whether
- * function return row types are the same, and other similar situations.
+ * 本函数用于判断两个记录类型是否兼容、函数返回的行类型是否相同，以及
+ * 其他类似场景。
  *
- * (XXX There was some discussion whether attndims should be checked here, but
- * for now it has been decided not to.)
+ * （XXX 关于这里是否应检查 attndims 曾有讨论，但目前决定不检查。）
  *
- * Note: We deliberately do not check the tdtypmod field.  This allows
- * typcache.c to use this routine to see if a cached record type matches a
- * requested type.
+ * 注意：我们有意不检查 tdtypmod 字段。这样 typcache.c 就能使用本例程
+ * 来判断一个已缓存的记录类型是否匹配所请求的类型。
  */
 bool
 equalRowTypes(TupleDesc tupdesc1, TupleDesc tupdesc2)
@@ -795,7 +766,7 @@ equalRowTypes(TupleDesc tupdesc1, TupleDesc tupdesc2)
 		if (attr1->attcollation != attr2->attcollation)
 			return false;
 
-		/* Record types derived from tables could have dropped fields. */
+		/* 从表派生的记录类型可能包含被删除的字段。 */
 		if (attr1->attisdropped != attr2->attisdropped)
 			return false;
 	}
@@ -806,8 +777,8 @@ equalRowTypes(TupleDesc tupdesc1, TupleDesc tupdesc2)
 /*
  * hashRowType
  *
- * If two tuple descriptors would be considered equal by equalRowTypes()
- * then their hash value will be equal according to this function.
+ * 如果两个元组描述符会被 equalRowTypes() 判定为相等，那么根据本函数
+ * 它们的哈希值也将相等。
  */
 uint32
 hashRowType(TupleDesc desc)
@@ -825,18 +796,15 @@ hashRowType(TupleDesc desc)
 
 /*
  * TupleDescInitEntry
- *		This function initializes a single attribute structure in
- *		a previously allocated tuple descriptor.
+ *		本函数在先前已分配的元组描述符中初始化单个属性结构。
  *
- * If attributeName is NULL, the attname field is set to an empty string
- * (this is for cases where we don't know or need a name for the field).
- * Also, some callers use this function to change the datatype-related fields
- * in an existing tupdesc; they pass attributeName = NameStr(att->attname)
- * to indicate that the attname field shouldn't be modified.
+ * 如果 attributeName 为 NULL，attname 字段会被设为空字符串
+ * （这适用于我们不知道或不需要该字段名称的场景）。此外，一些调用方
+ * 使用本函数来修改已有 tupdesc 中与数据类型相关的字段；它们传入
+ * attributeName = NameStr(att->attname) 以表示不应修改 attname 字段。
  *
- * Note that attcollation is set to the default for the specified datatype.
- * If a nondefault collation is needed, insert it afterwards using
- * TupleDescInitEntryCollation.
+ * 注意，attcollation 会被设为指定数据类型的默认值。如果需要非默认的
+ * 排序规则，请在之后使用 TupleDescInitEntryCollation 插入。
  */
 void
 TupleDescInitEntry(TupleDesc desc,
@@ -851,7 +819,7 @@ TupleDescInitEntry(TupleDesc desc,
 	Form_pg_attribute att;
 
 	/*
-	 * sanity checks
+	 * 合理性检查
 	 */
 	Assert(PointerIsValid(desc));
 	Assert(attributeNumber >= 1);
@@ -860,16 +828,16 @@ TupleDescInitEntry(TupleDesc desc,
 	Assert(attdim <= PG_INT16_MAX);
 
 	/*
-	 * initialize the attribute fields
+	 * 初始化属性字段
 	 */
 	att = TupleDescAttr(desc, attributeNumber - 1);
 
-	att->attrelid = 0;			/* dummy value */
+	att->attrelid = 0;			/* 虚拟值 */
 
 	/*
-	 * Note: attributeName can be NULL, because the planner doesn't always
-	 * fill in valid resname values in targetlists, particularly for resjunk
-	 * attributes. Also, do nothing if caller wants to re-use the old attname.
+	 * 注意：attributeName 可以为 NULL，因为规划器并不总是在目标列表中
+	 * 填入有效的 resname 值，尤其是针对 resjunk 属性。此外，如果调用方
+	 * 想要复用旧的 attname，则不做任何改动。
 	 */
 	if (attributeName == NULL)
 		MemSet(NameStr(att->attname), 0, NAMEDATALEN);
@@ -889,7 +857,7 @@ TupleDescInitEntry(TupleDesc desc,
 	att->attisdropped = false;
 	att->attislocal = true;
 	att->attinhcount = 0;
-	/* variable-length fields are not present in tupledescs */
+	/* 变长字段在 tupdesc 中并不存在 */
 
 	tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(oidtypeid));
 	if (!HeapTupleIsValid(tuple))
@@ -911,8 +879,8 @@ TupleDescInitEntry(TupleDesc desc,
 
 /*
  * TupleDescInitBuiltinEntry
- *		Initialize a tuple descriptor without catalog access.  Only
- *		a limited range of builtin types are supported.
+ *		在无需访问目录的情况下初始化元组描述符。仅支持有限范围的
+ *		内建类型。
  */
 void
 TupleDescInitBuiltinEntry(TupleDesc desc,
@@ -924,18 +892,18 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 {
 	Form_pg_attribute att;
 
-	/* sanity checks */
+	/* 合理性检查 */
 	Assert(PointerIsValid(desc));
 	Assert(attributeNumber >= 1);
 	Assert(attributeNumber <= desc->natts);
 	Assert(attdim >= 0);
 	Assert(attdim <= PG_INT16_MAX);
 
-	/* initialize the attribute fields */
+	/* 初始化属性字段 */
 	att = TupleDescAttr(desc, attributeNumber - 1);
-	att->attrelid = 0;			/* dummy value */
+	att->attrelid = 0;			/* 虚拟值 */
 
-	/* unlike TupleDescInitEntry, we require an attribute name */
+	/* 与 TupleDescInitEntry 不同，这里要求提供属性名称 */
 	Assert(attributeName != NULL);
 	namestrcpy(&(att->attname), attributeName);
 
@@ -952,14 +920,14 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 	att->attisdropped = false;
 	att->attislocal = true;
 	att->attinhcount = 0;
-	/* variable-length fields are not present in tupledescs */
+	/* 变长字段在 tupdesc 中并不存在 */
 
 	att->atttypid = oidtypeid;
 
 	/*
-	 * Our goal here is to support just enough types to let basic builtin
-	 * commands work without catalog access - e.g. so that we can do certain
-	 * things even in processes that are not connected to a database.
+	 * 我们这里的目的是支持足够少的类型，使基本的内建命令无需访问目录
+	 * 也能工作——例如，这样即使在不连接数据库的后端进程中也能执行
+	 * 某些操作。
 	 */
 	switch (oidtypeid)
 	{
@@ -1019,8 +987,7 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 /*
  * TupleDescInitEntryCollation
  *
- * Assign a nondefault collation to a previously initialized tuple descriptor
- * entry.
+ * 为先前已初始化的元组描述符条目指定一个非默认的排序规则。
  */
 void
 TupleDescInitEntryCollation(TupleDesc desc,
@@ -1028,7 +995,7 @@ TupleDescInitEntryCollation(TupleDesc desc,
 							Oid collationid)
 {
 	/*
-	 * sanity checks
+	 * 合理性检查
 	 */
 	Assert(PointerIsValid(desc));
 	Assert(attributeNumber >= 1);
@@ -1040,12 +1007,12 @@ TupleDescInitEntryCollation(TupleDesc desc,
 /*
  * BuildDescFromLists
  *
- * Build a TupleDesc given lists of column names (as String nodes),
- * column type OIDs, typmods, and collation OIDs.
+ * 根据给定的列名列表（String 节点形式）、列类型 OID 列表、typmod 列表
+ * 以及排序规则 OID 列表构建一个 TupleDesc。
  *
- * No constraints are generated.
+ * 不会生成任何约束。
  *
- * This is for use with functions returning RECORD.
+ * 本函数用于返回 RECORD 的函数。
  */
 TupleDesc
 BuildDescFromLists(const List *names, const List *types, const List *typmods, const List *collations)
@@ -1064,7 +1031,7 @@ BuildDescFromLists(const List *names, const List *types, const List *typmods, co
 	Assert(natts == list_length(collations));
 
 	/*
-	 * allocate a new tuple descriptor
+	 * 分配一个新的元组描述符
 	 */
 	desc = CreateTemplateTupleDesc(natts);
 
@@ -1086,7 +1053,7 @@ BuildDescFromLists(const List *names, const List *types, const List *typmods, co
 }
 
 /*
- * Get default expression (or NULL if none) for the given attribute number.
+ * 获取给定属性编号的默认表达式（若无则为 NULL）。
  */
 Node *
 TupleDescGetDefault(TupleDesc tupdesc, AttrNumber attnum)
@@ -1110,14 +1077,13 @@ TupleDescGetDefault(TupleDesc tupdesc, AttrNumber attnum)
 	return result;
 }
 
-/* ResourceOwner callbacks */
-
+/* ResourceOwner 回调 */
 static void
 ResOwnerReleaseTupleDesc(Datum res)
 {
 	TupleDesc	tupdesc = (TupleDesc) DatumGetPointer(res);
 
-	/* Like DecrTupleDescRefCount, but don't call ResourceOwnerForget() */
+	/* 类似于 DecrTupleDescRefCount，但不调用 ResourceOwnerForget() */
 	Assert(tupdesc->tdrefcount > 0);
 	if (--tupdesc->tdrefcount == 0)
 		FreeTupleDesc(tupdesc);

@@ -1,8 +1,8 @@
 /*-------------------------------------------------------------------------
  *
  * heaptoast.c
- *	  Heap-specific definitions for external and compressed storage
- *	  of variable size attributes.
+ *	  堆特有的定义，用于变长属性的外部存储与压缩存储
+ *	  （变长属性的存储）。
  *
  * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
@@ -13,11 +13,11 @@
  *
  * INTERFACE ROUTINES
  *		heap_toast_insert_or_update -
- *			Try to make a given tuple fit into one page by compressing
- *			or moving off attributes
+ *			尝试通过压缩或移出属性，使给定的元组能放入单个页面
+ *			（即移出属性）
  *
  *		heap_toast_delete -
- *			Reclaim toast storage when a tuple is deleted
+ *			当元组被删除时回收其 toast 存储
  *
  *-------------------------------------------------------------------------
  */
@@ -36,7 +36,7 @@
 /* ----------
  * heap_toast_delete -
  *
- *	Cascaded delete toast-entries on DELETE
+ *	在 DELETE 时对 toast 项进行级联删除
  * ----------
  */
 void
@@ -47,29 +47,27 @@ heap_toast_delete(Relation rel, HeapTuple oldtup, bool is_speculative)
 	bool		toast_isnull[MaxHeapAttributeNumber];
 
 	/*
-	 * We should only ever be called for tuples of plain relations or
-	 * materialized views --- recursing on a toast rel is bad news.
+	 * 我们只应该被调用于普通关系或物化视图的元组——对 toast 关系递归是糟糕的。
 	 */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION ||
 		   rel->rd_rel->relkind == RELKIND_MATVIEW);
 
 	/*
-	 * Get the tuple descriptor and break down the tuple into fields.
+	 * 获取元组描述符并将元组拆分为各个字段。
 	 *
-	 * NOTE: it's debatable whether to use heap_deform_tuple() here or just
-	 * heap_getattr() only the varlena columns.  The latter could win if there
-	 * are few varlena columns and many non-varlena ones. However,
-	 * heap_deform_tuple costs only O(N) while the heap_getattr way would cost
-	 * O(N^2) if there are many varlena columns, so it seems better to err on
-	 * the side of linear cost.  (We won't even be here unless there's at
-	 * least one varlena column, by the way.)
+	 * 注意：在这里使用 heap_deform_tuple() 还是仅对 varlena 列使用
+	 * heap_getattr() 是有争议的。如果 varlena 列很少而非 varlena 列很多，
+	 * 后者可能更优。然而，heap_deform_tuple 的代价仅为 O(N)，而使用
+	 * heap_getattr 的方式在存在很多 varlena 列时代价为 O(N^2)，因此选择
+	 * 线性代价似乎更稳妥。（顺便一提，除非至少存在一个 varlena 列，否则
+	 * 我们根本不会走到这里。）
 	 */
 	tupleDesc = rel->rd_att;
 
 	Assert(tupleDesc->natts <= MaxHeapAttributeNumber);
 	heap_deform_tuple(oldtup, tupleDesc, toast_values, toast_isnull);
 
-	/* Do the real work. */
+	/* 执行真正的工作。 */
 	toast_delete_external(rel, toast_values, toast_isnull, is_speculative);
 }
 
@@ -77,19 +75,19 @@ heap_toast_delete(Relation rel, HeapTuple oldtup, bool is_speculative)
 /* ----------
  * heap_toast_insert_or_update -
  *
- *	Delete no-longer-used toast-entries and create new ones to
- *	make the new tuple fit on INSERT or UPDATE
+ *	删除不再使用的 toast 项并创建新的 toast 项，以
+ *	使新元组能放入 INSERT 或 UPDATE 中
  *
- * Inputs:
- *	newtup: the candidate new tuple to be inserted
- *	oldtup: the old row version for UPDATE, or NULL for INSERT
- *	options: options to be passed to heap_insert() for toast rows
- * Result:
- *	either newtup if no toasting is needed, or a palloc'd modified tuple
- *	that is what should actually get stored
+ * 输入：
+ *	newtup：要插入的候选新元组
+ *	oldtup：用于 UPDATE 的旧行版本；INSERT 时为 NULL
+ *	options：传递给 heap_insert()（用于 toast 行）的选项
+ * 结果：
+ *	若无需 toast 则返回 newtup，否则返回一个 palloc 分配的、被修改过的元组，
+ *	该元组才是实际应当被存储的内容
  *
- * NOTE: neither newtup nor oldtup will be modified.  This is a change
- * from the pre-8.1 API of this routine.
+ * 注意：newtup 与 oldtup 都不会被修改。这与本例程 8.1 版本之前的
+ * API 不同。
  * ----------
  */
 HeapTuple
@@ -111,22 +109,20 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	ToastTupleContext ttc;
 
 	/*
-	 * Ignore the INSERT_SPECULATIVE option. Speculative insertions/super
-	 * deletions just normally insert/delete the toast values. It seems
-	 * easiest to deal with that here, instead on, potentially, multiple
-	 * callers.
+	 * 忽略 INSERT_SPECULATIVE 选项。推测性的插入/超级删除只是正常地
+	 * 插入/删除 toast 值。在这里处理似乎最简单，而不是（可能）在多个
+	 * 调用方中分别处理。
 	 */
 	options &= ~HEAP_INSERT_SPECULATIVE;
 
 	/*
-	 * We should only ever be called for tuples of plain relations or
-	 * materialized views --- recursing on a toast rel is bad news.
+	 * 我们只应该被调用于普通关系或物化视图的元组——对 toast 关系递归是糟糕的。
 	 */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION ||
 		   rel->rd_rel->relkind == RELKIND_MATVIEW);
 
 	/*
-	 * Get the tuple descriptor and break down the tuple(s) into fields.
+	 * 获取元组描述符并将元组（们）拆分为各个字段。
 	 */
 	tupleDesc = rel->rd_att;
 	numAttrs = tupleDesc->natts;
@@ -137,7 +133,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		heap_deform_tuple(oldtup, tupleDesc, toast_oldvalues, toast_oldisnull);
 
 	/* ----------
-	 * Prepare for toasting
+	 * 为 toast 做准备
 	 * ----------
 	 */
 	ttc.ttc_rel = rel;
@@ -156,30 +152,28 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	ttc.ttc_attr = toast_attr;
 	toast_tuple_init(&ttc);
 
-	/* ----------
-	 * Compress and/or save external until data fits into target length
-	 *
-	 *	1: Inline compress attributes with attstorage EXTENDED, and store very
-	 *	   large attributes with attstorage EXTENDED or EXTERNAL external
-	 *	   immediately
-	 *	2: Store attributes with attstorage EXTENDED or EXTERNAL external
-	 *	3: Inline compress attributes with attstorage MAIN
-	 *	4: Store attributes with attstorage MAIN external
-	 * ----------
-	 */
+/* ----------
+ * 压缩和/或外部存储，直到数据能放入目标长度
+ *
+ *	1：对 attstorage 为 EXTENDED 的属性进行内联压缩，并对很大的
+ *	   attstorage 为 EXTENDED 或 EXTERNAL 的大属性立即外部存储
+ *	2：将 attstorage 为 EXTENDED 或 EXTERNAL 的属性外部存储
+ *	3：对 attstorage 为 MAIN 的属性进行内联压缩
+ *	4：将 attstorage 为 MAIN 的属性外部存储
+ * ----------
+ */
 
-	/* compute header overhead --- this should match heap_form_tuple() */
+	/* 计算头部开销——这应当与 heap_form_tuple() 保持一致 */
 	hoff = SizeofHeapTupleHeader;
 	if ((ttc.ttc_flags & TOAST_HAS_NULLS) != 0)
 		hoff += BITMAPLEN(numAttrs);
 	hoff = MAXALIGN(hoff);
-	/* now convert to a limit on the tuple data size */
+	/* 现在转换为对元组数据大小的限制 */
 	maxDataLen = RelationGetToastTupleTarget(rel, TOAST_TUPLE_TARGET) - hoff;
 
 	/*
-	 * Look for attributes with attstorage EXTENDED to compress.  Also find
-	 * large attributes with attstorage EXTENDED or EXTERNAL, and store them
-	 * external.
+	 * 查找具有 attstorage EXTENDED 的属性进行压缩。同时找出具有
+	 * attstorage EXTENDED 或 EXTERNAL 的大属性，并将其外部存储。
 	 */
 	while (heap_compute_data_size(tupleDesc,
 								  toast_values, toast_isnull) > maxDataLen)
@@ -191,26 +185,24 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 			break;
 
 		/*
-		 * Attempt to compress it inline, if it has attstorage EXTENDED
+		 * 尝试就地压缩它（如果其 attstorage 为 EXTENDED）
 		 */
 		if (TupleDescAttr(tupleDesc, biggest_attno)->attstorage == TYPSTORAGE_EXTENDED)
 			toast_tuple_try_compression(&ttc, biggest_attno);
 		else
 		{
-			/*
-			 * has attstorage EXTERNAL, ignore on subsequent compression
-			 * passes
-			 */
+		/*
+		 * 其 attstorage 为 EXTERNAL，在后续的压缩轮次中忽略
+		 */
 			toast_attr[biggest_attno].tai_colflags |= TOASTCOL_INCOMPRESSIBLE;
 		}
 
 		/*
-		 * If this value is by itself more than maxDataLen (after compression
-		 * if any), push it out to the toast table immediately, if possible.
-		 * This avoids uselessly compressing other fields in the common case
-		 * where we have one long field and several short ones.
+		 * 如果该值单独就超过了 maxDataLen（压缩后若有），则尽可能立即将其
+		 * 推入 toast 表。这避免了在常见的“一个长字段加若干短字段”情况下，
+		 * 对其他字段进行无用的压缩。
 		 *
-		 * XXX maybe the threshold should be less than maxDataLen?
+		 * XXX：也许阈值应该小于 maxDataLen？
 		 */
 		if (toast_attr[biggest_attno].tai_size > maxDataLen &&
 			rel->rd_rel->reltoastrelid != InvalidOid)
@@ -218,9 +210,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	}
 
 	/*
-	 * Second we look for attributes of attstorage EXTENDED or EXTERNAL that
-	 * are still inline, and make them external.  But skip this if there's no
-	 * toast table to push them to.
+	 * 其次，我们查找仍然是内联的、attstorage 为 EXTENDED 或 EXTERNAL 的属性，
+	 * 并将它们外部化。但如果不存在可推入的 toast 表，则跳过此步。
 	 */
 	while (heap_compute_data_size(tupleDesc,
 								  toast_values, toast_isnull) > maxDataLen &&
@@ -235,8 +226,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	}
 
 	/*
-	 * Round 3 - this time we take attributes with storage MAIN into
-	 * compression
+	 * 第 3 轮——这次我们将 storage 为 MAIN 的属性纳入压缩
 	 */
 	while (heap_compute_data_size(tupleDesc,
 								  toast_values, toast_isnull) > maxDataLen)
@@ -251,9 +241,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	}
 
 	/*
-	 * Finally we store attributes of type MAIN externally.  At this point we
-	 * increase the target tuple size, so that MAIN attributes aren't stored
-	 * externally unless really necessary.
+	 * 最后，我们将 MAIN 类型的属性外部存储。此时我们增大目标元组大小，
+	 * 使得 MAIN 属性除非确实必要，否则不会被外部存储。
 	 */
 	maxDataLen = TOAST_TUPLE_TARGET_MAIN - hoff;
 
@@ -271,8 +260,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	}
 
 	/*
-	 * In the case we toasted any values, we need to build a new heap tuple
-	 * with the changed values.
+	 * 如果我们对任一值进行了 toast，就需要用变更后的值构建一个新的堆元组。
 	 */
 	if ((ttc.ttc_flags & TOAST_NEEDS_CHANGE) != 0)
 	{
@@ -283,14 +271,12 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		int32		new_tuple_len;
 
 		/*
-		 * Calculate the new size of the tuple.
+		 * 计算元组的新大小。
 		 *
-		 * Note: we used to assume here that the old tuple's t_hoff must equal
-		 * the new_header_len value, but that was incorrect.  The old tuple
-		 * might have a smaller-than-current natts, if there's been an ALTER
-		 * TABLE ADD COLUMN since it was stored; and that would lead to a
-		 * different conclusion about the size of the null bitmap, or even
-		 * whether there needs to be one at all.
+		 * 注意：我们过去在此处假设旧元组的 t_hoff 必然等于 new_header_len
+		 * 的值，但那是不正确的。旧元组可能拥有比当前更小的 natts，如果自其
+		 * 被存储以来发生过 ALTER TABLE ADD COLUMN；而这会导致对空值位图大小的
+		 * 不同结论，甚至关于是否根本需要空值位图的不同结论。
 		 */
 		new_header_len = SizeofHeapTupleHeader;
 		if ((ttc.ttc_flags & TOAST_HAS_NULLS) != 0)
@@ -301,7 +287,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		new_tuple_len = new_header_len + new_data_len;
 
 		/*
-		 * Allocate and zero the space needed, and fill HeapTupleData fields.
+		 * 分配并清零所需的空间，并填充 HeapTupleData 字段。
 		 */
 		result_tuple = (HeapTuple) palloc0(HEAPTUPLESIZE + new_tuple_len);
 		result_tuple->t_len = new_tuple_len;
@@ -311,13 +297,13 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		result_tuple->t_data = new_data;
 
 		/*
-		 * Copy the existing tuple header, but adjust natts and t_hoff.
+		 * 复制现有元组头，但调整 natts 和 t_hoff。
 		 */
 		memcpy(new_data, olddata, SizeofHeapTupleHeader);
 		HeapTupleHeaderSetNatts(new_data, numAttrs);
 		new_data->t_hoff = new_header_len;
 
-		/* Copy over the data, and fill the null bitmap if needed */
+		/* 复制数据，并在需要时填充空值位图 */
 		heap_fill_tuple(tupleDesc,
 						toast_values,
 						toast_isnull,
@@ -339,11 +325,11 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 /* ----------
  * toast_flatten_tuple -
  *
- *	"Flatten" a tuple to contain no out-of-line toasted fields.
- *	(This does not eliminate compressed or short-header datums.)
+ *	将一个元组“拍平”，使其不包含任何行外（out-of-line）的 toasted 字段。
+ *	（这并不会消除已压缩的或短头部的 datum。）
  *
- *	Note: we expect the caller already checked HeapTupleHasExternal(tup),
- *	so there is no need for a short-circuit path.
+ *	注意：我们期望调用者已经检查过 HeapTupleHasExternal(tup)，
+ *	因此无需短路路径。
  * ----------
  */
 HeapTuple
@@ -357,7 +343,7 @@ toast_flatten_tuple(HeapTuple tup, TupleDesc tupleDesc)
 	bool		toast_free[MaxTupleAttributeNumber];
 
 	/*
-	 * Break down the tuple into fields.
+	 * 将元组拆分为各个字段。
 	 */
 	Assert(numAttrs <= MaxTupleAttributeNumber);
 	heap_deform_tuple(tup, tupleDesc, toast_values, toast_isnull);
@@ -367,7 +353,7 @@ toast_flatten_tuple(HeapTuple tup, TupleDesc tupleDesc)
 	for (i = 0; i < numAttrs; i++)
 	{
 		/*
-		 * Look at non-null varlena attributes
+		 * 查看非空的 varlena 属性
 		 */
 		if (!toast_isnull[i] && TupleDescCompactAttr(tupleDesc, i)->attlen == -1)
 		{
@@ -384,14 +370,13 @@ toast_flatten_tuple(HeapTuple tup, TupleDesc tupleDesc)
 	}
 
 	/*
-	 * Form the reconfigured tuple.
+	 * 构造重新配置后的元组。
 	 */
 	new_tuple = heap_form_tuple(tupleDesc, toast_values, toast_isnull);
 
 	/*
-	 * Be sure to copy the tuple's identity fields.  We also make a point of
-	 * copying visibility info, just in case anybody looks at those fields in
-	 * a syscache entry.
+	 * 务必复制元组的标识字段。我们也特意复制可见性信息，以防有人在 syscache
+	 * 条目中查看这些字段。
 	 */
 	new_tuple->t_self = tup->t_self;
 	new_tuple->t_tableOid = tup->t_tableOid;
@@ -406,7 +391,7 @@ toast_flatten_tuple(HeapTuple tup, TupleDesc tupleDesc)
 		tup->t_data->t_infomask2 & HEAP2_XACT_MASK;
 
 	/*
-	 * Free allocated temp values
+	 * 释放已分配的临时值
 	 */
 	for (i = 0; i < numAttrs; i++)
 		if (toast_free[i])
@@ -419,30 +404,23 @@ toast_flatten_tuple(HeapTuple tup, TupleDesc tupleDesc)
 /* ----------
  * toast_flatten_tuple_to_datum -
  *
- *	"Flatten" a tuple containing out-of-line toasted fields into a Datum.
- *	The result is always palloc'd in the current memory context.
+ *	将一个包含行外 toasted 字段的元组“拍平”为一个 Datum。
+ *	结果总是在当前内存上下文中通过 palloc 分配。
  *
- *	We have a general rule that Datums of container types (rows, arrays,
- *	ranges, etc) must not contain any external TOAST pointers.  Without
- *	this rule, we'd have to look inside each Datum when preparing a tuple
- *	for storage, which would be expensive and would fail to extend cleanly
- *	to new sorts of container types.
+ *	我们有一个通用规则：容器类型（行、数组、范围等）的 Datum 不得包含任何
+ *	外部 TOAST 指针。如果没有这条规则，我们在准备存储元组时就必须查看每个
+ *	Datum 的内部，而这代价高昂，并且无法干净地扩展到新的容器类型。
  *
- *	However, we don't want to say that tuples represented as HeapTuples
- *	can't contain toasted fields, so instead this routine should be called
- *	when such a HeapTuple is being converted into a Datum.
+ *	然而，我们不想规定以 HeapTuple 表示的元组不能包含 toasted 字段，因此当
+ *	这样的 HeapTuple 被转换为 Datum 时，应当调用本例程。
  *
- *	While we're at it, we decompress any compressed fields too.  This is not
- *	necessary for correctness, but reflects an expectation that compression
- *	will be more effective if applied to the whole tuple not individual
- *	fields.  We are not so concerned about that that we want to deconstruct
- *	and reconstruct tuples just to get rid of compressed fields, however.
- *	So callers typically won't call this unless they see that the tuple has
- *	at least one external field.
+ *	顺带地，我们也会解压任何已压缩的字段。这对于正确性并非必要，但它反映了
+ *	一个预期：如果对整个元组（而非单个字段）进行压缩，压缩会更有效。不过我们
+ *	并不想仅仅为了去掉压缩字段就去解构并重建元组。因此，调用者通常只会在发现
+ *	元组至少存在一个外部字段时才会调用本例程。
  *
- *	On the other hand, in-line short-header varlena fields are left alone.
- *	If we "untoasted" them here, they'd just get changed back to short-header
- *	format anyway within heap_fill_tuple.
+ *	另一方面，内联的短头部 varlena 字段会被保持原样。如果我们在这里将它们
+ *	“去 toast”，它们随后又会在 heap_fill_tuple 中被改回短头部格式。
  * ----------
  */
 Datum
@@ -462,14 +440,14 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 	bool		toast_isnull[MaxTupleAttributeNumber];
 	bool		toast_free[MaxTupleAttributeNumber];
 
-	/* Build a temporary HeapTuple control structure */
+	/* 构建一个临时的 HeapTuple 控制结构 */
 	tmptup.t_len = tup_len;
 	ItemPointerSetInvalid(&(tmptup.t_self));
 	tmptup.t_tableOid = InvalidOid;
 	tmptup.t_data = tup;
 
 	/*
-	 * Break down the tuple into fields.
+	 * 将元组拆分为各个字段。
 	 */
 	Assert(numAttrs <= MaxTupleAttributeNumber);
 	heap_deform_tuple(&tmptup, tupleDesc, toast_values, toast_isnull);
@@ -479,7 +457,7 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 	for (i = 0; i < numAttrs; i++)
 	{
 		/*
-		 * Look at non-null varlena attributes
+		 * 查看非空的 varlena 属性
 		 */
 		if (toast_isnull[i])
 			has_nulls = true;
@@ -499,10 +477,9 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 	}
 
 	/*
-	 * Calculate the new size of the tuple.
+	 * 计算元组的新大小。
 	 *
-	 * This should match the reconstruction code in
-	 * heap_toast_insert_or_update.
+	 * 这应当与 heap_toast_insert_or_update 中的重建代码保持一致。
 	 */
 	new_header_len = SizeofHeapTupleHeader;
 	if (has_nulls)
@@ -515,18 +492,18 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 	new_data = (HeapTupleHeader) palloc0(new_tuple_len);
 
 	/*
-	 * Copy the existing tuple header, but adjust natts and t_hoff.
+	 * 复制现有元组头，但调整 natts 和 t_hoff。
 	 */
 	memcpy(new_data, tup, SizeofHeapTupleHeader);
 	HeapTupleHeaderSetNatts(new_data, numAttrs);
 	new_data->t_hoff = new_header_len;
 
-	/* Set the composite-Datum header fields correctly */
+	/* 正确设置复合 Datum 头部字段 */
 	HeapTupleHeaderSetDatumLength(new_data, new_tuple_len);
 	HeapTupleHeaderSetTypeId(new_data, tupleDesc->tdtypeid);
 	HeapTupleHeaderSetTypMod(new_data, tupleDesc->tdtypmod);
 
-	/* Copy over the data, and fill the null bitmap if needed */
+	/* 复制数据，并在需要时填充空值位图 */
 	heap_fill_tuple(tupleDesc,
 					toast_values,
 					toast_isnull,
@@ -536,7 +513,7 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 					has_nulls ? new_data->t_bits : NULL);
 
 	/*
-	 * Free allocated temp values
+	 * 释放已分配的临时值
 	 */
 	for (i = 0; i < numAttrs; i++)
 		if (toast_free[i])
@@ -549,14 +526,14 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 /* ----------
  * toast_build_flattened_tuple -
  *
- *	Build a tuple containing no out-of-line toasted fields.
- *	(This does not eliminate compressed or short-header datums.)
+ *	构建一个不包含任何行外 toasted 字段的元组。
+ *	（这并不会消除已压缩的或短头部的 datum。）
  *
- *	This is essentially just like heap_form_tuple, except that it will
- *	expand any external-data pointers beforehand.
+ *	这本质上与 heap_form_tuple 类似，区别在于它会
+ *	事先展开任何外部数据指针。
  *
- *	It's not very clear whether it would be preferable to decompress
- *	in-line compressed datums while at it.  For now, we don't.
+ *	是否最好在同时解压内联的已压缩 datum 并不十分明确。
+ *	目前我们不会这样做。
  * ----------
  */
 HeapTuple
@@ -572,8 +549,8 @@ toast_build_flattened_tuple(TupleDesc tupleDesc,
 	Pointer		freeable_values[MaxTupleAttributeNumber];
 
 	/*
-	 * We can pass the caller's isnull array directly to heap_form_tuple, but
-	 * we potentially need to modify the values array.
+	 * 我们可以将调用者的 isnull 数组直接传给 heap_form_tuple，但我们可能
+	 * 需要修改 values 数组。
 	 */
 	Assert(numAttrs <= MaxTupleAttributeNumber);
 	memcpy(new_values, values, numAttrs * sizeof(Datum));
@@ -582,7 +559,7 @@ toast_build_flattened_tuple(TupleDesc tupleDesc,
 	for (i = 0; i < numAttrs; i++)
 	{
 		/*
-		 * Look at non-null varlena attributes
+		 * 查看非空的 varlena 属性
 		 */
 		if (!isnull[i] && TupleDescCompactAttr(tupleDesc, i)->attlen == -1)
 		{
@@ -599,12 +576,12 @@ toast_build_flattened_tuple(TupleDesc tupleDesc,
 	}
 
 	/*
-	 * Form the reconfigured tuple.
+	 * 构造重新配置后的元组。
 	 */
 	new_tuple = heap_form_tuple(tupleDesc, new_values, isnull);
 
 	/*
-	 * Free allocated temp values
+	 * 释放已分配的临时值
 	 */
 	for (i = 0; i < num_to_free; i++)
 		pfree(freeable_values[i]);
@@ -613,14 +590,14 @@ toast_build_flattened_tuple(TupleDesc tupleDesc,
 }
 
 /*
- * Fetch a TOAST slice from a heap table.
+ * 从堆表中获取一个 TOAST 切片。
  *
- * toastrel is the relation from which chunks are to be fetched.
- * valueid identifies the TOAST value from which chunks are being fetched.
- * attrsize is the total size of the TOAST value.
- * sliceoffset is the byte offset within the TOAST value from which to fetch.
- * slicelength is the number of bytes to be fetched from the TOAST value.
- * result is the varlena into which the results should be written.
+ * toastrel：从中获取块的 relation。
+ * valueid：标识正在获取其块的 TOAST 值。
+ * attrsize：TOAST 值的总大小。
+ * sliceoffset：TOAST 值内部、用于获取的字节偏移量。
+ * slicelength：要从 TOAST 值中获取的字节数。
+ * result：应当将结果写入其中的 varlena。
  */
 void
 heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
@@ -640,7 +617,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 	int			num_indexes;
 	int			validIndex;
 
-	/* Look for the valid index of toast relation */
+	/* 查找 toast 关系的有效索引 */
 	validIndex = toast_open_indexes(toastrel,
 									AccessShareLock,
 									&toastidxs,
@@ -650,15 +627,15 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 	endchunk = (sliceoffset + slicelength - 1) / TOAST_MAX_CHUNK_SIZE;
 	Assert(endchunk <= totalchunks);
 
-	/* Set up a scan key to fetch from the index. */
+	/* 设置用于从索引获取的扫描键。 */
 	ScanKeyInit(&toastkey[0],
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(valueid));
 
 	/*
-	 * No additional condition if fetching all chunks. Otherwise, use an
-	 * equality condition for one chunk, and a range condition otherwise.
+	 * 如果获取所有块，则没有额外条件。否则，对单个块使用相等条件，
+	 * 对其他情况使用范围条件。
 	 */
 	if (startchunk == 0 && endchunk == totalchunks - 1)
 		nscankeys = 1;
@@ -683,14 +660,14 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		nscankeys = 3;
 	}
 
-	/* Prepare for scan */
+	/* 准备扫描 */
 	toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
 										   get_toast_snapshot(), nscankeys, toastkey);
 
 	/*
-	 * Read the chunks by index
+	 * 通过索引读取各个块
 	 *
-	 * The index is on (valueid, chunkidx) so they will come in order
+	 * 索引建立在 (valueid, chunkidx) 上，因此它们会按顺序返回。
 	 */
 	expectedchunk = startchunk;
 	while ((ttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
@@ -705,7 +682,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		int32		chcpyend;
 
 		/*
-		 * Have a chunk, extract the sequence number and the data
+		 * 得到一个块，提取其序号与数据
 		 */
 		curchunk = DatumGetInt32(fastgetattr(ttup, 2, toasttupDesc, &isnull));
 		Assert(!isnull);
@@ -718,21 +695,21 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		}
 		else if (VARATT_IS_SHORT(chunk))
 		{
-			/* could happen due to heap_form_tuple doing its thing */
+			/* 可能由于 heap_form_tuple 的运作而发生 */
 			chunksize = VARSIZE_SHORT(chunk) - VARHDRSZ_SHORT;
 			chunkdata = VARDATA_SHORT(chunk);
 		}
 		else
 		{
-			/* should never happen */
+			/* 不应发生 */
 			elog(ERROR, "found toasted toast chunk for toast value %u in %s",
 				 valueid, RelationGetRelationName(toastrel));
-			chunksize = 0;		/* keep compiler quiet */
+			chunksize = 0;		/* 让编译器安静 */
 			chunkdata = NULL;
 		}
 
 		/*
-		 * Some checks on the data we've found
+		 * 对我们找到的数据做一些检查
 		 */
 		if (curchunk != expectedchunk)
 			ereport(ERROR,
@@ -758,7 +735,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 									 RelationGetRelationName(toastrel))));
 
 		/*
-		 * Copy the data into proper place in our result
+		 * 将数据复制到结果中的正确位置
 		 */
 		chcpystrt = 0;
 		chcpyend = chunksize - 1;
@@ -776,7 +753,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 	}
 
 	/*
-	 * Final checks that we successfully fetched the datum
+	 * 最终检查我们是否成功获取了该 datum
 	 */
 	if (expectedchunk != (endchunk + 1))
 		ereport(ERROR,
@@ -785,7 +762,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 								 expectedchunk, valueid,
 								 RelationGetRelationName(toastrel))));
 
-	/* End scan and close indexes. */
+	/* 结束扫描并关闭索引。 */
 	systable_endscan_ordered(toastscan);
 	toast_close_indexes(toastidxs, num_indexes, AccessShareLock);
 }

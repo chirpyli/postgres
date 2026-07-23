@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * attmap.h
- *	  Definitions for PostgreSQL attribute mappings
+ *	  PostgreSQL 属性映射的定义
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -40,7 +40,7 @@ typedef struct AttrMap
 extern AttrMap *make_attrmap(int maplen);
 extern void free_attrmap(AttrMap *map);
 
-/* Conversion routines to build mappings */
+/* 构建映射的转换例程 */
 extern AttrMap *build_attrmap_by_name(TupleDesc indesc,
 									  TupleDesc outdesc,
 									  bool missing_ok);

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * checksum.h
- *	  Checksum implementation for data pages.
+ *	  数据页的校验和实现。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -16,8 +16,7 @@
 #include "storage/block.h"
 
 /*
- * Compute the checksum for a Postgres page.  The page must be aligned on a
- * 4-byte boundary.
+ * 计算 Postgres 页面的校验和。页面必须按 4 字节边界对齐。
  */
 extern uint16 pg_checksum_page(char *page, BlockNumber blkno);
 

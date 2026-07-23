@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * toast_compression.c
- *	  Functions for toast compression.
+ *	  TOAST 压缩相关函数。
  *
  * Copyright (c) 2021-2025, PostgreSQL Global Development Group
  *
@@ -32,9 +32,9 @@ int			default_toast_compression = TOAST_PGLZ_COMPRESSION;
 			 errdetail("This functionality requires the server to be built with lz4 support.")))
 
 /*
- * Compress a varlena using PGLZ.
+ * 使用 PGLZ 压缩一个 varlena。
  *
- * Returns the compressed varlena, or NULL if compression fails.
+ * 返回压缩后的 varlena；若压缩失败则返回 NULL。
  */
 struct varlena *
 pglz_compress_datum(const struct varlena *value)
@@ -46,16 +46,15 @@ pglz_compress_datum(const struct varlena *value)
 	valsize = VARSIZE_ANY_EXHDR(value);
 
 	/*
-	 * No point in wasting a palloc cycle if value size is outside the allowed
-	 * range for compression.
+	 * 如果 value 的大小不在允许的压缩范围内，就无需浪费一次 palloc 调用。
 	 */
 	if (valsize < PGLZ_strategy_default->min_input_size ||
 		valsize > PGLZ_strategy_default->max_input_size)
 		return NULL;
 
 	/*
-	 * Figure out the maximum possible size of the pglz output, add the bytes
-	 * that will be needed for varlena overhead, and allocate that amount.
+	 * 计算出 pglz 输出的最大可能大小，加上 varlena 头部开销所需的字节数，
+	 * 然后分配相应数量的内存。
 	 */
 	tmp = (struct varlena *) palloc(PGLZ_MAX_OUTPUT(valsize) +
 									VARHDRSZ_COMPRESSED);
@@ -76,7 +75,7 @@ pglz_compress_datum(const struct varlena *value)
 }
 
 /*
- * Decompress a varlena that was compressed using PGLZ.
+ * 解压一个使用 PGLZ 压缩的 varlena。
  */
 struct varlena *
 pglz_decompress_datum(const struct varlena *value)
@@ -84,10 +83,10 @@ pglz_decompress_datum(const struct varlena *value)
 	struct varlena *result;
 	int32		rawsize;
 
-	/* allocate memory for the uncompressed data */
+	/* 为解压后的数据分配内存 */
 	result = (struct varlena *) palloc(VARDATA_COMPRESSED_GET_EXTSIZE(value) + VARHDRSZ);
 
-	/* decompress the data */
+	/* 解压数据 */
 	rawsize = pglz_decompress((char *) value + VARHDRSZ_COMPRESSED,
 							  VARSIZE(value) - VARHDRSZ_COMPRESSED,
 							  VARDATA(result),
@@ -103,7 +102,7 @@ pglz_decompress_datum(const struct varlena *value)
 }
 
 /*
- * Decompress part of a varlena that was compressed using PGLZ.
+ * 解压使用 PGLZ 压缩的 varlena 的一部分。
  */
 struct varlena *
 pglz_decompress_datum_slice(const struct varlena *value,
@@ -112,10 +111,10 @@ pglz_decompress_datum_slice(const struct varlena *value,
 	struct varlena *result;
 	int32		rawsize;
 
-	/* allocate memory for the uncompressed data */
+	/* 为解压后的数据分配内存 */
 	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
 
-	/* decompress the data */
+	/* 解压数据 */
 	rawsize = pglz_decompress((char *) value + VARHDRSZ_COMPRESSED,
 							  VARSIZE(value) - VARHDRSZ_COMPRESSED,
 							  VARDATA(result),
@@ -131,16 +130,16 @@ pglz_decompress_datum_slice(const struct varlena *value,
 }
 
 /*
- * Compress a varlena using LZ4.
+ * 使用 LZ4 压缩一个 varlena。
  *
- * Returns the compressed varlena, or NULL if compression fails.
+ * 返回压缩后的 varlena；若压缩失败则返回 NULL。
  */
 struct varlena *
 lz4_compress_datum(const struct varlena *value)
 {
 #ifndef USE_LZ4
 	NO_LZ4_SUPPORT();
-	return NULL;				/* keep compiler quiet */
+	return NULL;				/* 避免编译器告警 */
 #else
 	int32		valsize;
 	int32		len;
@@ -150,8 +149,8 @@ lz4_compress_datum(const struct varlena *value)
 	valsize = VARSIZE_ANY_EXHDR(value);
 
 	/*
-	 * Figure out the maximum possible size of the LZ4 output, add the bytes
-	 * that will be needed for varlena overhead, and allocate that amount.
+	 * 计算出 LZ4 输出的最大可能大小，加上 varlena 头部开销所需的字节数，
+	 * 然后分配相应数量的内存。
 	 */
 	max_size = LZ4_compressBound(valsize);
 	tmp = (struct varlena *) palloc(max_size + VARHDRSZ_COMPRESSED);
@@ -162,7 +161,7 @@ lz4_compress_datum(const struct varlena *value)
 	if (len <= 0)
 		elog(ERROR, "lz4 compression failed");
 
-	/* data is incompressible so just free the memory and return NULL */
+	/* 数据不可压缩，因此直接释放内存并返回 NULL */
 	if (len > valsize)
 	{
 		pfree(tmp);
@@ -176,22 +175,22 @@ lz4_compress_datum(const struct varlena *value)
 }
 
 /*
- * Decompress a varlena that was compressed using LZ4.
+ * 解压一个使用 LZ4 压缩的 varlena。
  */
 struct varlena *
 lz4_decompress_datum(const struct varlena *value)
 {
 #ifndef USE_LZ4
 	NO_LZ4_SUPPORT();
-	return NULL;				/* keep compiler quiet */
+	return NULL;				/* 避免编译器告警 */
 #else
 	int32		rawsize;
 	struct varlena *result;
 
-	/* allocate memory for the uncompressed data */
+	/* 为解压后的数据分配内存 */
 	result = (struct varlena *) palloc(VARDATA_COMPRESSED_GET_EXTSIZE(value) + VARHDRSZ);
 
-	/* decompress the data */
+	/* 解压数据 */
 	rawsize = LZ4_decompress_safe((char *) value + VARHDRSZ_COMPRESSED,
 								  VARDATA(result),
 								  VARSIZE(value) - VARHDRSZ_COMPRESSED,
@@ -209,26 +208,26 @@ lz4_decompress_datum(const struct varlena *value)
 }
 
 /*
- * Decompress part of a varlena that was compressed using LZ4.
+ * 解压使用 LZ4 压缩的 varlena 的一部分。
  */
 struct varlena *
 lz4_decompress_datum_slice(const struct varlena *value, int32 slicelength)
 {
 #ifndef USE_LZ4
 	NO_LZ4_SUPPORT();
-	return NULL;				/* keep compiler quiet */
+	return NULL;				/* 避免编译器告警 */
 #else
 	int32		rawsize;
 	struct varlena *result;
 
-	/* slice decompression not supported prior to 1.8.3 */
+	/* 1.8.3 之前的版本不支持分片解压 */
 	if (LZ4_versionNumber() < 10803)
 		return lz4_decompress_datum(value);
 
-	/* allocate memory for the uncompressed data */
+	/* 为解压后的数据分配内存 */
 	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
 
-	/* decompress the data */
+	/* 解压数据 */
 	rawsize = LZ4_decompress_safe_partial((char *) value + VARHDRSZ_COMPRESSED,
 										  VARDATA(result),
 										  VARSIZE(value) - VARHDRSZ_COMPRESSED,
@@ -246,9 +245,9 @@ lz4_decompress_datum_slice(const struct varlena *value, int32 slicelength)
 }
 
 /*
- * Extract compression ID from a varlena.
+ * 从一个 varlena 中提取压缩 ID。
  *
- * Returns TOAST_INVALID_COMPRESSION_ID if the varlena is not compressed.
+ * 如果该 varlena 未被压缩，则返回 TOAST_INVALID_COMPRESSION_ID。
  */
 ToastCompressionId
 toast_get_compression_id(struct varlena *attr)
@@ -256,9 +255,8 @@ toast_get_compression_id(struct varlena *attr)
 	ToastCompressionId cmid = TOAST_INVALID_COMPRESSION_ID;
 
 	/*
-	 * If it is stored externally then fetch the compression method id from
-	 * the external toast pointer.  If compressed inline, fetch it from the
-	 * toast compression header.
+	 * 如果数据以外部方式存储，则从外部 toast 指针中获取压缩方法 id；
+	 * 如果是内联压缩，则从 toast 压缩头中获取。
 	 */
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
@@ -276,10 +274,10 @@ toast_get_compression_id(struct varlena *attr)
 }
 
 /*
- * CompressionNameToMethod - Get compression method from compression name
+ * CompressionNameToMethod - 根据压缩名称获取压缩方法
  *
- * Search in the available built-in methods.  If the compression not found
- * in the built-in methods then return InvalidCompressionMethod.
+ * 在内置的可用方法中查找。如果在内置方法中未找到该压缩方法，
+ * 则返回 InvalidCompressionMethod。
  */
 char
 CompressionNameToMethod(const char *compression)
@@ -298,7 +296,7 @@ CompressionNameToMethod(const char *compression)
 }
 
 /*
- * GetCompressionMethodName - Get compression method name
+ * GetCompressionMethodName - 获取压缩方法名称
  */
 const char *
 GetCompressionMethodName(char method)
@@ -311,6 +309,6 @@ GetCompressionMethodName(char method)
 			return "lz4";
 		default:
 			elog(ERROR, "invalid compression method %c", method);
-			return NULL;		/* keep compiler quiet */
+			return NULL;		/* 避免编译器告警 */
 	}
 }

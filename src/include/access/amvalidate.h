@@ -1,8 +1,8 @@
 /*-------------------------------------------------------------------------
  *
  * amvalidate.h
- *	  Support routines for index access methods' amvalidate and
- *	  amadjustmembers functions.
+ *	  索引访问方法的 amvalidate 与
+ *	  amadjustmembers 函数的支持例程。
  *
  * Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
@@ -26,7 +26,7 @@ typedef struct OpFamilyOpFuncGroup
 } OpFamilyOpFuncGroup;
 
 
-/* Functions in access/index/amvalidate.c */
+/* access/index/amvalidate.c 中的函数 */
 extern List *identify_opfamily_groups(CatCList *oprlist, CatCList *proclist);
 extern bool check_amproc_signature(Oid funcid, Oid restype, bool exact,
 								   int minargs, int maxargs,...);

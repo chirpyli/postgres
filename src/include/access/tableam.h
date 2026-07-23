@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * tableam.h
- *	  POSTGRES table access method definitions.
+ *	  POSTGRES 表访问方法的定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -9,8 +9,8 @@
  *
  * src/include/access/tableam.h
  *
- * NOTES
- *		See tableam.sgml for higher level documentation.
+ * 说明
+ *		更高层的文档说明请参阅 tableam.sgml。
  *
  *-------------------------------------------------------------------------
  */
@@ -28,7 +28,7 @@
 
 #define DEFAULT_TABLE_ACCESS_METHOD	"heap"
 
-/* GUCs */
+/* GUC 参数 */
 extern PGDLLIMPORT char *default_table_access_method;
 extern PGDLLIMPORT bool synchronize_seqscans;
 
@@ -40,11 +40,11 @@ struct VacuumParams;
 struct ValidateIndexState;
 
 /*
- * Bitmask values for the flags argument to the scan_begin callback.
+ * scan_begin 回调中 flags 参数的位掩码取值。
  */
 typedef enum ScanOptions
 {
-	/* one of SO_TYPE_* may be specified */
+	/* 可指定其中一个 SO_TYPE_* */
 	SO_TYPE_SEQSCAN = 1 << 0,
 	SO_TYPE_BITMAPSCAN = 1 << 1,
 	SO_TYPE_SAMPLESCAN = 1 << 2,
@@ -52,96 +52,87 @@ typedef enum ScanOptions
 	SO_TYPE_TIDRANGESCAN = 1 << 4,
 	SO_TYPE_ANALYZE = 1 << 5,
 
-	/* several of SO_ALLOW_* may be specified */
-	/* allow or disallow use of access strategy */
+	/* 可指定多个 SO_ALLOW_* */
+	/* 允许或禁止使用访问策略 */
 	SO_ALLOW_STRAT = 1 << 6,
-	/* report location to syncscan logic? */
+	/* 是否向 syncscan 逻辑上报位置？ */
 	SO_ALLOW_SYNC = 1 << 7,
-	/* verify visibility page-at-a-time? */
+	/* 是否逐页验证可见性？ */
 	SO_ALLOW_PAGEMODE = 1 << 8,
 
-	/* unregister snapshot at scan end? */
+	/* 扫描结束时是否注销快照？ */
 	SO_TEMP_SNAPSHOT = 1 << 9,
 }			ScanOptions;
 
 /*
- * Result codes for table_{update,delete,lock_tuple}, and for visibility
- * routines inside table AMs.
+ * table_{update,delete,lock_tuple} 以及表 AM 内部可见性例程的结果码。
  */
 typedef enum TM_Result
 {
 	/*
-	 * Signals that the action succeeded (i.e. update/delete performed, lock
-	 * was acquired)
+	 * 表示操作成功（即执行了 update/delete、获取到了锁）。
 	 */
 	TM_Ok,
 
-	/* The affected tuple wasn't visible to the relevant snapshot */
+	/* 受影响的元组对相应快照不可见 */
 	TM_Invisible,
 
-	/* The affected tuple was already modified by the calling backend */
+	/* 受影响的元组已被当前后端修改过 */
 	TM_SelfModified,
 
 	/*
-	 * The affected tuple was updated by another transaction. This includes
-	 * the case where tuple was moved to another partition.
+	 * 受影响的元组已被另一个事务更新。这也包括元组被移动到另一个分区的情况。
 	 */
 	TM_Updated,
 
-	/* The affected tuple was deleted by another transaction */
+	/* 受影响的元组已被另一个事务删除 */
 	TM_Deleted,
 
 	/*
-	 * The affected tuple is currently being modified by another session. This
-	 * will only be returned if table_(update/delete/lock_tuple) are
-	 * instructed not to wait.
+	 * 受影响的元组当前正被另一个会话修改。只有当 table_(update/delete/lock_tuple)
+	 * 被指示不等待时才会返回此值。
 	 */
 	TM_BeingModified,
 
-	/* lock couldn't be acquired, action skipped. Only used by lock_tuple */
+	/* 无法获取锁，操作被跳过。仅由 lock_tuple 使用 */
 	TM_WouldBlock,
 } TM_Result;
 
 /*
- * Result codes for table_update(..., update_indexes*..).
- * Used to determine which indexes to update.
+ * table_update(..., update_indexes*..) 的结果码。
+ * 用于决定需要更新哪些索引。
  */
 typedef enum TU_UpdateIndexes
 {
-	/* No indexed columns were updated (incl. TID addressing of tuple) */
+	/* 没有索引列被更新（包括元组的 TID 寻址） */
 	TU_None,
 
-	/* A non-summarizing indexed column was updated, or the TID has changed */
+	/* 某个非汇总型索引列被更新，或 TID 已改变 */
 	TU_All,
 
-	/* Only summarized columns were updated, TID is unchanged */
+	/* 只有汇总型列被更新，TID 未改变 */
 	TU_Summarizing,
 } TU_UpdateIndexes;
 
 /*
- * When table_tuple_update, table_tuple_delete, or table_tuple_lock fail
- * because the target tuple is already outdated, they fill in this struct to
- * provide information to the caller about what happened. When those functions
- * succeed, the contents of this struct should not be relied upon, except for
- * `traversed`, which may be set in both success and failure cases.
+ * 当 table_tuple_update、table_tuple_delete 或 table_tuple_lock 因为目标元组
+ * 已经过期而失败时，它们会填充这个结构体，向调用者说明发生了什么。当这些函数
+ * 成功时，不应依赖该结构体的内容，但 `traversed` 例外，它在成功和失败两种情况下都
+ * 可能被设置。
  *
- * ctid is the target's ctid link: it is the same as the target's TID if the
- * target was deleted, or the location of the replacement tuple if the target
- * was updated.
+ * ctid 是目标的 ctid 链接：如果目标被删除，它与目标的 TID 相同；如果目标被更新，
+ * 则它是替换元组的存储位置。
  *
- * xmax is the outdating transaction's XID.  If the caller wants to visit the
- * replacement tuple, it must check that this matches before believing the
- * replacement is really a match.  This is InvalidTransactionId if the target
- * was !LP_NORMAL (expected only for a TID retrieved from syscache).
+ * xmax 是使该元组过时的那个事务的 XID。如果调用者想要访问替换元组，必须先核对
+ * 它与本值一致，才能确信替换元组确实匹配。如果目标是 !LP_NORMAL（预期只出现在
+ * 从 syscache 取出的 TID 上），本值为 InvalidTransactionId。
  *
- * cmax is the outdating command's CID, but only when the failure code is
- * TM_SelfModified (i.e., something in the current transaction outdated the
- * tuple); otherwise cmax is zero.  (We make this restriction because
- * HeapTupleHeaderGetCmax doesn't work for tuples outdated in other
- * transactions.)
+ * cmax 是使该元组过时的命令的 CID，但仅当失败码为 TM_SelfModified（即当前事务中
+ * 的某次操作使该元组过时）时才有意义；否则 cmax 为零。（之所以做此限制，是因为
+ * HeapTupleHeaderGetCmax 对由其他事务过时的元组不适用。）
  *
- * traversed indicates if an update chain was followed in order to try to lock
- * the target tuple.  (This may be set in both success and failure cases.)
+ * traversed 表示为了尝试锁定目标元组而是否跟随了一条更新链。
+ * （成功和失败两种情况下都可能被设置。）
  */
 typedef struct TM_FailureData
 {
@@ -152,121 +143,97 @@ typedef struct TM_FailureData
 } TM_FailureData;
 
 /*
- * State used when calling table_index_delete_tuples().
+ * 调用 table_index_delete_tuples() 时使用的状态。
  *
- * Represents the status of table tuples, referenced by table TID and taken by
- * index AM from index tuples.  State consists of high level parameters of the
- * deletion operation, plus two mutable palloc()'d arrays for information
- * about the status of individual table tuples.  These are conceptually one
- * single array.  Using two arrays keeps the TM_IndexDelete struct small,
- * which makes sorting the first array (the deltids array) fast.
+ * 表示由表 TID 引用、由索引 AM 从索引元组中取出的表元组的状态。状态包含删除操作的
+ * 高层参数，外加两个可变的、由 palloc() 分配的数组，用于记录各个表元组的状态信息。
+ * 概念上这两个数组可以理解为一个单一数组。使用两个数组可以让 TM_IndexDelete
+ * 结构体保持较小的体积，从而加快对第一个数组（deltids 数组）的排序。
  *
- * Some index AM callers perform simple index tuple deletion (by specifying
- * bottomup = false), and include only known-dead deltids.  These known-dead
- * entries are all marked knowndeletable = true directly (typically these are
- * TIDs from LP_DEAD-marked index tuples), but that isn't strictly required.
+ * 一些索引 AM 调用者执行简单的索引元组删除（指定 bottomup = false），并且只包含
+ * 已知死亡的 deltids。这些已知死亡的条目都直接被标记为 knowndeletable = true
+ * （通常它们是来自 LP_DEAD 标记的索引元组的 TID），但这并非硬性要求。
  *
- * Callers that specify bottomup = true are "bottom-up index deletion"
- * callers.  The considerations for the tableam are more subtle with these
- * callers because they ask the tableam to perform highly speculative work,
- * and might only expect the tableam to check a small fraction of all entries.
- * Caller is not allowed to specify knowndeletable = true for any entry
- * because everything is highly speculative.  Bottom-up caller provides
- * context and hints to tableam -- see comments below for details on how index
- * AMs and tableams should coordinate during bottom-up index deletion.
+ * 指定 bottomup = true 的调用者是"自底向上索引删除"调用者。对于这类调用者，表 AM
+ * 需要考虑的问题更为微妙，因为它们要求表 AM 执行极具投机性的工作，而且可能只期望
+ * 表 AM 检查所有条目中的一小部分。调用者不允许为任何条目指定 knowndeletable = true，
+ * 因为一切都高度投机。自底向上调用者向表 AM 提供上下文与提示——详见下文关于索引 AM
+ * 与表 AM 在自底向上索引删除期间应如何协作的注释。
  *
- * Simple index deletion callers may ask the tableam to perform speculative
- * work, too.  This is a little like bottom-up deletion, but not too much.
- * The tableam will only perform speculative work when it's practically free
- * to do so in passing for simple deletion caller (while always performing
- * whatever work is needed to enable knowndeletable/LP_DEAD index tuples to
- * be deleted within index AM).  This is the real reason why it's possible for
- * simple index deletion caller to specify knowndeletable = false up front
- * (this means "check if it's possible for me to delete corresponding index
- * tuple when it's cheap to do so in passing").  The index AM should only
- * include "extra" entries for index tuples whose TIDs point to a table block
- * that tableam is expected to have to visit anyway (in the event of a block
- * orientated tableam).  The tableam isn't strictly obligated to check these
- * "extra" TIDs, but a block-based AM should always manage to do so in
- * practice.
+ * 简单的索引删除调用者也可能要求表 AM 执行投机性工作。这有点类似自底向上删除，
+ * 但差别也不小。表 AM 只有在顺带执行时几乎零成本的情况下，才会为简单删除调用者
+ * 执行投机性工作（同时始终执行那些使 knowndeletable/LP_DEAD 索引元组能够在索引 AM
+ * 内被删除所需的操作）。这正是简单索引删除调用者可以提前指定 knowndeletable = false
+ * 的真实原因（其含义是"顺带成本低廉时，检查我是否能够删除对应的索引元组"）。索引 AM
+ * 只应为那些 TID 指向表 AM 本来就要访问的表块的索引元组包含"额外"条目（针对基于块的
+ * 表 AM 而言）。表 AM 并不被强制要求检查这些"额外" TID，但在实践中，基于块的 AM 总是
+ * 能够做到这一点。
  *
- * The final contents of the deltids/status arrays are interesting to callers
- * that ask tableam to perform speculative work (i.e. when _any_ items have
- * knowndeletable set to false up front).  These index AM callers will
- * naturally need to consult final state to determine which index tuples are
- * in fact deletable.
+ * deltids/status 数组的最终内容，对于要求表 AM 执行投机性工作的调用者（即任何条目
+ * 提前将 knowndeletable 置为 false 的情况）来说是有意义的。这些索引 AM 调用者自然
+ * 需要查阅最终状态，以判断哪些索引元组实际上可被删除。
  *
- * The index AM can keep track of which index tuple relates to which deltid by
- * setting idxoffnum (and/or relying on each entry being uniquely identifiable
- * using tid), which is important when the final contents of the array will
- * need to be interpreted -- the array can shrink from initial size after
- * tableam processing and/or have entries in a new order (tableam may sort
- * deltids array for its own reasons).  Bottom-up callers may find that final
- * ndeltids is 0 on return from call to tableam, in which case no index tuple
- * deletions are possible.  Simple deletion callers can rely on any entries
- * they know to be deletable appearing in the final array as deletable.
+ * 索引 AM 可以通过设置 idxoffnum（和/或依赖每个条目能够用 tid 唯一标识）来记录哪个
+ * 索引元组对应哪个 deltid，这在数组最终内容需要被解释时非常重要——数组在表 AM 处理
+ * 之后可能会从初始大小收缩，和/或条目的顺序发生变化（表 AM 可能因自身原因对 deltids
+ * 数组排序）。自底向上调用者可能会发现，从表 AM 返回时最终的 ndeltids 为 0，在这种
+ * 情况下没有任何索引元组可以被删除。简单删除调用者可以信赖：它们已知可删除的条目
+ * 都会以可删除的形式出现在最终数组中。
  */
 typedef struct TM_IndexDelete
 {
-	ItemPointerData tid;		/* table TID from index tuple */
-	int16		id;				/* Offset into TM_IndexStatus array */
+	ItemPointerData tid;		/* 来自索引元组的表 TID */
+	int16		id;				/* 在 TM_IndexStatus 数组中的偏移 */
 } TM_IndexDelete;
 
 typedef struct TM_IndexStatus
 {
-	OffsetNumber idxoffnum;		/* Index am page offset number */
-	bool		knowndeletable; /* Currently known to be deletable? */
+	OffsetNumber idxoffnum;		/* 索引 AM 的页内偏移号 */
+	bool		knowndeletable; /* 当前是否已知可删除？ */
 
-	/* Bottom-up index deletion specific fields follow */
-	bool		promising;		/* Promising (duplicate) index tuple? */
-	int16		freespace;		/* Space freed in index if deleted */
+	/* 以下为自底向上索引删除专用字段 */
+	bool		promising;		/* 有希望的（重复）索引元组？ */
+	int16		freespace;		/* 删除后释放的索引空间 */
 } TM_IndexStatus;
 
 /*
- * Index AM/tableam coordination is central to the design of bottom-up index
- * deletion.  The index AM provides hints about where to look to the tableam
- * by marking some entries as "promising".  Index AM does this with duplicate
- * index tuples that are strongly suspected to be old versions left behind by
- * UPDATEs that did not logically modify indexed values.  Index AM may find it
- * helpful to only mark entries as promising when they're thought to have been
- * affected by such an UPDATE in the recent past.
+ * 索引 AM 与表 AM 的协作是自底向上索引删除设计的核心。索引 AM 通过将一些条目标记为
+ * "有希望"，向表 AM 提供去哪里查找的提示。索引 AM 是对那些被强烈怀疑为 UPDATE
+ * （在逻辑上没有修改被索引值）遗留下来旧版本的重复索引元组做此标记的。索引 AM 可能会
+ * 发现，仅当这些条目被认为在近期受到过此类 UPDATE 影响时才将其标记为"有希望"会更有帮助。
  *
- * Bottom-up index deletion casts a wide net at first, usually by including
- * all TIDs on a target index page.  It is up to the tableam to worry about
- * the cost of checking transaction status information.  The tableam is in
- * control, but needs careful guidance from the index AM.  Index AM requests
- * that bottomupfreespace target be met, while tableam measures progress
- * towards that goal by tallying the per-entry freespace value for known
- * deletable entries. (All !bottomup callers can just set these space related
- * fields to zero.)
+ * 自底向上索引删除一开始会撒下大网，通常是包含目标索引页上的所有 TID。检查事务状态
+ * 信息的开销由表 AM 负责。表 AM 处于主导地位，但需要索引 AM 的悉心引导。索引 AM 要求
+ * 达到 bottomupfreespace 目标，而表 AM 通过累加已知可删除条目的逐条目 freespace 值
+ * 来衡量朝向该目标的进度。（所有 !bottomup 调用者都可以直接将这些空间相关字段置零。）
  */
 typedef struct TM_IndexDeleteOp
 {
-	Relation	irel;			/* Target index relation */
-	BlockNumber iblknum;		/* Index block number (for error reports) */
-	bool		bottomup;		/* Bottom-up (not simple) deletion? */
-	int			bottomupfreespace;	/* Bottom-up space target */
+	Relation	irel;			/* 目标索引关系 */
+	BlockNumber iblknum;		/* 索引块号（用于错误报告） */
+	bool		bottomup;		/* 是否为自底向上（而非简单）删除？ */
+	int			bottomupfreespace;	/* 自底向上删除的空间目标 */
 
-	/* Mutable per-TID information follows (index AM initializes entries) */
-	int			ndeltids;		/* Current # of deltids/status elements */
+	/* 以下为可变的逐 TID 信息（由索引 AM 初始化条目） */
+	int			ndeltids;		/* 当前 deltids/status 元素个数 */
 	TM_IndexDelete *deltids;
 	TM_IndexStatus *status;
 } TM_IndexDeleteOp;
 
-/* "options" flag bits for table_tuple_insert */
-/* TABLE_INSERT_SKIP_WAL was 0x0001; RelationNeedsWAL() now governs */
+/* table_tuple_insert 的 "options" 标志位 */
+/* TABLE_INSERT_SKIP_WAL 曾经是 0x0001；现在由 RelationNeedsWAL() 控制 */
 #define TABLE_INSERT_SKIP_FSM		0x0002
 #define TABLE_INSERT_FROZEN			0x0004
 #define TABLE_INSERT_NO_LOGICAL		0x0008
 
-/* flag bits for table_tuple_lock */
-/* Follow tuples whose update is in progress if lock modes don't conflict  */
+/* table_tuple_lock 的标志位 */
+/* 若锁模式不冲突，则跟随更新仍在进行的元组 */
 #define TUPLE_LOCK_FLAG_LOCK_UPDATE_IN_PROGRESS	(1 << 0)
-/* Follow update chain and lock latest version of tuple */
+/* 跟随更新链并锁定元组的最新版本 */
 #define TUPLE_LOCK_FLAG_FIND_LAST_VERSION		(1 << 1)
 
 
-/* Typedef for callback function for table_index_build_scan */
+/* table_index_build_scan 回调函数的类型定义 */
 typedef void (*IndexBuildCallback) (Relation index,
 									ItemPointer tid,
 									Datum *values,
@@ -275,53 +242,48 @@ typedef void (*IndexBuildCallback) (Relation index,
 									void *state);
 
 /*
- * API struct for a table AM.  Note this must be allocated in a
- * server-lifetime manner, typically as a static const struct, which then gets
- * returned by FormData_pg_am.amhandler.
+ * 表 AM 的 API 结构体。注意它必须以"服务进程生命周期"的方式分配，通常作为 static
+ * const 结构体，然后由 FormData_pg_am.amhandler 返回。
  *
- * In most cases it's not appropriate to call the callbacks directly, use the
- * table_* wrapper functions instead.
+ * 在大多数情况下，直接调用这些回调是不恰当的，应当改用 table_* 包装函数。
  *
- * GetTableAmRoutine() asserts that required callbacks are filled in, remember
- * to update when adding a callback.
+ * GetTableAmRoutine() 会断言所需的回调都已被填充，新增回调时不要忘记更新它。
  */
 typedef struct TableAmRoutine
 {
-	/* this must be set to T_TableAmRoutine */
+	/* 本字段必须设置为 T_TableAmRoutine */
 	NodeTag		type;
 
 
 	/* ------------------------------------------------------------------------
-	 * Slot related callbacks.
+	 * 与 slot 相关的回调。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * Return slot implementation suitable for storing a tuple of this AM.
+	 * 返回适合存储本 AM 元组的 slot 实现。
 	 */
 	const TupleTableSlotOps *(*slot_callbacks) (Relation rel);
 
 
 	/* ------------------------------------------------------------------------
-	 * Table scan callbacks.
+	 * 表扫描回调。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * Start a scan of `rel`.  The callback has to return a TableScanDesc,
-	 * which will typically be embedded in a larger, AM specific, struct.
+	 * 开启对 `rel` 的扫描。该回调必须返回一个 TableScanDesc，它通常会被嵌入到
+	 * 一个更大的、AM 特定的结构体中。
 	 *
-	 * If nkeys != 0, the results need to be filtered by those scan keys.
+	 * 如果 nkeys != 0，结果需要用这些扫描键进行过滤。
 	 *
-	 * pscan, if not NULL, will have already been initialized with
-	 * parallelscan_initialize(), and has to be for the same relation. Will
-	 * only be set coming from table_beginscan_parallel().
+	 * 如果 pscan 不为 NULL，它已经由 parallelscan_initialize() 初始化过，并且
+	 * 必须对应同一关系。该参数仅在来自 table_beginscan_parallel() 时才会被设置。
 	 *
-	 * `flags` is a bitmask indicating the type of scan (ScanOptions's
-	 * SO_TYPE_*, currently only one may be specified), options controlling
-	 * the scan's behaviour (ScanOptions's SO_ALLOW_*, several may be
-	 * specified, an AM may ignore unsupported ones) and whether the snapshot
-	 * needs to be deallocated at scan_end (ScanOptions's SO_TEMP_SNAPSHOT).
+	 * `flags` 是一个位掩码，用于指示扫描的类型（ScanOptions 的 SO_TYPE_*，
+	 * 目前只能指定其中一个）、控制扫描行为的选项（ScanOptions 的 SO_ALLOW_*，
+	 * 可指定多个，AM 可以忽略其不支持的选项），以及快照是否需要在 scan_end 时被
+	 * 释放（ScanOptions 的 SO_TEMP_SNAPSHOT）。
 	 */
 	TableScanDesc (*scan_begin) (Relation rel,
 								 Snapshot snapshot,
@@ -330,127 +292,115 @@ typedef struct TableAmRoutine
 								 uint32 flags);
 
 	/*
-	 * Release resources and deallocate scan. If TableScanDesc.temp_snap,
-	 * TableScanDesc.rs_snapshot needs to be unregistered.
+	 * 释放资源并解除扫描分配。如果 TableScanDesc.temp_snap 为真，则需要注销
+	 * TableScanDesc.rs_snapshot。
 	 */
 	void		(*scan_end) (TableScanDesc scan);
 
 	/*
-	 * Restart relation scan.  If set_params is set to true, allow_{strat,
-	 * sync, pagemode} (see scan_begin) changes should be taken into account.
+	 * 重启关系扫描。如果 set_params 为 true，则应考虑 allow_{strat,
+	 * sync, pagemode}（见 scan_begin）的变更。
 	 */
 	void		(*scan_rescan) (TableScanDesc scan, struct ScanKeyData *key,
 								bool set_params, bool allow_strat,
 								bool allow_sync, bool allow_pagemode);
 
 	/*
-	 * Return next tuple from `scan`, store in slot.
+	 * 从 `scan` 中取回下一个元组，存入 slot。
 	 */
 	bool		(*scan_getnextslot) (TableScanDesc scan,
 									 ScanDirection direction,
 									 TupleTableSlot *slot);
 
 	/*-----------
-	 * Optional functions to provide scanning for ranges of ItemPointers.
-	 * Implementations must either provide both of these functions, or neither
-	 * of them.
+	 * 可选函数，用于提供对 ItemPointer 范围的扫描。实现者必须同时提供这两个
+	 * 函数，或者两个都不提供。
 	 *
-	 * Implementations of scan_set_tidrange must themselves handle
-	 * ItemPointers of any value. i.e, they must handle each of the following:
+	 * scan_set_tidrange 的实现者必须自行处理任意取值的 ItemPointer。也就是说，
+	 * 它们必须能够处理以下每一种情况：
 	 *
-	 * 1) mintid or maxtid is beyond the end of the table; and
-	 * 2) mintid is above maxtid; and
-	 * 3) item offset for mintid or maxtid is beyond the maximum offset
-	 * allowed by the AM.
+	 * 1) mintid 或 maxtid 超出了表的末尾；并且
+	 * 2) mintid 大于 maxtid；并且
+	 * 3) mintid 或 maxtid 的项偏移超出了 AM 所允许的最大偏移。
 	 *
-	 * Implementations can assume that scan_set_tidrange is always called
-	 * before scan_getnextslot_tidrange or after scan_rescan and before any
-	 * further calls to scan_getnextslot_tidrange.
+	 * 实现者可以假定：scan_set_tidrange 总是在 scan_getnextslot_tidrange 之前
+	 * 被调用，或者在 scan_rescan 之后、任何后续对 scan_getnextslot_tidrange
+	 * 的调用之前被调用。
 	 */
 	void		(*scan_set_tidrange) (TableScanDesc scan,
 									  ItemPointer mintid,
 									  ItemPointer maxtid);
 
 	/*
-	 * Return next tuple from `scan` that's in the range of TIDs defined by
-	 * scan_set_tidrange.
+	 * 从 `scan` 中取回下一个处于 scan_set_tidrange 所定义 TID 范围内的元组。
 	 */
 	bool		(*scan_getnextslot_tidrange) (TableScanDesc scan,
 											  ScanDirection direction,
 											  TupleTableSlot *slot);
 
 	/* ------------------------------------------------------------------------
-	 * Parallel table scan related functions.
+	 * 与并行表扫描相关的函数。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * Estimate the size of shared memory needed for a parallel scan of this
-	 * relation. The snapshot does not need to be accounted for.
+	 * 估计对本关系进行并行扫描所需的共享内存大小。快照无需计入。
 	 */
 	Size		(*parallelscan_estimate) (Relation rel);
 
 	/*
-	 * Initialize ParallelTableScanDesc for a parallel scan of this relation.
-	 * `pscan` will be sized according to parallelscan_estimate() for the same
-	 * relation.
+	 * 为本关系的并行扫描初始化 ParallelTableScanDesc。`pscan` 的大小将依据本
+	 * 关系对应的 parallelscan_estimate() 结果。
 	 */
 	Size		(*parallelscan_initialize) (Relation rel,
 											ParallelTableScanDesc pscan);
 
 	/*
-	 * Reinitialize `pscan` for a new scan. `rel` will be the same relation as
-	 * when `pscan` was initialized by parallelscan_initialize.
+	 * 为一次新的扫描重新初始化 `pscan`。`rel` 将与 parallelscan_initialize
+	 * 初始化 `pscan` 时所用的是同一个关系。
 	 */
 	void		(*parallelscan_reinitialize) (Relation rel,
 											  ParallelTableScanDesc pscan);
 
 
 	/* ------------------------------------------------------------------------
-	 * Index Scan Callbacks
+	 * 索引扫描回调
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * Prepare to fetch tuples from the relation, as needed when fetching
-	 * tuples for an index scan.  The callback has to return an
-	 * IndexFetchTableData, which the AM will typically embed in a larger
-	 * structure with additional information.
+	 * 为从关系中取回元组做准备，这在为索引扫描取回元组时是必需的。该回调必须
+	 * 返回一个 IndexFetchTableData，AM 通常会把它嵌入到一个带有额外信息的更大
+	 * 结构体中。
 	 *
-	 * Tuples for an index scan can then be fetched via index_fetch_tuple.
+	 * 随后即可通过 index_fetch_tuple 取回索引扫描所需的元组。
 	 */
 	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel);
 
 	/*
-	 * Reset index fetch. Typically this will release cross index fetch
-	 * resources held in IndexFetchTableData.
+	 * 重置索引取回。通常这会释放保存在 IndexFetchTableData 中的跨索引取回资源。
 	 */
 	void		(*index_fetch_reset) (struct IndexFetchTableData *data);
 
 	/*
-	 * Release resources and deallocate index fetch.
+	 * 释放资源并解除索引取回分配。
 	 */
 	void		(*index_fetch_end) (struct IndexFetchTableData *data);
 
 	/*
-	 * Fetch tuple at `tid` into `slot`, after doing a visibility test
-	 * according to `snapshot`. If a tuple was found and passed the visibility
-	 * test, return true, false otherwise.
+	 * 依据 `snapshot` 完成可见性测试后，将 `tid` 处的元组取回到 `slot`。如果
+	 * 找到元组且通过了可见性测试，返回 true，否则返回 false。
 	 *
-	 * Note that AMs that do not necessarily update indexes when indexed
-	 * columns do not change, need to return the current/correct version of
-	 * the tuple that is visible to the snapshot, even if the tid points to an
-	 * older version of the tuple.
+	 * 注意，对于那些在索引列未改变时不强制更新索引的 AM，即使 tid 指向的是
+	 * 元组的旧版本，也需要返回对快照可见的当前/正确版本元组。
 	 *
-	 * *call_again is false on the first call to index_fetch_tuple for a tid.
-	 * If there potentially is another tuple matching the tid, *call_again
-	 * needs to be set to true by index_fetch_tuple, signaling to the caller
-	 * that index_fetch_tuple should be called again for the same tid.
+	 * 对某个 tid 第一次调用 index_fetch_tuple 时，*call_again 为 false。如果
+	 * 可能还存在另一个匹配该 tid 的元组，index_fetch_tuple 需要将 *call_again
+	 * 置为 true，以此通知调用者应当再次调用 index_fetch_tuple 处理同一个 tid。
 	 *
-	 * *all_dead, if all_dead is not NULL, should be set to true by
-	 * index_fetch_tuple iff it is guaranteed that no backend needs to see
-	 * that tuple. Index AMs can use that to avoid returning that tid in
-	 * future searches.
+	 * 如果 all_dead 不为 NULL，当且仅当确定没有任何后端还需要看到该元组时，
+	 * index_fetch_tuple 才应将 *all_dead 置为 true。索引 AM 可以利用这一点，
+	 * 在将来的搜索中避免返回该 tid。
 	 */
 	bool		(*index_fetch_tuple) (struct IndexFetchTableData *scan,
 									  ItemPointer tid,
@@ -460,14 +410,13 @@ typedef struct TableAmRoutine
 
 
 	/* ------------------------------------------------------------------------
-	 * Callbacks for non-modifying operations on individual tuples
+	 * 针对单个元组的非修改型操作回调
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * Fetch tuple at `tid` into `slot`, after doing a visibility test
-	 * according to `snapshot`. If a tuple was found and passed the visibility
-	 * test, returns true, false otherwise.
+	 * 依据 `snapshot` 完成可见性测试后，将 `tid` 处的元组取回到 `slot`。如果
+	 * 找到元组且通过了可见性测试，返回 true，否则返回 false。
 	 */
 	bool		(*tuple_fetch_row_version) (Relation rel,
 											ItemPointer tid,
@@ -475,42 +424,40 @@ typedef struct TableAmRoutine
 											TupleTableSlot *slot);
 
 	/*
-	 * Is tid valid for a scan of this relation.
+	 * tid 对本关系的扫描是否有效。
 	 */
 	bool		(*tuple_tid_valid) (TableScanDesc scan,
 									ItemPointer tid);
 
 	/*
-	 * Return the latest version of the tuple at `tid`, by updating `tid` to
-	 * point at the newest version.
+	 * 通过将 `tid` 更新为指向最新版本，返回 `tid` 处元组的最新版本。
 	 */
 	void		(*tuple_get_latest_tid) (TableScanDesc scan,
 										 ItemPointer tid);
 
 	/*
-	 * Does the tuple in `slot` satisfy `snapshot`?  The slot needs to be of
-	 * the appropriate type for the AM.
+	 * `slot` 中的元组是否满足 `snapshot`？slot 必须是该 AM 适用的类型。
 	 */
 	bool		(*tuple_satisfies_snapshot) (Relation rel,
 											 TupleTableSlot *slot,
 											 Snapshot snapshot);
 
-	/* see table_index_delete_tuples() */
+	/* 参见 table_index_delete_tuples() */
 	TransactionId (*index_delete_tuples) (Relation rel,
 										  TM_IndexDeleteOp *delstate);
 
 
 	/* ------------------------------------------------------------------------
-	 * Manipulations of physical tuples.
+	 * 物理元组的修改操作。
 	 * ------------------------------------------------------------------------
 	 */
 
-	/* see table_tuple_insert() for reference about parameters */
+	/* 参数说明参见 table_tuple_insert() */
 	void		(*tuple_insert) (Relation rel, TupleTableSlot *slot,
 								 CommandId cid, int options,
 								 struct BulkInsertStateData *bistate);
 
-	/* see table_tuple_insert_speculative() for reference about parameters */
+	/* 参数说明参见 table_tuple_insert_speculative() */
 	void		(*tuple_insert_speculative) (Relation rel,
 											 TupleTableSlot *slot,
 											 CommandId cid,
@@ -518,17 +465,17 @@ typedef struct TableAmRoutine
 											 struct BulkInsertStateData *bistate,
 											 uint32 specToken);
 
-	/* see table_tuple_complete_speculative() for reference about parameters */
+	/* 参数说明参见 table_tuple_complete_speculative() */
 	void		(*tuple_complete_speculative) (Relation rel,
 											   TupleTableSlot *slot,
 											   uint32 specToken,
 											   bool succeeded);
 
-	/* see table_multi_insert() for reference about parameters */
+	/* 参数说明参见 table_multi_insert() */
 	void		(*multi_insert) (Relation rel, TupleTableSlot **slots, int nslots,
 								 CommandId cid, int options, struct BulkInsertStateData *bistate);
 
-	/* see table_tuple_delete() for reference about parameters */
+	/* 参数说明参见 table_tuple_delete() */
 	TM_Result	(*tuple_delete) (Relation rel,
 								 ItemPointer tid,
 								 CommandId cid,
@@ -538,7 +485,7 @@ typedef struct TableAmRoutine
 								 TM_FailureData *tmfd,
 								 bool changingPart);
 
-	/* see table_tuple_update() for reference about parameters */
+	/* 参数说明参见 table_tuple_update() */
 	TM_Result	(*tuple_update) (Relation rel,
 								 ItemPointer otid,
 								 TupleTableSlot *slot,
@@ -550,7 +497,7 @@ typedef struct TableAmRoutine
 								 LockTupleMode *lockmode,
 								 TU_UpdateIndexes *update_indexes);
 
-	/* see table_tuple_lock() for reference about parameters */
+	/* 参数说明参见 table_tuple_lock() */
 	TM_Result	(*tuple_lock) (Relation rel,
 							   ItemPointer tid,
 							   Snapshot snapshot,
@@ -562,40 +509,35 @@ typedef struct TableAmRoutine
 							   TM_FailureData *tmfd);
 
 	/*
-	 * Perform operations necessary to complete insertions made via
-	 * tuple_insert and multi_insert with a BulkInsertState specified. In-tree
-	 * access methods ceased to use this.
+	 * 执行完成经由 tuple_insert 与 multi_insert（并指定了 BulkInsertState）
+	 * 所做插入所必需的操作。树内访问方法已不再使用本回调。
 	 *
-	 * Typically callers of tuple_insert and multi_insert will just pass all
-	 * the flags that apply to them, and each AM has to decide which of them
-	 * make sense for it, and then only take actions in finish_bulk_insert for
-	 * those flags, and ignore others.
+	 * 通常，tuple_insert 与 multi_insert 的调用者会直接传入所有适用于它们的
+	 * 标志位，而每个 AM 需要自行判断其中哪些对它有意义，然后仅在 finish_bulk_insert
+	 * 中对那些标志位采取行动，忽略其余标志位。
 	 *
-	 * Optional callback.
+	 * 可选回调。
 	 */
 	void		(*finish_bulk_insert) (Relation rel, int options);
 
 
 	/* ------------------------------------------------------------------------
-	 * DDL related functionality.
+	 * 与 DDL 相关的功能。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * This callback needs to create new relation storage for `rel`, with
-	 * appropriate durability behaviour for `persistence`.
+	 * 本回调需要为 `rel` 创建新的关系存储，并采用与 `persistence` 相适应的
+	 * 持久化行为。
 	 *
-	 * Note that only the subset of the relcache filled by
-	 * RelationBuildLocalRelation() can be relied upon and that the relation's
-	 * catalog entries will either not yet exist (new relation), or will still
-	 * reference the old relfilelocator.
+	 * 注意，只能依赖由 RelationBuildLocalRelation() 填充的那部分 relcache，
+	 * 并且关系的目录项要么尚未存在（新关系），要么仍指向旧的 relfilelocator。
 	 *
-	 * As output *freezeXid, *minmulti must be set to the values appropriate
-	 * for pg_class.{relfrozenxid, relminmxid}. For AMs that don't need those
-	 * fields to be filled they can be set to InvalidTransactionId and
-	 * InvalidMultiXactId, respectively.
+	 * 作为输出，*freezeXid 与 *minmulti 必须设置为适用于
+	 * pg_class.{relfrozenxid, relminmxid} 的值。对于那些不需要填充这些字段的
+	 * AM，可分别将其设为 InvalidTransactionId 与 InvalidMultiXactId。
 	 *
-	 * See also table_relation_set_new_filelocator().
+	 * 另见 table_relation_set_new_filelocator()。
 	 */
 	void		(*relation_set_new_filelocator) (Relation rel,
 												 const RelFileLocator *newrlocator,
@@ -604,25 +546,22 @@ typedef struct TableAmRoutine
 												 MultiXactId *minmulti);
 
 	/*
-	 * This callback needs to remove all contents from `rel`'s current
-	 * relfilelocator. No provisions for transactional behaviour need to be
-	 * made.  Often this can be implemented by truncating the underlying
-	 * storage to its minimal size.
+	 * 本回调需要从 `rel` 当前的 relfilelocator 中移除所有内容。无需做任何
+	 * 事务性行为的处理。通常这可以通过将底层存储截断到最小尺寸来实现。
 	 *
-	 * See also table_relation_nontransactional_truncate().
+	 * 另见 table_relation_nontransactional_truncate()。
 	 */
 	void		(*relation_nontransactional_truncate) (Relation rel);
 
 	/*
-	 * See table_relation_copy_data().
+	 * 参见 table_relation_copy_data()。
 	 *
-	 * This can typically be implemented by directly copying the underlying
-	 * storage, unless it contains references to the tablespace internally.
+	 * 这通常可以通过直接复制底层存储来实现，除非存储内部还引用了表空间。
 	 */
 	void		(*relation_copy_data) (Relation rel,
 									   const RelFileLocator *newrlocator);
 
-	/* See table_relation_copy_for_cluster() */
+	/* 参见 table_relation_copy_for_cluster() */
 	void		(*relation_copy_for_cluster) (Relation OldTable,
 											  Relation NewTable,
 											  Relation OldIndex,
@@ -635,51 +574,46 @@ typedef struct TableAmRoutine
 											  double *tups_recently_dead);
 
 	/*
-	 * React to VACUUM command on the relation. The VACUUM can be triggered by
-	 * a user or by autovacuum. The specific actions performed by the AM will
-	 * depend heavily on the individual AM.
+	 * 响应作用于该关系的 VACUUM 命令。VACUUM 可能由用户触发，也可能由
+	 * autovacuum 触发。AM 具体执行哪些操作，很大程度上取决于各个 AM 自身。
 	 *
-	 * On entry a transaction is already established, and the relation is
-	 * locked with a ShareUpdateExclusive lock.
+	 * 进入本回调时，事务已经建立，并且关系已被施加 ShareUpdateExclusive 锁。
 	 *
-	 * Note that neither VACUUM FULL (and CLUSTER), nor ANALYZE go through
-	 * this routine, even if (for ANALYZE) it is part of the same VACUUM
-	 * command.
+	 * 注意，无论是 VACUUM FULL（及 CLUSTER），还是 ANALYZE，都不会经过本例程，
+	 * 即便（对 ANALYZE 而言）它是同一个 VACUUM 命令的一部分。
 	 *
-	 * There probably, in the future, needs to be a separate callback to
-	 * integrate with autovacuum's scheduling.
+	 * 未来可能还需要一个独立的回调来与 autovacuum 的调度进行整合。
 	 */
 	void		(*relation_vacuum) (Relation rel,
 									struct VacuumParams *params,
 									BufferAccessStrategy bstrategy);
 
 	/*
-	 * Prepare to analyze block `blockno` of `scan`. The scan has been started
-	 * with table_beginscan_analyze().  See also
-	 * table_scan_analyze_next_block().
+	 * 为分析 `scan` 的 `blockno` 块做准备。扫描已通过 table_beginscan_analyze()
+	 * 启动（参见 table_scan_analyze_next_tuple()）。
+
 	 *
-	 * The callback may acquire resources like locks that are held until
-	 * table_scan_analyze_next_tuple() returns false. It e.g. can make sense
-	 * to hold a lock until all tuples on a block have been analyzed by
-	 * scan_analyze_next_tuple.
+	 * 该回调可能会获取诸如锁之类的资源，这些资源会一直持有到
+	 * table_scan_analyze_next_tuple() 返回 false 为止。例如，在块上的所有元组都
+	 * 已被 scan_analyze_next_tuple 分析完毕之前，持有某个锁是有意义的。
+
 	 *
-	 * The callback can return false if the block is not suitable for
-	 * sampling, e.g. because it's a metapage that could never contain tuples.
+	 * 如果该块不适合采样，例如它是一个不可能包含元组的元页面，该回调可以返回 false。
 	 *
-	 * XXX: This obviously is primarily suited for block-based AMs. It's not
-	 * clear what a good interface for non block based AMs would be, so there
-	 * isn't one yet.
+	 *
+	 * XXX：这明显主要面向基于块的 AM。目前尚不清楚对非基于块的 AM 而言一个良好的
+	 * 接口应该是什么样，因此暂时还没有这样的接口。
+	 *
 	 */
 	bool		(*scan_analyze_next_block) (TableScanDesc scan,
 											ReadStream *stream);
 
 	/*
-	 * See table_scan_analyze_next_tuple().
+	 * 参见 table_scan_analyze_next_tuple()。
 	 *
-	 * Not every AM might have a meaningful concept of dead rows, in which
-	 * case it's OK to not increment *deadrows - but note that that may
-	 * influence autovacuum scheduling (see comment for relation_vacuum
-	 * callback).
+	 * 并非每个 AM 都对"死亡行"有有意义的概念，在这种情况下可以不递增 *deadrows，
+	 * 但要注意这可能会影响 autovacuum 的调度（见 relation_vacuum 回调的注释）。
+
 	 */
 	bool		(*scan_analyze_next_tuple) (TableScanDesc scan,
 											TransactionId OldestXmin,
@@ -687,7 +621,7 @@ typedef struct TableAmRoutine
 											double *deadrows,
 											TupleTableSlot *slot);
 
-	/* see table_index_build_range_scan for reference about parameters */
+	/* 参数说明参见 table_index_build_range_scan */
 	double		(*index_build_range_scan) (Relation table_rel,
 										   Relation index_rel,
 										   struct IndexInfo *index_info,
@@ -700,7 +634,7 @@ typedef struct TableAmRoutine
 										   void *callback_state,
 										   TableScanDesc scan);
 
-	/* see table_index_validate_scan for reference about parameters */
+	/* 参数说明参见 table_index_validate_scan */
 	void		(*index_validate_scan) (Relation table_rel,
 										Relation index_rel,
 										struct IndexInfo *index_info,
@@ -709,41 +643,36 @@ typedef struct TableAmRoutine
 
 
 	/* ------------------------------------------------------------------------
-	 * Miscellaneous functions.
+	 * 其他函数。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * See table_relation_size().
+	 * 参见 table_relation_size()。
 	 *
-	 * Note that currently a few callers use the MAIN_FORKNUM size to figure
-	 * out the range of potentially interesting blocks (brin, analyze). It's
-	 * probable that we'll need to revise the interface for those at some
-	 * point.
+	 * 注意，目前少数调用者会使用 MAIN_FORKNUM 的大小来推断可能相关的块范围
+	 * （brin、analyze）。我们很可能需要在某个时候为这些场景修订该接口。
 	 */
 	uint64		(*relation_size) (Relation rel, ForkNumber forkNumber);
 
 
 	/*
-	 * This callback should return true if the relation requires a TOAST table
-	 * and false if it does not.  It may wish to examine the relation's tuple
-	 * descriptor before making a decision, but if it uses some other method
-	 * of storing large values (or if it does not support them) it can simply
-	 * return false.
+	 * 如果关系需要一个 TOAST 表，本回调应返回 true；否则返回 false。它可以在
+	 * 做决定前查看关系的元组描述符，但如果它使用其他方式存储大值（或根本不支持），
+	 * 也可以直接返回 false。
 	 */
 	bool		(*relation_needs_toast_table) (Relation rel);
 
 	/*
-	 * This callback should return the OID of the table AM that implements
-	 * TOAST tables for this AM.  If the relation_needs_toast_table callback
-	 * always returns false, this callback is not required.
+	 * 本回调应返回用于为本 AM 实现 TOAST 表的表 AM 的 OID。如果
+	 * relation_needs_toast_table 回调始终返回 false，则本回调并非必需。
+
 	 */
 	Oid			(*relation_toast_am) (Relation rel);
 
 	/*
-	 * This callback is invoked when detoasting a value stored in a toast
-	 * table implemented by this AM.  See table_relation_fetch_toast_slice()
-	 * for more details.
+	 * 当对由本 AM 实现的 TOAST 表中存储的值进行去 TOAST 时，会调用本回调。
+	 * 详见 table_relation_fetch_toast_slice()。
 	 */
 	void		(*relation_fetch_toast_slice) (Relation toastrel, Oid valueid,
 											   int32 attrsize,
@@ -753,19 +682,19 @@ typedef struct TableAmRoutine
 
 
 	/* ------------------------------------------------------------------------
-	 * Planner related functions.
+	 * 规划器相关函数。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * See table_relation_estimate_size().
+	 * 参见 table_relation_estimate_size()。
 	 *
-	 * While block oriented, it shouldn't be too hard for an AM that doesn't
-	 * internally use blocks to convert into a usable representation.
+	 * 尽管是面向块的，但对于内部不使用块的 AM 来说，转换成可用的表示形式
+	 * 应该也不算太难。
 	 *
-	 * This differs from the relation_size callback by returning size
-	 * estimates (both relation size and tuple count) for planning purposes,
-	 * rather than returning a currently correct estimate.
+	 * 它与 relation_size 回调的不同之处在于：它返回用于规划目的的大小估计
+	 * （包括关系大小和元组数），而非返回一个当前正确的估计值。
+
 	 */
 	void		(*relation_estimate_size) (Relation rel, int32 *attr_widths,
 										   BlockNumber *pages, double *tuples,
@@ -773,21 +702,21 @@ typedef struct TableAmRoutine
 
 
 	/* ------------------------------------------------------------------------
-	 * Executor related functions.
+	 * 执行器相关函数。
 	 * ------------------------------------------------------------------------
 	 */
 
 	/*
-	 * Fetch the next tuple of a bitmap table scan into `slot` and return true
-	 * if a visible tuple was found, false otherwise.
+	 * 将位图表扫描的下一个元组取入 `slot`，若找到可见元组则返回 true，
+	 * 否则返回 false。
 	 *
-	 * `lossy_pages` is incremented if the bitmap is lossy for the selected
-	 * page; otherwise, `exact_pages` is incremented. These are tracked for
-	 * display in EXPLAIN ANALYZE output.
+	 * 如果位图对所选中页面是有损（lossy）的，则递增 `lossy_pages`；
+	 * 否则递增 `exact_pages`。这些信息会被记录，用于在 EXPLAIN ANALYZE 输出中展示。
+
 	 *
-	 * Prefetching additional data from the bitmap is left to the table AM.
+	 * 从位图预取额外数据的职责留给表 AM。
 	 *
-	 * This is an optional callback.
+	 * 这是一个可选回调。
 	 */
 	bool		(*scan_bitmap_next_tuple) (TableScanDesc scan,
 										   TupleTableSlot *slot,
@@ -796,45 +725,42 @@ typedef struct TableAmRoutine
 										   uint64 *exact_pages);
 
 	/*
-	 * Prepare to fetch tuples from the next block in a sample scan. Return
-	 * false if the sample scan is finished, true otherwise. `scan` was
-	 * started via table_beginscan_sampling().
+	 * 为从采样扫描的下一个块中取回元组做准备。如果采样扫描已结束则返回 false，
+	 * 否则返回 true。`scan` 是通过 table_beginscan_sampling() 启动的。
+
 	 *
-	 * Typically this will first determine the target block by calling the
-	 * TsmRoutine's NextSampleBlock() callback if not NULL, or alternatively
-	 * perform a sequential scan over all blocks.  The determined block is
-	 * then typically read and pinned.
+	 * 通常，它会首先通过调用 TsmRoutine 的 NextSampleBlock() 回调（若不为 NULL）
+	 * 来确定目标块；否则会对所有块执行顺序扫描。随后通常会读入并对该块加 pin。
+
+
 	 *
-	 * As the TsmRoutine interface is block based, a block needs to be passed
-	 * to NextSampleBlock(). If that's not appropriate for an AM, it
-	 * internally needs to perform mapping between the internal and a block
-	 * based representation.
+	 * 由于 TsmRoutine 接口是基于块的，需要向 NextSampleBlock() 传入一个块。
+	 * 如果这对某个 AM 不合适，它需要在内部完成内部表示与基于块的表示之间的映射。
+
 	 *
-	 * Note that it's not acceptable to hold deadlock prone resources such as
-	 * lwlocks until scan_sample_next_tuple() has exhausted the tuples on the
-	 * block - the tuple is likely to be returned to an upper query node, and
-	 * the next call could be off a long while. Holding buffer pins and such
-	 * is obviously OK.
+	 * 注意，持有容易引发死锁的资源（例如 lwlocks）直到 scan_sample_next_tuple()
+	 * 耗尽该块上的元组为止，这是不可接受的——该元组很可能被返回给上层查询节点，
+	 * 而下一次调用可能要很久之后才会发生。持有 buffer pin 之类的资源显然是没问题的。
+
+
 	 *
-	 * Currently it is required to implement this interface, as there's no
-	 * alternative way (contrary e.g. to bitmap scans) to implement sample
-	 * scans. If infeasible to implement, the AM may raise an error.
+	 * 目前，实现该接口是必需的，因为没有其他方式（与位图扫描等不同）来实现采样扫描。
+	 * 如果无法实现，AM 可以报错。
+
 	 */
 	bool		(*scan_sample_next_block) (TableScanDesc scan,
 										   struct SampleScanState *scanstate);
 
 	/*
-	 * This callback, only called after scan_sample_next_block has returned
-	 * true, should determine the next tuple to be returned from the selected
-	 * block using the TsmRoutine's NextSampleTuple() callback.
+	 * 本回调仅在 scan_sample_next_block 返回 true 之后才会被调用，它应使用
+	 * TsmRoutine 的 NextSampleTuple() 回调，确定从该选中块返回下一个元组。
 	 *
-	 * The callback needs to perform visibility checks, and only return
-	 * visible tuples. That obviously can mean calling NextSampleTuple()
-	 * multiple times.
+	 * 该回调需要执行可见性检查，并且只返回可见的元组。这显然可能意味着要多次调用
+	 * NextSampleTuple()。
+
 	 *
-	 * The TsmRoutine interface assumes that there's a maximum offset on a
-	 * given page, so if that doesn't apply to an AM, it needs to emulate that
-	 * assumption somehow.
+	 * TsmRoutine 接口假定给定页面上存在最大偏移，因此如果某个 AM 不适用这一点，
+	 * 它需要以某种方式模拟这一假定。
 	 */
 	bool		(*scan_sample_next_tuple) (TableScanDesc scan,
 										   struct SampleScanState *scanstate,
@@ -844,32 +770,32 @@ typedef struct TableAmRoutine
 
 
 /* ----------------------------------------------------------------------------
- * Slot functions.
+ * Slot 相关函数。
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Returns slot callbacks suitable for holding tuples of the appropriate type
- * for the relation.  Works for tables, views, foreign tables and partitioned
- * tables.
+ * 返回适合持有该关系相应类型元组的 slot 回调。适用于普通表、视图、
+ * 外部表以及分区表。
+
  */
 extern const TupleTableSlotOps *table_slot_callbacks(Relation relation);
 
 /*
- * Returns slot using the callbacks returned by table_slot_callbacks(), and
- * registers it on *reglist.
+ * 使用 table_slot_callbacks() 返回的回调创建一个 slot，并将其注册到 *reglist 上。
+
  */
 extern TupleTableSlot *table_slot_create(Relation relation, List **reglist);
 
 
 /* ----------------------------------------------------------------------------
- * Table scan functions.
+ * 表扫描函数。
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Start a scan of `rel`. Returned tuples pass a visibility test of
- * `snapshot`, and if nkeys != 0, the results are filtered by those scan keys.
+ * 开启对 `rel` 的扫描。返回的元组都通过 `snapshot` 的可见性测试，并且
+ * 如果 nkeys != 0，结果还会被这些扫描键过滤。
  */
 static inline TableScanDesc
 table_beginscan(Relation rel, Snapshot snapshot,
@@ -882,18 +808,17 @@ table_beginscan(Relation rel, Snapshot snapshot,
 }
 
 /*
- * Like table_beginscan(), but for scanning catalog. It'll automatically use a
- * snapshot appropriate for scanning catalog relations.
+ * 类似 table_beginscan()，但用于扫描系统目录。它会自动使用适合扫描系统目录
+ * 关系的快照。
  */
 extern TableScanDesc table_beginscan_catalog(Relation relation, int nkeys,
 											 struct ScanKeyData *key);
 
 /*
- * Like table_beginscan(), but table_beginscan_strat() offers an extended API
- * that lets the caller control whether a nondefault buffer access strategy
- * can be used, and whether syncscan can be chosen (possibly resulting in the
- * scan not starting from block zero).  Both of these default to true with
- * plain table_beginscan.
+ * 类似 table_beginscan()，但 table_beginscan_strat() 提供了一个扩展 API，
+ * 让调用者控制是否可以使用非默认的缓冲区访问策略，以及是否可以选择 syncscan
+ * （这可能导致扫描不从 0 号块开始）。在普通的 table_beginscan 中，这两个选项
+ * 默认都为 true（即扫描可能不从 0 号块开始）。
  */
 static inline TableScanDesc
 table_beginscan_strat(Relation rel, Snapshot snapshot,
@@ -911,10 +836,10 @@ table_beginscan_strat(Relation rel, Snapshot snapshot,
 }
 
 /*
- * table_beginscan_bm is an alternative entry point for setting up a
- * TableScanDesc for a bitmap heap scan.  Although that scan technology is
- * really quite unlike a standard seqscan, there is just enough commonality to
- * make it worth using the same data structure.
+ * table_beginscan_bm 是设置位图堆扫描所用 TableScanDesc 的另一种入口点。
+ * 尽管这种扫描技术与标准的顺序扫描大不相同，但两者之间仍有足够的共性，
+ * 使得复用同一数据结构是值得的。
+
  */
 static inline TableScanDesc
 table_beginscan_bm(Relation rel, Snapshot snapshot,
@@ -927,11 +852,10 @@ table_beginscan_bm(Relation rel, Snapshot snapshot,
 }
 
 /*
- * table_beginscan_sampling is an alternative entry point for setting up a
- * TableScanDesc for a TABLESAMPLE scan.  As with bitmap scans, it's worth
- * using the same data structure although the behavior is rather different.
- * In addition to the options offered by table_beginscan_strat, this call
- * also allows control of whether page-mode visibility checking is used.
+ * table_beginscan_sampling 是设置 TABLESAMPLE 扫描所用 TableScanDesc 的
+ * 另一种入口点。与位图扫描类似，尽管行为大不相同，但复用同一数据结构是
+ * 值得的。除 table_beginscan_strat 提供的选项外，本次调用还可控制是否使用
+ * 页面模式可见性检查。
  */
 static inline TableScanDesc
 table_beginscan_sampling(Relation rel, Snapshot snapshot,
@@ -952,9 +876,8 @@ table_beginscan_sampling(Relation rel, Snapshot snapshot,
 }
 
 /*
- * table_beginscan_tid is an alternative entry point for setting up a
- * TableScanDesc for a Tid scan. As with bitmap scans, it's worth using
- * the same data structure although the behavior is rather different.
+ * table_beginscan_tid 是设置 Tid 扫描所用 TableScanDesc 的另一种入口点。
+ * 与位图扫描类似，尽管行为大不相同，但复用同一数据结构是值得的。
  */
 static inline TableScanDesc
 table_beginscan_tid(Relation rel, Snapshot snapshot)
@@ -965,9 +888,8 @@ table_beginscan_tid(Relation rel, Snapshot snapshot)
 }
 
 /*
- * table_beginscan_analyze is an alternative entry point for setting up a
- * TableScanDesc for an ANALYZE scan.  As with bitmap scans, it's worth using
- * the same data structure although the behavior is rather different.
+ * table_beginscan_analyze 是设置 ANALYZE 扫描所用 TableScanDesc 的另一种
+ * 入口点。与位图扫描类似，尽管行为大不相同，但复用同一数据结构是值得的。
  */
 static inline TableScanDesc
 table_beginscan_analyze(Relation rel)
@@ -978,7 +900,7 @@ table_beginscan_analyze(Relation rel)
 }
 
 /*
- * End relation scan.
+ * 结束关系扫描。
  */
 static inline void
 table_endscan(TableScanDesc scan)
@@ -987,7 +909,7 @@ table_endscan(TableScanDesc scan)
 }
 
 /*
- * Restart a relation scan.
+ * 重启关系扫描。
  */
 static inline void
 table_rescan(TableScanDesc scan,
@@ -997,12 +919,11 @@ table_rescan(TableScanDesc scan,
 }
 
 /*
- * Restart a relation scan after changing params.
+ * 在修改参数之后重启关系扫描。
  *
- * This call allows changing the buffer strategy, syncscan, and pagemode
- * options before starting a fresh scan.  Note that although the actual use of
- * syncscan might change (effectively, enabling or disabling reporting), the
- * previously selected startblock will be kept.
+ * 本次调用允许在开启一次全新扫描之前，修改缓冲区策略、syncscan 以及
+ * pagemode 选项。注意，尽管 syncscan 的实际使用可能发生变化（实际上相当于
+ * 启用或禁用上报）。
  */
 static inline void
 table_rescan_set_params(TableScanDesc scan, struct ScanKeyData *key,
@@ -1014,21 +935,20 @@ table_rescan_set_params(TableScanDesc scan, struct ScanKeyData *key,
 }
 
 /*
- * Return next tuple from `scan`, store in slot.
+ * 从 `scan` 取回下一个元组，存入 slot。
  */
 static inline bool
 table_scan_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *slot)
 {
 	slot->tts_tableOid = RelationGetRelid(sscan->rs_rd);
 
-	/* We don't expect actual scans using NoMovementScanDirection */
+	/* 我们不期望实际使用 NoMovementScanDirection 进行扫描 */
 	Assert(direction == ForwardScanDirection ||
 		   direction == BackwardScanDirection);
 
 	/*
-	 * We don't expect direct calls to table_scan_getnextslot with valid
-	 * CheckXidAlive for catalog or regular tables.  See detailed comments in
-	 * xact.c where these variables are declared.
+	 * 我们不期望对 table_scan_getnextslot 的直接调用传入对系统目录或普通表
+	 * 有效的 CheckXidAlive。详见这些变量声明所在的 xact.c 中的详细注释。
 	 */
 	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
 		elog(ERROR, "unexpected table_scan_getnextslot call during logical decoding");
@@ -1037,13 +957,12 @@ table_scan_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableS
 }
 
 /* ----------------------------------------------------------------------------
- * TID Range scanning related functions.
+ * TID 范围扫描相关函数。
  * ----------------------------------------------------------------------------
  */
 
 /*
- * table_beginscan_tidrange is the entry point for setting up a TableScanDesc
- * for a TID range scan.
+ * table_beginscan_tidrange 是设置 TID 范围扫描所用 TableScanDesc 的入口点。
  */
 static inline TableScanDesc
 table_beginscan_tidrange(Relation rel, Snapshot snapshot,
@@ -1055,22 +974,21 @@ table_beginscan_tidrange(Relation rel, Snapshot snapshot,
 
 	sscan = rel->rd_tableam->scan_begin(rel, snapshot, 0, NULL, NULL, flags);
 
-	/* Set the range of TIDs to scan */
+	/* 设置要扫描的 TID 范围 */
 	sscan->rs_rd->rd_tableam->scan_set_tidrange(sscan, mintid, maxtid);
 
 	return sscan;
 }
 
 /*
- * table_rescan_tidrange resets the scan position and sets the minimum and
- * maximum TID range to scan for a TableScanDesc created by
- * table_beginscan_tidrange.
+ * table_rescan_tidrange 会重置扫描位置，并为由 table_beginscan_tidrange
+ * 创建的 TableScanDesc 设置要扫描的最小和最大 TID 范围。
  */
 static inline void
 table_rescan_tidrange(TableScanDesc sscan, ItemPointer mintid,
 					  ItemPointer maxtid)
 {
-	/* Ensure table_beginscan_tidrange() was used. */
+	/* 确保使用了 table_beginscan_tidrange() */
 	Assert((sscan->rs_flags & SO_TYPE_TIDRANGESCAN) != 0);
 
 	sscan->rs_rd->rd_tableam->scan_rescan(sscan, NULL, false, false, false, false);
@@ -1078,18 +996,17 @@ table_rescan_tidrange(TableScanDesc sscan, ItemPointer mintid,
 }
 
 /*
- * Fetch the next tuple from `sscan` for a TID range scan created by
- * table_beginscan_tidrange().  Stores the tuple in `slot` and returns true,
- * or returns false if no more tuples exist in the range.
+ * 为 table_beginscan_tidrange() 创建的 TID 范围扫描，从 `sscan` 取回下一个
+ * 元组。将元组存入 `slot` 并返回 true；如果该范围内已没有更多元组，则返回 false。
  */
 static inline bool
 table_scan_getnextslot_tidrange(TableScanDesc sscan, ScanDirection direction,
 								TupleTableSlot *slot)
 {
-	/* Ensure table_beginscan_tidrange() was used. */
+	/* 确保使用了 table_beginscan_tidrange() */
 	Assert((sscan->rs_flags & SO_TYPE_TIDRANGESCAN) != 0);
 
-	/* We don't expect actual scans using NoMovementScanDirection */
+	/* 我们不期望实际使用 NoMovementScanDirection 进行扫描 */
 	Assert(direction == ForwardScanDirection ||
 		   direction == BackwardScanDirection);
 
@@ -1100,40 +1017,37 @@ table_scan_getnextslot_tidrange(TableScanDesc sscan, ScanDirection direction,
 
 
 /* ----------------------------------------------------------------------------
- * Parallel table scan related functions.
+ * 并行表扫描相关函数。
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Estimate the size of shared memory needed for a parallel scan of this
- * relation.
+ * 估计对本关系进行并行扫描所需的共享内存大小。
  */
 extern Size table_parallelscan_estimate(Relation rel, Snapshot snapshot);
 
 /*
- * Initialize ParallelTableScanDesc for a parallel scan of this
- * relation. `pscan` needs to be sized according to parallelscan_estimate()
- * for the same relation.  Call this just once in the leader process; then,
- * individual workers attach via table_beginscan_parallel.
+ * 为本关系的并行扫描初始化 ParallelTableScanDesc。`pscan` 的大小必须依据同名关系
+ * 对应的 parallelscan_estimate() 结果来确定。只需在领导者进程中调用一次；
+ * 之后各个工作进程通过 table_beginscan_parallel 挂载。
+
  */
 extern void table_parallelscan_initialize(Relation rel,
 										  ParallelTableScanDesc pscan,
 										  Snapshot snapshot);
 
 /*
- * Begin a parallel scan. `pscan` needs to have been initialized with
- * table_parallelscan_initialize(), for the same relation. The initialization
- * does not need to have happened in this backend.
- *
- * Caller must hold a suitable lock on the relation.
+ * 开始一次并行扫描。`pscan` 必须已经由同名关系的
+ * table_parallelscan_initialize() 初始化过。该初始化并不需要在本后端中完成。
+
+ * 调用者必须对该关系持有合适的锁。
  */
 extern TableScanDesc table_beginscan_parallel(Relation relation,
 											  ParallelTableScanDesc pscan);
 
 /*
- * Restart a parallel scan.  Call this in the leader process.  Caller is
- * responsible for making sure that all workers have finished the scan
- * beforehand.
+ * 重启一次并行扫描。在领导者进程中调用本函数。调用者负责确保在调用本函数前，
+ * 所有工作进程都已结束本次扫描。
  */
 static inline void
 table_parallelscan_reinitialize(Relation rel, ParallelTableScanDesc pscan)
@@ -1143,15 +1057,14 @@ table_parallelscan_reinitialize(Relation rel, ParallelTableScanDesc pscan)
 
 
 /* ----------------------------------------------------------------------------
- *  Index scan related functions.
+ * 索引扫描相关函数。
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Prepare to fetch tuples from the relation, as needed when fetching tuples
- * for an index scan.
+ * 为从关系中取回元组做准备，这在通过索引扫描取回元组时是必需的。
  *
- * Tuples for an index scan can then be fetched via table_index_fetch_tuple().
+ * 随后即可通过 table_index_fetch_tuple() 取回索引扫描所需的元组。
  */
 static inline IndexFetchTableData *
 table_index_fetch_begin(Relation rel)
@@ -1160,8 +1073,7 @@ table_index_fetch_begin(Relation rel)
 }
 
 /*
- * Reset index fetch. Typically this will release cross index fetch resources
- * held in IndexFetchTableData.
+ * 重置索引取回。通常这会释放保存在索引取回结构中的跨索引取回资源。
  */
 static inline void
 table_index_fetch_reset(struct IndexFetchTableData *scan)
@@ -1170,7 +1082,7 @@ table_index_fetch_reset(struct IndexFetchTableData *scan)
 }
 
 /*
- * Release resources and deallocate index fetch.
+ * 释放资源并解除索引取回分配。
  */
 static inline void
 table_index_fetch_end(struct IndexFetchTableData *scan)
@@ -1179,28 +1091,23 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
 }
 
 /*
- * Fetches, as part of an index scan, tuple at `tid` into `slot`, after doing
- * a visibility test according to `snapshot`. If a tuple was found and passed
- * the visibility test, returns true, false otherwise. Note that *tid may be
- * modified when we return true (see later remarks on multiple row versions
- * reachable via a single index entry).
+ * 作为索引扫描的一部分，依据 `snapshot` 完成可见性测试后，将 `tid` 处的元组
+ * 取回到 `slot`。如果找到元组且通过了可见性测试，返回 true，否则返回 false。
+ * 注意，当我们返回 true 时，*tid 可能会被修改（见后文关于通过单个索引项
+ * 可到达的多个行版本的相关说明）。
  *
- * *call_again needs to be false on the first call to table_index_fetch_tuple() for
- * a tid. If there potentially is another tuple matching the tid, *call_again
- * will be set to true, signaling that table_index_fetch_tuple() should be called
- * again for the same tid.
+ * 对某个 tid 第一次调用 table_index_fetch_tuple() 时，*call_again 必须为 false。
+ * 如果可能还存在另一个匹配该 tid 的元组，*call_again 会被置为 true，以此通知
+ * 调用者应当再次调用 table_index_fetch_tuple() 处理同一个 tid。
  *
- * *all_dead, if all_dead is not NULL, will be set to true by
- * table_index_fetch_tuple() iff it is guaranteed that no backend needs to see
- * that tuple. Index AMs can use that to avoid returning that tid in future
- * searches.
+ * 如果 all_dead 不为 NULL，当且仅当确定没有任何后端还需要看到该元组时，
+ * table_index_fetch_tuple() 才会将 *all_dead 置为 true。索引 AM 可以利用这一点，
+ * 在将来的搜索中避免返回该 tid。
  *
- * The difference between this function and table_tuple_fetch_row_version()
- * is that this function returns the currently visible version of a row if
- * the AM supports storing multiple row versions reachable via a single index
- * entry (like heap's HOT). Whereas table_tuple_fetch_row_version() only
- * evaluates the tuple exactly at `tid`. Outside of index entry ->table tuple
- * lookups, table_tuple_fetch_row_version() is what's usually needed.
+ * 本函数与 table_tuple_fetch_row_version() 的区别在于：如果 AM 支持存储通过单个
+ * 索引项可到达的多个行版本（如堆的 HOT），本函数会返回该行当前可见的版本。
+ * 而在索引项到表元组的查找之外，通常需要的就是 table_tuple_fetch_row_version()，
+ * 因为它会在 `tid` 处精确求值元组。
  */
 static inline bool
 table_index_fetch_tuple(struct IndexFetchTableData *scan,
@@ -1210,9 +1117,8 @@ table_index_fetch_tuple(struct IndexFetchTableData *scan,
 						bool *call_again, bool *all_dead)
 {
 	/*
-	 * We don't expect direct calls to table_index_fetch_tuple with valid
-	 * CheckXidAlive for catalog or regular tables.  See detailed comments in
-	 * xact.c where these variables are declared.
+	 * 我们不期望对 table_index_fetch_tuple 的直接调用传入对系统目录或普通表
+	 * 有效的 CheckXidAlive。详见这些变量声明所在的 xact.c 中的详细注释。
 	 */
 	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
 		elog(ERROR, "unexpected table_index_fetch_tuple call during logical decoding");
@@ -1223,10 +1129,8 @@ table_index_fetch_tuple(struct IndexFetchTableData *scan,
 }
 
 /*
- * This is a convenience wrapper around table_index_fetch_tuple() which
- * returns whether there are table tuple items corresponding to an index
- * entry.  This likely is only useful to verify if there's a conflict in a
- * unique index.
+ * 这是 table_index_fetch_tuple() 的便捷封装，用于返回是否存在与某个索引项
+ * 对应的表元组项。它很可能仅用于核实唯一索引中是否存在冲突。
  */
 extern bool table_index_fetch_tuple_check(Relation rel,
 										  ItemPointer tid,
@@ -1235,19 +1139,19 @@ extern bool table_index_fetch_tuple_check(Relation rel,
 
 
 /* ------------------------------------------------------------------------
- * Functions for non-modifying operations on individual tuples
+ * 针对单个元组的非修改型操作函数
  * ------------------------------------------------------------------------
  */
 
 
 /*
- * Fetch tuple at `tid` into `slot`, after doing a visibility test according to
- * `snapshot`. If a tuple was found and passed the visibility test, returns
- * true, false otherwise.
+ * 依据 `snapshot` 完成可见性测试后，将 `tid` 处的元组取回到 `slot`。
+ * 如果找到元组且通过了可见性测试，返回 true，否则返回 false。
+
  *
- * See table_index_fetch_tuple's comment about what the difference between
- * these functions is. It is correct to use this function outside of index
- * entry->table tuple lookups.
+ * 关于这些函数之间的差异，请参见 table_index_fetch_tuple 的注释。在索引项到
+ * 表元组的查找之外使用本函数是正确的。
+
  */
 static inline bool
 table_tuple_fetch_row_version(Relation rel,
@@ -1256,9 +1160,8 @@ table_tuple_fetch_row_version(Relation rel,
 							  TupleTableSlot *slot)
 {
 	/*
-	 * We don't expect direct calls to table_tuple_fetch_row_version with
-	 * valid CheckXidAlive for catalog or regular tables.  See detailed
-	 * comments in xact.c where these variables are declared.
+	 * 我们不期望对 table_tuple_fetch_row_version 的直接调用传入对系统目录或普通表
+	 * 有效的 CheckXidAlive。详见这些变量声明所在的 xact.c 中的详细注释。
 	 */
 	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
 		elog(ERROR, "unexpected table_tuple_fetch_row_version call during logical decoding");
@@ -1267,11 +1170,11 @@ table_tuple_fetch_row_version(Relation rel,
 }
 
 /*
- * Verify that `tid` is a potentially valid tuple identifier. That doesn't
- * mean that the pointed to row needs to exist or be visible, but that
- * attempting to fetch the row (e.g. with table_tuple_get_latest_tid() or
- * table_tuple_fetch_row_version()) should not error out if called with that
- * tid.
+ * 校验 `tid` 是否可能是一个有效的元组标识符。这并不要求被指向的行必须存在或
+ * 可见，只是要求用该 tid 调用（例如通过 table_tuple_get_latest_tid() 或
+ * table_tuple_fetch_row_version()）时不应报错。
+
+
  *
  * `scan` needs to have been started via table_beginscan().
  */
@@ -1282,19 +1185,17 @@ table_tuple_tid_valid(TableScanDesc scan, ItemPointer tid)
 }
 
 /*
- * Return the latest version of the tuple at `tid`, by updating `tid` to
- * point at the newest version.
+ * 通过将 `tid` 更新为指向最新版本，返回 `tid` 处元组的最新版本。
  */
 extern void table_tuple_get_latest_tid(TableScanDesc scan, ItemPointer tid);
 
 /*
- * Return true iff tuple in slot satisfies the snapshot.
+ * 若 slot 中的元组满足 `snapshot`，则返回 true。
  *
- * This assumes the slot's tuple is valid, and of the appropriate type for the
- * AM.
+ * 这要求 slot 中的元组有效，且与本 AM 的类型相符。
  *
- * Some AMs might modify the data underlying the tuple as a side-effect. If so
- * they ought to mark the relevant buffer dirty.
+ * 某些 AM 可能会作为副作用修改元组底层的数据。若是如此，它们应将相关缓冲区
+ * 标记为脏。
  */
 static inline bool
 table_tuple_satisfies_snapshot(Relation rel, TupleTableSlot *slot,
@@ -1304,18 +1205,16 @@ table_tuple_satisfies_snapshot(Relation rel, TupleTableSlot *slot,
 }
 
 /*
- * Determine which index tuples are safe to delete based on their table TID.
+ * 根据索引元组对应的表 TID，判断哪些索引元组可以安全删除。
  *
- * Determines which entries from index AM caller's TM_IndexDeleteOp state
- * point to vacuumable table tuples.  Entries that are found by tableam to be
- * vacuumable are naturally safe for index AM to delete, and so get directly
- * marked as deletable.  See comments above TM_IndexDelete and comments above
- * TM_IndexDeleteOp for full details.
+ * 判断来自索引 AM 调用者 TM_IndexDeleteOp 状态中的哪些条目指向可被 vacuum 的
+ * 表元组。那些被 tableam 判定为可被 vacuum 的条目，对索引 AM 而言自然可以安全
+ * 删除，因此会被直接标记为可删除。完整细节参见 TM_IndexDelete 与 TM_IndexDeleteOp
+ * 上方的注释。
  *
- * Returns a snapshotConflictHorizon transaction ID that caller places in
- * its index deletion WAL record.  This might be used during subsequent REDO
- * of the WAL record when in Hot Standby mode -- a recovery conflict for the
- * index deletion operation might be required on the standby.
+ * 返回一个 snapshotConflictHorizon 事务 ID，调用者将其放入索引删除的 WAL 记录中。
+ * 在 Hot Standby 模式下重放该 WAL 记录时可能会用到它——备机上可能因此需要为
+ * 该索引删除操作引发一次恢复冲突。
  */
 static inline TransactionId
 table_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
@@ -1325,43 +1224,36 @@ table_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 
 
 /* ----------------------------------------------------------------------------
- *  Functions for manipulations of physical tuples.
+ * 针对物理元组的修改操作函数。
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Insert a tuple from a slot into table AM routine.
+ * 将一个 slot 中的元组插入到表 AM 例程中。
  *
- * The options bitmask allows the caller to specify options that may change the
- * behaviour of the AM. The AM will ignore options that it does not support.
+ * options 位掩码允许调用者指定可能改变 AM 行为的选项。AM 会忽略它不支持的选项。
  *
- * If the TABLE_INSERT_SKIP_FSM option is specified, AMs are free to not reuse
- * free space in the relation. This can save some cycles when we know the
- * relation is new and doesn't contain useful amounts of free space.
- * TABLE_INSERT_SKIP_FSM is commonly passed directly to
- * RelationGetBufferForTuple. See that method for more information.
+ * 若指定了 TABLE_INSERT_SKIP_FSM 选项，AM 可以不复用关系中的空闲空间。当我们
+ * 知道关系是新建的、且不包含多少有用的空闲空间时，这可以节省一些开销。
+ * TABLE_INSERT_SKIP_FSM 通常会被直接传给 RelationGetBufferForTuple。详情参见
+ * 该方法。
  *
- * TABLE_INSERT_FROZEN should only be specified for inserts into
- * relation storage created during the current subtransaction and when
- * there are no prior snapshots or pre-existing portals open.
- * This causes rows to be frozen, which is an MVCC violation and
- * requires explicit options chosen by user.
+ * TABLE_INSERT_FROZEN 只应指定给插入到当前子事务期间创建的、且没有既有快照或
+ * 既有游标打开的关系存储中的插入。这会使行被冻结，属于违反 MVCC 的行为，需要
+ * 由用户显式选择。
  *
- * TABLE_INSERT_NO_LOGICAL force-disables the emitting of logical decoding
- * information for the tuple. This should solely be used during table rewrites
- * where RelationIsLogicallyLogged(relation) is not yet accurate for the new
- * relation.
+ * TABLE_INSERT_NO_LOGICAL 强制禁用为该元组输出逻辑解码信息。这仅应在表重写期间
+ * 使用，因为此时 RelationIsLogicallyLogged(relation) 对新关系尚不准确。
  *
- * Note that most of these options will be applied when inserting into the
- * heap's TOAST table, too, if the tuple requires any out-of-line data.
+ * 注意，如果元组需要任何行外数据，这些选项中的大多数在插入堆的 TOAST 表时也会
+ * 被应用。
  *
- * The BulkInsertState object (if any; bistate can be NULL for default
- * behavior) is also just passed through to RelationGetBufferForTuple. If
- * `bistate` is provided, table_finish_bulk_insert() needs to be called.
+ * BulkInsertState 对象（若有；bistate 为 NULL 时采用默认行为）也只是透传给
+ * RelationGetBufferForTuple。如果提供了 `bistate`，则需要调用
+ * table_finish_bulk_insert()。
  *
- * On return the slot's tts_tid and tts_tableOid are updated to reflect the
- * insertion. But note that any toasting of fields within the slot is NOT
- * reflected in the slots contents.
+ * 返回时，slot 的 tts_tid 与 tts_tableOid 会被更新以反映本次插入。但请注意，
+ * 对 slot 内字段的任何 TOAST 处理不会反映到 slot 的内容中。
  */
 static inline void
 table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
@@ -1372,15 +1264,12 @@ table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
 }
 
 /*
- * Perform a "speculative insertion". These can be backed out afterwards
- * without aborting the whole transaction.  Other sessions can wait for the
- * speculative insertion to be confirmed, turning it into a regular tuple, or
- * aborted, as if it never existed.  Speculatively inserted tuples behave as
- * "value locks" of short duration, used to implement INSERT .. ON CONFLICT.
+ * 执行"投机插入"。这些插入之后可以被回退，而不必中止整个事务。其他会话可以
+ * 等待该投机插入被确认（变成一个普通元组），或被中止（如同它从未存在过）。
+ * 被投机插入的元组表现为短时间的"值锁"，用于实现 INSERT .. ON CONFLICT。
  *
- * A transaction having performed a speculative insertion has to either abort,
- * or finish the speculative insertion with
- * table_tuple_complete_speculative(succeeded = ...).
+ * 执行了投机插入的事务要么必须中止，要么必须通过
+ * table_tuple_complete_speculative(succeeded = ...) 来结束该投机插入。
  */
 static inline void
 table_tuple_insert_speculative(Relation rel, TupleTableSlot *slot,
@@ -1393,8 +1282,8 @@ table_tuple_insert_speculative(Relation rel, TupleTableSlot *slot,
 }
 
 /*
- * Complete "speculative insertion" started in the same transaction. If
- * succeeded is true, the tuple is fully inserted, if false, it's removed.
+ * 结束在同一事务中启动的"投机插入"。若 succeeded 为 true，则元组被完整插入；
+ * 若为 false，则被移除。
  */
 static inline void
 table_tuple_complete_speculative(Relation rel, TupleTableSlot *slot,
@@ -1405,18 +1294,15 @@ table_tuple_complete_speculative(Relation rel, TupleTableSlot *slot,
 }
 
 /*
- * Insert multiple tuples into a table.
+ * 向表中插入多个元组。
  *
- * This is like table_tuple_insert(), but inserts multiple tuples in one
- * operation. That's often faster than calling table_tuple_insert() in a loop,
- * because e.g. the AM can reduce WAL logging and page locking overhead.
+ * 这与 table_tuple_insert() 类似，但它在一次操作中插入多个元组。这通常比在循环
+ * 中反复调用 table_tuple_insert() 更快，例如 AM 可以减少 WAL 日志与页面锁的开销。
  *
- * Except for taking `nslots` tuples as input, and an array of TupleTableSlots
- * in `slots`, the parameters for table_multi_insert() are the same as for
- * table_tuple_insert().
+ * 除了以 `nslots` 个元组作为输入、并以 TupleTableSlot 数组 `slots` 传入外，
+ * table_multi_insert() 的参数与 table_tuple_insert() 相同。
  *
- * Note: this leaks memory into the current memory context. You can create a
- * temporary context before calling this, if that's a problem.
+ * 注意：这会向当前内存上下文中泄漏内存。若有问题，可在调用前创建一个临时上下文。
  */
 static inline void
 table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
@@ -1427,30 +1313,27 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
 }
 
 /*
- * Delete a tuple.
+ * 删除一个元组。
  *
- * NB: do not call this directly unless prepared to deal with
- * concurrent-update conditions.  Use simple_table_tuple_delete instead.
+ * 注意：除非已准备好处理并发更新情况，否则不要直接调用本函数。应使用
+ * simple_table_tuple_delete 代替。
  *
- * Input parameters:
- *	relation - table to be modified (caller must hold suitable lock)
- *	tid - TID of tuple to be deleted
- *	cid - delete command ID (used for visibility test, and stored into
- *		cmax if successful)
- *	crosscheck - if not InvalidSnapshot, also check tuple against this
- *	wait - true if should wait for any conflicting update to commit/abort
- * Output parameters:
- *	tmfd - filled in failure cases (see below)
- *	changingPart - true iff the tuple is being moved to another partition
- *		table due to an update of the partition key. Otherwise, false.
+ * 输入参数：
+ *	relation - 要修改的表（调用者必须持有合适的锁）
+ *	tid - 待删除元组的 TID
+ *	cid - 删除命令 ID（用于可见性测试，成功时存入 cmax）
+ *	crosscheck - 若不为 InvalidSnapshot，则还需针对它检查元组
+ *	wait - 若为 true，则等待任何冲突的更新提交/中止
+ * 输出参数：
+ *	tmfd - 在失败情况下被填充（见下文）
+ *	changingPart - 当且仅当元组因分区键被更新而被移动到另一个分区表时为 true，
+ *		否则为 false。
  *
- * Normal, successful return value is TM_Ok, which means we did actually
- * delete it.  Failure return codes are TM_SelfModified, TM_Updated, and
- * TM_BeingModified (the last only possible if wait == false).
+ * 正常的成功返回值是 TM_Ok，表示我们确实删除了它。失败返回码为 TM_SelfModified、
+ * TM_Updated 和 TM_BeingModified（最后一个仅在 wait == false 时才可能出现）。
  *
- * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
- * t_xmax, and, if possible, t_cmax.  See comments for struct
- * TM_FailureData for additional info.
+ * 在失败情况下，本例程会用元组的 t_ctid、t_xmax 以及（在可能时）t_cmax 填充
+ * *tmfd。更多信息参见 TM_FailureData 结构体的注释。
  */
 static inline TM_Result
 table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
@@ -1463,38 +1346,34 @@ table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
 }
 
 /*
- * Update a tuple.
+ * 更新一个元组。
  *
- * NB: do not call this directly unless you are prepared to deal with
- * concurrent-update conditions.  Use simple_table_tuple_update instead.
+ * 注意：除非已准备好处理并发更新情况，否则不要直接调用本函数。应使用
+ * simple_table_tuple_update 代替。
  *
- * Input parameters:
- *	relation - table to be modified (caller must hold suitable lock)
- *	otid - TID of old tuple to be replaced
- *	slot - newly constructed tuple data to store
- *	cid - update command ID (used for visibility test, and stored into
- *		cmax/cmin if successful)
- *	crosscheck - if not InvalidSnapshot, also check old tuple against this
- *	wait - true if should wait for any conflicting update to commit/abort
- * Output parameters:
- *	tmfd - filled in failure cases (see below)
- *	lockmode - filled with lock mode acquired on tuple
- *	update_indexes - in success cases this is set if new index entries
- *		are required for this tuple; see TU_UpdateIndexes
+ * 输入参数：
+ *	relation - 要修改的表（调用者必须持有合适的锁）
+ *	otid - 待替换旧元组的 TID
+ *	slot - 新构造的待存储元组数据
+ *	cid - 更新命令 ID（用于可见性测试，成功时存入 cmax/cmin）
+ *	crosscheck - 若不为 InvalidSnapshot，则还需针对它检查旧元组
+ *	wait - 若为 true，则等待任何冲突的更新提交/中止
+ * 输出参数：
+ *	tmfd - 在失败情况下被填充（见下文）
+ *	lockmode - 被填充为在元组上获取的锁模式
+ *	update_indexes - 在成功情况下，若需要为本元组建立新的索引项则被设置；
+ *		参见 TU_UpdateIndexes
  *
- * Normal, successful return value is TM_Ok, which means we did actually
- * update it.  Failure return codes are TM_SelfModified, TM_Updated, and
- * TM_BeingModified (the last only possible if wait == false).
+ * 正常的成功返回值是 TM_Ok，表示我们确实更新了它。失败返回码为 TM_SelfModified、
+ * TM_Updated 和 TM_BeingModified（最后一个仅在 wait == false 时才可能出现）。
  *
- * On success, the slot's tts_tid and tts_tableOid are updated to match the new
- * stored tuple; in particular, slot->tts_tid is set to the TID where the
- * new tuple was inserted, and its HEAP_ONLY_TUPLE flag is set iff a HOT
- * update was done.  However, any TOAST changes in the new tuple's
- * data are not reflected into *newtup.
+ * 成功时，slot 的 tts_tid 与 tts_tableOid 会被更新以匹配新存储的元组；尤其是
+ * slot->tts_tid 被设为新元组插入处的 TID，且仅当执行了 HOT 更新时，其
+ * HEAP_ONLY_TUPLE 标志才会被设置。但是，新元组数据中的任何 TOAST 变更都不会
+ * 反映到 *newtup 中。
  *
- * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
- * t_xmax, and, if possible, t_cmax.  See comments for struct TM_FailureData
- * for additional info.
+ * 在失败情况下，本例程会用元组的 t_ctid、t_xmax 以及（在可能时）t_cmax 填充
+ * *tmfd。更多信息参见 TM_FailureData 结构体的注释。
  */
 static inline TM_Result
 table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
@@ -1509,39 +1388,36 @@ table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
 }
 
 /*
- * Lock a tuple in the specified mode.
+ * 以指定模式锁定一个元组。
  *
- * Input parameters:
- *	relation: relation containing tuple (caller must hold suitable lock)
- *	tid: TID of tuple to lock (updated if an update chain was followed)
- *	snapshot: snapshot to use for visibility determinations
- *	cid: current command ID (used for visibility test, and stored into
- *		tuple's cmax if lock is successful)
- *	mode: lock mode desired
- *	wait_policy: what to do if tuple lock is not available
+ * 输入参数：
+ *	relation: 包含元组的表（调用者必须持有合适的锁）
+ *	tid: 待锁定元组的 TID（若跟随了更新链则会被更新）
+ *	snapshot: 用于可见性判断的快照
+ *	cid: 当前命令 ID（用于可见性测试，锁定成功时存入元组的 cmax）
+ *	mode: 期望的锁模式
+ *	wait_policy: 当无法立即获取元组锁时的处理策略
  *	flags:
- *		If TUPLE_LOCK_FLAG_LOCK_UPDATE_IN_PROGRESS, follow the update chain to
- *		also lock descendant tuples if lock modes don't conflict.
- *		If TUPLE_LOCK_FLAG_FIND_LAST_VERSION, follow the update chain and lock
- *		latest version.
+ *		若指定 TUPLE_LOCK_FLAG_LOCK_UPDATE_IN_PROGRESS，则跟随更新链，
+ *		在锁模式不冲突的情况下也锁定后代元组。
+ *		若指定 TUPLE_LOCK_FLAG_FIND_LAST_VERSION，则跟随更新链并锁定最新版本。
  *
- * Output parameters:
- *	*slot: contains the target tuple
- *	*tmfd: filled in failure cases (see below)
+ * 输出参数：
+ *	*slot: 包含目标元组
+ *	*tmfd: 在失败情况下被填充（见下文）
  *
- * Function result may be:
- *	TM_Ok: lock was successfully acquired
- *	TM_Invisible: lock failed because tuple was never visible to us
- *	TM_SelfModified: lock failed because tuple updated by self
- *	TM_Updated: lock failed because tuple updated by other xact
- *	TM_Deleted: lock failed because tuple deleted by other xact
- *	TM_WouldBlock: lock couldn't be acquired and wait_policy is skip
+ * 函数返回值可能是：
+ *	TM_Ok: 成功获取锁
+ *	TM_Invisible: 锁获取失败，因为元组对我们从来不可见
+ *	TM_SelfModified: 锁获取失败，因为元组被自身更新
+ *	TM_Updated: 锁获取失败，因为元组被其他事务更新
+ *	TM_Deleted: 锁获取失败，因为元组被其他事务删除
+ *	TM_WouldBlock: 无法获取锁，且 wait_policy 为 skip
  *
- * In the failure cases other than TM_Invisible and TM_Deleted, the routine
- * fills *tmfd with the tuple's t_ctid, t_xmax, and, if possible, t_cmax.
- * Additionally, in both success and failure cases, tmfd->traversed is set if
- * an update chain was followed.  See comments for struct TM_FailureData for
- * additional info.
+ * 在除 TM_Invisible 与 TM_Deleted 之外的失败情况下，本例程会用元组的 t_ctid、
+ * t_xmax 以及（在可能时）t_cmax 填充 *tmfd。此外，无论是成功还是失败，只要
+ * 跟随了更新链，tmfd->traversed 都会被设置。更多信息参见 TM_FailureData
+ * 结构体的注释。
  */
 static inline TM_Result
 table_tuple_lock(Relation rel, ItemPointer tid, Snapshot snapshot,
@@ -1555,34 +1431,32 @@ table_tuple_lock(Relation rel, ItemPointer tid, Snapshot snapshot,
 }
 
 /*
- * Perform operations necessary to complete insertions made via
- * tuple_insert and multi_insert with a BulkInsertState specified.
+ * 执行完成经由 tuple_insert 与 multi_insert（并指定了 BulkInsertState）
+ * 所做插入所必需的操作。
  */
 static inline void
 table_finish_bulk_insert(Relation rel, int options)
 {
-	/* optional callback */
+	/* 可选回调 */
 	if (rel->rd_tableam && rel->rd_tableam->finish_bulk_insert)
 		rel->rd_tableam->finish_bulk_insert(rel, options);
 }
 
 
 /* ------------------------------------------------------------------------
- * DDL related functionality.
+ * 与 DDL 相关的功能。
  * ------------------------------------------------------------------------
  */
 
 /*
- * Create storage for `rel` in `newrlocator`, with persistence set to
- * `persistence`.
+ * 为 `rel` 在 `newrlocator` 处创建存储，持久化行为由 `persistence` 指定。
  *
- * This is used both during relation creation and various DDL operations to
- * create new rel storage that can be filled from scratch.  When creating
- * new storage for an existing relfilelocator, this should be called before the
- * relcache entry has been updated.
+ * 本函数既在关系创建期间使用，也在各种 DDL 操作中使用，以创建可从头填充的新
+ * 关系存储。当为既有 relfilelocator 创建新存储时，应在 relcache 项被更新之前
+ * 调用本函数。
  *
- * *freezeXid, *minmulti are set to the xid / multixact horizon for the table
- * that pg_class.{relfrozenxid, relminmxid} have to be set to.
+ * *freezeXid 与 *minmulti 会被设为 pg_class.{relfrozenxid, relminmxid} 必须
+ * 被设为的事务 ID / 多事务地平线。
  */
 static inline void
 table_relation_set_new_filelocator(Relation rel,
@@ -1597,10 +1471,8 @@ table_relation_set_new_filelocator(Relation rel,
 }
 
 /*
- * Remove all table contents from `rel`, in a non-transactional manner.
- * Non-transactional meaning that there's no need to support rollbacks. This
- * commonly only is used to perform truncations for relation storage created in
- * the current transaction.
+ * 以非事务性的方式，从 `rel` 中移除所有表内容。非事务性意味着无需支持回滚。
+ * 这通常只用于对在当前事务中创建的关系存储执行截断。
  */
 static inline void
 table_relation_nontransactional_truncate(Relation rel)
@@ -1609,10 +1481,9 @@ table_relation_nontransactional_truncate(Relation rel)
 }
 
 /*
- * Copy data from `rel` into the new relfilelocator `newrlocator`. The new
- * relfilelocator may not have storage associated before this function is
- * called. This is only supposed to be used for low level operations like
- * changing a relation's tablespace.
+ * 将 `rel` 中的数据复制到新的 relfilelocator `newrlocator`。在本函数被调用前，
+ * 新的 relfilelocator 可能尚未关联任何存储。本函数只应被用于更改关系表空间等
+ * 底层操作。
  */
 static inline void
 table_relation_copy_data(Relation rel, const RelFileLocator *newrlocator)
@@ -1621,25 +1492,22 @@ table_relation_copy_data(Relation rel, const RelFileLocator *newrlocator)
 }
 
 /*
- * Copy data from `OldTable` into `NewTable`, as part of a CLUSTER or VACUUM
- * FULL.
+ * 作为 CLUSTER 或 VACUUM FULL 的一部分，将 `OldTable` 中的数据复制到 `NewTable`。
  *
- * Additional Input parameters:
- * - use_sort - if true, the table contents are sorted appropriate for
- *   `OldIndex`; if false and OldIndex is not InvalidOid, the data is copied
- *   in that index's order; if false and OldIndex is InvalidOid, no sorting is
- *   performed
- * - OldIndex - see use_sort
- * - OldestXmin - computed by vacuum_get_cutoffs(), even when
- *   not needed for the relation's AM
- * - *xid_cutoff - ditto
- * - *multi_cutoff - ditto
+ * 附加输入参数：
+ * - use_sort - 若为 true，则表内容按 `OldIndex` 适当排序；若为 false 且 OldIndex
+ *   不是 InvalidOid，则按该索引的顺序复制数据；若为 false 且 OldIndex 为
+ *   InvalidOid，则不执行排序
+ * - OldIndex - 参见 use_sort
+ * - OldestXmin - 由 vacuum_get_cutoffs() 计算，即便关系的 AM 并不需要它
+ * - *xid_cutoff - 同上
+ * - *multi_cutoff - 同上
  *
- * Output parameters:
- * - *xid_cutoff - rel's new relfrozenxid value, may be invalid
- * - *multi_cutoff - rel's new relminmxid value, may be invalid
- * - *tups_vacuumed - stats, for logging, if appropriate for AM
- * - *tups_recently_dead - stats, for logging, if appropriate for AM
+ * 输出参数：
+ * - *xid_cutoff - 关系新的 relfrozenxid 值，可能为无效值
+ * - *multi_cutoff - 关系新的 relminmxid 值，可能为无效值
+ * - *tups_vacuumed - 用于日志记录的统计信息（若 AM 适用）
+ * - *tups_recently_dead - 用于日志记录的统计信息（若 AM 适用）
  */
 static inline void
 table_relation_copy_for_cluster(Relation OldTable, Relation NewTable,
@@ -1660,15 +1528,13 @@ table_relation_copy_for_cluster(Relation OldTable, Relation NewTable,
 }
 
 /*
- * Perform VACUUM on the relation. The VACUUM can be triggered by a user or by
- * autovacuum. The specific actions performed by the AM will depend heavily on
- * the individual AM.
+ * 对该关系执行 VACUUM。VACUUM 可能由用户触发，也可能由 autovacuum 触发。AM
+ * 具体执行哪些操作，很大程度上取决于各个 AM 自身。
  *
- * On entry a transaction needs to already been established, and the
- * table is locked with a ShareUpdateExclusive lock.
+ * 进入本函数时，事务已经建立，并且该表已被施加 ShareUpdateExclusive 锁。
  *
- * Note that neither VACUUM FULL (and CLUSTER), nor ANALYZE go through this
- * routine, even if (for ANALYZE) it is part of the same VACUUM command.
+ * 注意，无论是 VACUUM FULL（及 CLUSTER），还是 ANALYZE，都不会经过本例程，
+ * 即便（对 ANALYZE 而言）它是同一个 VACUUM 命令的一部分。
  */
 static inline void
 table_relation_vacuum(Relation rel, struct VacuumParams *params,
@@ -1678,12 +1544,11 @@ table_relation_vacuum(Relation rel, struct VacuumParams *params,
 }
 
 /*
- * Prepare to analyze the next block in the read stream. The scan needs to
- * have been  started with table_beginscan_analyze().  Note that this routine
- * might acquire resources like locks that are held until
- * table_scan_analyze_next_tuple() returns false.
+ * 为分析读取流中的下一个块做准备。该扫描必须已经通过 table_beginscan_analyze()
+ * 启动。注意，本例程可能会获取诸如锁之类的资源，这些资源会一直持有到
+ * table_scan_analyze_next_tuple() 返回 false 为止。
  *
- * Returns false if block is unsuitable for sampling, true otherwise.
+ * 如果该块不适合采样，则返回 false，否则返回 true。
  */
 static inline bool
 table_scan_analyze_next_block(TableScanDesc scan, ReadStream *stream)
@@ -1692,14 +1557,11 @@ table_scan_analyze_next_block(TableScanDesc scan, ReadStream *stream)
 }
 
 /*
- * Iterate over tuples in the block selected with
- * table_scan_analyze_next_block() (which needs to have returned true, and
- * this routine may not have returned false for the same block before). If a
- * tuple that's suitable for sampling is found, true is returned and a tuple
- * is stored in `slot`.
+ * 遍历由 table_scan_analyze_next_block()（必须已返回 true，且本例程此前对该块
+ * 尚未返回过 false）所选中块内的元组。如果找到适合采样的元组，返回 true 并将
+ * 该元组存入 `slot`。
  *
- * *liverows and *deadrows are incremented according to the encountered
- * tuples.
+ * *liverows 与 *deadrows 会根据遇到的元组相应递增。
  */
 static inline bool
 table_scan_analyze_next_tuple(TableScanDesc scan, TransactionId OldestXmin,
@@ -1712,31 +1574,25 @@ table_scan_analyze_next_tuple(TableScanDesc scan, TransactionId OldestXmin,
 }
 
 /*
- * table_index_build_scan - scan the table to find tuples to be indexed
+ * table_index_build_scan - 扫描表以找出需要被索引的元组
  *
- * This is called back from an access-method-specific index build procedure
- * after the AM has done whatever setup it needs.  The parent table relation
- * is scanned to find tuples that should be entered into the index.  Each
- * such tuple is passed to the AM's callback routine, which does the right
- * things to add it to the new index.  After we return, the AM's index
- * build procedure does whatever cleanup it needs.
+ * 本函数在访问方法特定的索引构建过程完成自身所需的准备工作之后被回调。父表
+ * 关系会被扫描以找出应当进入索引的元组。每个这样的元组都会被传给该 AM 的回调
+ * 例程，由它做正确的事情将该元组加入新索引。本函数返回后，AM 的索引构建过程
+ * 会执行它所需的任何清理工作。
  *
- * The total count of live tuples is returned.  This is for updating pg_class
- * statistics.  (It's annoying not to be able to do that here, but we want to
- * merge that update with others; see index_update_stats.)  Note that the
- * index AM itself must keep track of the number of index tuples; we don't do
- * so here because the AM might reject some of the tuples for its own reasons,
- * such as being unable to store NULLs.
+ * 返回活元组的总数。这用于更新 pg_class 的统计信息。（无法在此处完成更新有些
+ * 恼人，但我们希望将该更新与其他更新合并；参见 index_update_stats。）注意，
+ * 索引 AM 自身必须记录索引元组的数量；我们在此不记录，因为 AM 可能出于自身
+ * 原因（例如无法存储 NULL）拒绝其中某些元组。
  *
- * If 'progress', the PROGRESS_SCAN_BLOCKS_TOTAL counter is updated when
- * starting the scan, and PROGRESS_SCAN_BLOCKS_DONE is updated as we go along.
+ * 若 progress 为真，则在开始扫描时更新 PROGRESS_SCAN_BLOCKS_TOTAL 计数器，并
+ * 在扫描过程中持续更新 PROGRESS_SCAN_BLOCKS_DONE。
  *
- * A side effect is to set indexInfo->ii_BrokenHotChain to true if we detect
- * any potentially broken HOT chains.  Currently, we set this if there are any
- * RECENTLY_DEAD or DELETE_IN_PROGRESS entries in a HOT chain, without trying
- * very hard to detect whether they're really incompatible with the chain tip.
- * This only really makes sense for heap AM, it might need to be generalized
- * for other AMs later.
+ * 一个副作用是：如果我们检测到任何可能损坏的 HOT 链，会将 indexInfo->
+ * ii_BrokenHotChain 设为 true。目前，只要 HOT 链中存在任何 RECENTLY_DEAD 或
+ * DELETE_IN_PROGRESS 项，我们就会设置它，而不会费力去检测它们是否真的与链尾
+ * 不兼容。这真正有意义的场景只是堆 AM，未来或许需要为其他 AM 做一般化处理。
  */
 static inline double
 table_index_build_scan(Relation table_rel,
@@ -1762,14 +1618,12 @@ table_index_build_scan(Relation table_rel,
 }
 
 /*
- * As table_index_build_scan(), except that instead of scanning the complete
- * table, only the given number of blocks are scanned.  Scan to end-of-rel can
- * be signaled by passing InvalidBlockNumber as numblocks.  Note that
- * restricting the range to scan cannot be done when requesting syncscan.
+ * 与 table_index_build_scan() 类似，但只扫描给定数量的块，而非整张表。通过将
+ * numblocks 传为 InvalidBlockNumber 可以表示扫描到关系末尾。注意，在请求
+ * syncscan 时无法限制扫描范围。
  *
- * When "anyvisible" mode is requested, all tuples visible to any transaction
- * are indexed and counted as live, including those inserted or deleted by
- * transactions that are still in progress.
+ * 当请求 "anyvisible" 模式时，所有对任何事务可见的元组都会被索引并计为活元组，
+ * 包括那些由仍在进行中的事务插入或删除的元组。
  */
 static inline double
 table_index_build_range_scan(Relation table_rel,
@@ -1798,9 +1652,9 @@ table_index_build_range_scan(Relation table_rel,
 }
 
 /*
- * table_index_validate_scan - second table scan for concurrent index build
+ * table_index_validate_scan - 并发索引构建所需的第二次表扫描
  *
- * See validate_index() for an explanation.
+ * 解释参见 validate_index()。
  */
 static inline void
 table_index_validate_scan(Relation table_rel,
@@ -1818,18 +1672,16 @@ table_index_validate_scan(Relation table_rel,
 
 
 /* ----------------------------------------------------------------------------
- * Miscellaneous functionality
+ * 其他功能
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Return the current size of `rel` in bytes. If `forkNumber` is
- * InvalidForkNumber, return the relation's overall size, otherwise the size
- * for the indicated fork.
+ * 返回 `rel` 当前的大小（以字节为单位）。若 `forkNumber` 为 InvalidForkNumber，
+ * 则返回关系的整体大小，否则返回所指分叉的大小。
  *
- * Note that the overall size might not be the equivalent of the sum of sizes
- * for the individual forks for some AMs, e.g. because the AMs storage does
- * not neatly map onto the builtin types of forks.
+ * 注意，对某些 AM 而言，整体大小可能并不等于各个分叉大小之和，例如因为 AM 的
+ * 存储在结构上并不能整齐地映射到内建类型的分叉。
  */
 static inline uint64
 table_relation_size(Relation rel, ForkNumber forkNumber)
@@ -1838,7 +1690,7 @@ table_relation_size(Relation rel, ForkNumber forkNumber)
 }
 
 /*
- * table_relation_needs_toast_table - does this relation need a toast table?
+ * table_relation_needs_toast_table - 该关系是否需要一个 TOAST 表？
  */
 static inline bool
 table_relation_needs_toast_table(Relation rel)
@@ -1847,8 +1699,7 @@ table_relation_needs_toast_table(Relation rel)
 }
 
 /*
- * Return the OID of the AM that should be used to implement the TOAST table
- * for this relation.
+ * 返回应当用于为本关系实现 TOAST 表的 AM 的 OID。
  */
 static inline Oid
 table_relation_toast_am(Relation rel)
@@ -1857,27 +1708,23 @@ table_relation_toast_am(Relation rel)
 }
 
 /*
- * Fetch all or part of a TOAST value from a TOAST table.
+ * 从 TOAST 表中取回 TOAST 值的全部或部分内容。
  *
- * If this AM is never used to implement a TOAST table, then this callback
- * is not needed. But, if toasted values are ever stored in a table of this
- * type, then you will need this callback.
+ * 如果本 AM 从不用于实现 TOAST 表，则不需要此回调。但是，如果有被 TOAST 的值
+ * 存储在本类型的表中，则你将需要此回调。
  *
- * toastrel is the relation in which the toasted value is stored.
+ * toastrel 是存储被 TOAST 值的那个关系。
  *
- * valueid identifies which toast value is to be fetched. For the heap,
- * this corresponds to the values stored in the chunk_id column.
+ * valueid 标识要取回的是哪个 TOAST 值。对于堆而言，它对应于 chunk_id 列中
+ * 存储的值。
  *
- * attrsize is the total size of the toast value to be fetched.
+ * attrsize 是要取回的 TOAST 值的总大小。
  *
- * sliceoffset is the offset within the toast value of the first byte that
- * should be fetched.
+ * sliceoffset 是要取回的首字节在 TOAST 值中的偏移。
  *
- * slicelength is the number of bytes from the toast value that should be
- * fetched.
+ * slicelength 是应从 TOAST 值中取回的字节数。
  *
- * result is caller-allocated space into which the fetched bytes should be
- * stored.
+ * result 是由调用者分配的空间，取回的字节应存入其中。
  */
 static inline void
 table_relation_fetch_toast_slice(Relation toastrel, Oid valueid,
@@ -1892,13 +1739,13 @@ table_relation_fetch_toast_slice(Relation toastrel, Oid valueid,
 
 
 /* ----------------------------------------------------------------------------
- * Planner related functionality
+ * 规划器相关功能
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Estimate the current size of the relation, as an AM specific workhorse for
- * estimate_rel_size(). Look there for an explanation of the parameters.
+ * 估算关系的当前大小，作为 estimate_rel_size() 的 AM 特定底层实现。参数的
+ * 含义参见该函数。
  */
 static inline void
 table_relation_estimate_size(Relation rel, int32 *attr_widths,
@@ -1911,22 +1758,19 @@ table_relation_estimate_size(Relation rel, int32 *attr_widths,
 
 
 /* ----------------------------------------------------------------------------
- * Executor related functionality
+ * 执行器相关功能
  * ----------------------------------------------------------------------------
  */
 
 /*
- * Fetch / check / return tuples as part of a bitmap table scan. `scan` needs
- * to have been started via table_beginscan_bm(). Fetch the next tuple of a
- * bitmap table scan into `slot` and return true if a visible tuple was found,
- * false otherwise.
+ * 作为位图表扫描的一部分取回 / 检查 / 返回元组。`scan` 必须已经通过
+ * table_beginscan_bm() 启动。将位图表扫描的下一个元组取入 `slot`，若找到可见
+ * 元组则返回 true，否则返回 false。
  *
- * `recheck` is set by the table AM to indicate whether or not the tuple in
- * `slot` should be rechecked. Tuples from lossy pages will always need to be
- * rechecked, but some non-lossy pages' tuples may also require recheck.
+ * `recheck` 由表 AM 设置，用于指示 `slot` 中的元组是否需要被重新检查。来自有损
+ * 页面的元组总是需要重新检查，但某些非有损页面的元组也可能需要重新检查。
  *
- * `lossy_pages` is incremented if the block's representation in the bitmap is
- * lossy; otherwise, `exact_pages` is incremented.
+ * 若块在 bitmap 中的表示是有损的，则递增 `lossy_pages`；否则递增 `exact_pages`。
  */
 static inline bool
 table_scan_bitmap_next_tuple(TableScanDesc scan,
@@ -1936,9 +1780,8 @@ table_scan_bitmap_next_tuple(TableScanDesc scan,
 							 uint64 *exact_pages)
 {
 	/*
-	 * We don't expect direct calls to table_scan_bitmap_next_tuple with valid
-	 * CheckXidAlive for catalog or regular tables.  See detailed comments in
-	 * xact.c where these variables are declared.
+	 * 我们不期望对 table_scan_bitmap_next_tuple 的直接调用传入对系统目录或普通表
+	 * 有效的 CheckXidAlive。详见这些变量声明所在的 xact.c 中的详细注释。
 	 */
 	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
 		elog(ERROR, "unexpected table_scan_bitmap_next_tuple call during logical decoding");
@@ -1951,22 +1794,19 @@ table_scan_bitmap_next_tuple(TableScanDesc scan,
 }
 
 /*
- * Prepare to fetch tuples from the next block in a sample scan. Returns false
- * if the sample scan is finished, true otherwise. `scan` needs to have been
- * started via table_beginscan_sampling().
+ * 为从采样扫描的下一个块中取回元组做准备。如果采样扫描已结束则返回 false，
+ * 否则返回 true。`scan` 必须已经通过 table_beginscan_sampling() 启动。
  *
- * This will call the TsmRoutine's NextSampleBlock() callback if necessary
- * (i.e. NextSampleBlock is not NULL), or perform a sequential scan over the
- * underlying relation.
+ * 必要时会调用 TsmRoutine 的 NextSampleBlock() 回调（即 NextSampleBlock 不为
+ * NULL），否则会对底层关系执行顺序扫描。
  */
 static inline bool
 table_scan_sample_next_block(TableScanDesc scan,
 							 struct SampleScanState *scanstate)
 {
 	/*
-	 * We don't expect direct calls to table_scan_sample_next_block with valid
-	 * CheckXidAlive for catalog or regular tables.  See detailed comments in
-	 * xact.c where these variables are declared.
+	 * 我们不期望对 table_scan_sample_next_block 的直接调用传入对系统目录或普通表
+	 * 有效的 CheckXidAlive。详见这些变量声明所在的 xact.c 中的详细注释。
 	 */
 	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
 		elog(ERROR, "unexpected table_scan_sample_next_block call during logical decoding");
@@ -1974,12 +1814,11 @@ table_scan_sample_next_block(TableScanDesc scan,
 }
 
 /*
- * Fetch the next sample tuple into `slot` and return true if a visible tuple
- * was found, false otherwise. table_scan_sample_next_block() needs to
- * previously have selected a block (i.e. returned true), and no previous
- * table_scan_sample_next_tuple() for the same block may have returned false.
+ * 将下一个采样元组取入 `slot`，若找到可见元组则返回 true，否则返回 false。
+ * table_scan_sample_next_block() 必须事先已选中一个块（即返回了 true），且
+ * 对同一块此前的 table_scan_sample_next_tuple() 不能返回过 false。
  *
- * This will call the TsmRoutine's NextSampleTuple() callback.
+ * 本函数会调用 TsmRoutine 的 NextSampleTuple() 回调。
  */
 static inline bool
 table_scan_sample_next_tuple(TableScanDesc scan,
@@ -1987,9 +1826,8 @@ table_scan_sample_next_tuple(TableScanDesc scan,
 							 TupleTableSlot *slot)
 {
 	/*
-	 * We don't expect direct calls to table_scan_sample_next_tuple with valid
-	 * CheckXidAlive for catalog or regular tables.  See detailed comments in
-	 * xact.c where these variables are declared.
+	 * 我们不期望对 table_scan_sample_next_tuple 的直接调用传入对系统目录或普通表
+	 * 有效的 CheckXidAlive。详见这些变量声明所在的 xact.c 中的详细注释。
 	 */
 	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
 		elog(ERROR, "unexpected table_scan_sample_next_tuple call during logical decoding");
@@ -1999,7 +1837,7 @@ table_scan_sample_next_tuple(TableScanDesc scan,
 
 
 /* ----------------------------------------------------------------------------
- * Functions to make modifications a bit simpler.
+ * 简化修改操作的辅助函数。
  * ----------------------------------------------------------------------------
  */
 
@@ -2012,7 +1850,7 @@ extern void simple_table_tuple_update(Relation rel, ItemPointer otid,
 
 
 /* ----------------------------------------------------------------------------
- * Helper functions to implement parallel scans for block oriented AMs.
+ * 为面向块访问的 AM 实现并行扫描的辅助函数。
  * ----------------------------------------------------------------------------
  */
 
@@ -2030,7 +1868,7 @@ extern void table_block_parallelscan_startblock_init(Relation rel,
 
 
 /* ----------------------------------------------------------------------------
- * Helper functions to implement relation sizing for block oriented AMs.
+ * 为面向块访问的 AM 实现关系大小估算的辅助函数。
  * ----------------------------------------------------------------------------
  */
 
@@ -2044,14 +1882,14 @@ extern void table_block_relation_estimate_size(Relation rel,
 											   Size usable_bytes_per_page);
 
 /* ----------------------------------------------------------------------------
- * Functions in tableamapi.c
+ * tableamapi.c 中的函数
  * ----------------------------------------------------------------------------
  */
 
 extern const TableAmRoutine *GetTableAmRoutine(Oid amhandler);
 
 /* ----------------------------------------------------------------------------
- * Functions in heapam_handler.c
+ * heapam_handler.c 中的函数
  * ----------------------------------------------------------------------------
  */
 

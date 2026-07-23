@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * tupdesc.h
- *	  POSTGRES tuple descriptor definitions.
+ *	  POSTGRES 元组描述符定义。
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -22,124 +22,104 @@
 typedef struct AttrDefault
 {
 	AttrNumber	adnum;
-	char	   *adbin;			/* nodeToString representation of expr */
+	char	   *adbin;			/* 表达式的 nodeToString 表示形式 */
 } AttrDefault;
 
 typedef struct ConstrCheck
 {
 	char	   *ccname;
-	char	   *ccbin;			/* nodeToString representation of expr */
+	char	   *ccbin;			/* 表达式的 nodeToString 表示形式 */
 	bool		ccenforced;
 	bool		ccvalid;
-	bool		ccnoinherit;	/* this is a non-inheritable constraint */
+	bool		ccnoinherit;	/* 这是一个不可继承的约束 */
 } ConstrCheck;
 
-/* This structure contains constraints of a tuple */
+/* 本结构体包含元组的约束 */
 typedef struct TupleConstr
 {
-	AttrDefault *defval;		/* array */
-	ConstrCheck *check;			/* array */
-	struct AttrMissing *missing;	/* missing attributes values, NULL if none */
+	AttrDefault *defval;		/* 数组 */
+	ConstrCheck *check;			/* 数组 */
+	struct AttrMissing *missing;	/* 缺失属性值，若无则为 NULL */
 	uint16		num_defval;
 	uint16		num_check;
-	bool		has_not_null;	/* any not-null, including not valid ones */
+	bool		has_not_null;	/* 任意非空约束，包括尚未生效的 */
 	bool		has_generated_stored;
 	bool		has_generated_virtual;
 } TupleConstr;
 
 /*
- * CompactAttribute
- *		Cut-down version of FormData_pg_attribute for faster access for tasks
- *		such as tuple deformation.  The fields of this struct are populated
- *		using the populate_compact_attribute() function, which must be called
- *		directly after the FormData_pg_attribute struct is populated or
- *		altered in any way.
+ * CompactAttribute（紧凑属性）
+ *		为了更快速地访问（例如元组解构）等任务而对 FormData_pg_attribute 的精简版本。
+ *		本结构体的字段由 populate_compact_attribute() 函数填充，该函数必须在
+ *		FormData_pg_attribute 结构体被填充或以任何方式修改之后立即调用。
+ * 目前本结构体大小为 16 字节。任何会增大该结构体的代码改动都应非常慎重地考虑。
  *
- * Currently, this struct is 16 bytes.  Any code changes which enlarge this
- * struct should be considered very carefully.
- *
- * Code which must access a TupleDesc's attribute data should always make use
- * the fields of this struct when required fields are available here.  It's
- * more efficient to access the memory in CompactAttribute due to it being a
- * more compact representation of FormData_pg_attribute and also because
- * accessing the FormData_pg_attribute requires an additional calculations to
- * obtain the base address of the array within the TupleDesc.
+ * 必须访问 TupleDesc 属性数据的代码，在所需字段于此可用时，应当始终使用本结构体的字段。
+ * 由于 CompactAttribute 是 FormData_pg_attribute 更紧凑的表示形式，
+ * 且访问 FormData_pg_attribute 还需要额外的计算来获取 TupleDesc 内数组的
+ * 基地址，访问 CompactAttribute 中的内存效率更高。
  */
 typedef struct CompactAttribute
 {
-	int32		attcacheoff;	/* fixed offset into tuple, if known, or -1 */
-	int16		attlen;			/* attr len in bytes or -1 = varlen, -2 =
-								 * cstring */
-	bool		attbyval;		/* as FormData_pg_attribute.attbyval */
-	bool		attispackable;	/* FormData_pg_attribute.attstorage !=
-								 * TYPSTORAGE_PLAIN */
-	bool		atthasmissing;	/* as FormData_pg_attribute.atthasmissing */
-	bool		attisdropped;	/* as FormData_pg_attribute.attisdropped */
-	bool		attgenerated;	/* FormData_pg_attribute.attgenerated != '\0' */
-	char		attnullability; /* status of not-null constraint, see below */
-	uint8		attalignby;		/* alignment requirement in bytes */
+	int32		attcacheoff;	/* 元组中已知的固定偏移，未知则为 -1 */
+	int16		attlen;			/* 属性长度（字节）；-1 表示变长，-2 表示 cstring */
+	bool		attbyval;		/* 同 FormData_pg_attribute.attbyval */
+	bool		attispackable;	/* 同 FormData_pg_attribute.attstorage != TYPSTORAGE_PLAIN */
+	bool		atthasmissing;	/* 同 FormData_pg_attribute.atthasmissing */
+	bool		attisdropped;	/* 同 FormData_pg_attribute.attisdropped */
+	bool		attgenerated;	/* 同 FormData_pg_attribute.attgenerated != '\0' */
+	char		attnullability; /* 非空约束的状态，见下文 */
+	uint8		attalignby;		/* 对齐要求（字节数） */
 } CompactAttribute;
 
-/* Valid values for CompactAttribute->attnullability */
-#define	ATTNULLABLE_UNRESTRICTED 'f'	/* No constraint exists */
-#define	ATTNULLABLE_UNKNOWN		'u' /* constraint exists, validity unknown */
-#define	ATTNULLABLE_VALID		'v' /* valid constraint exists */
-#define	ATTNULLABLE_INVALID		'i' /* constraint exists, marked invalid */
+/* CompactAttribute->attnullability 的有效取值 */
+#define	ATTNULLABLE_UNRESTRICTED 'f'	/* 不存在任何约束 */
+#define	ATTNULLABLE_UNKNOWN		'u' /* 存在约束，但有效性未知 */
+#define	ATTNULLABLE_VALID		'v' /* 存在有效约束 */
+#define	ATTNULLABLE_INVALID		'i' /* 存在约束，但被标记为无效 */
 
 /*
- * This struct is passed around within the backend to describe the structure
- * of tuples.  For tuples coming from on-disk relations, the information is
- * collected from the pg_attribute, pg_attrdef, and pg_constraint catalogs.
- * Transient row types (such as the result of a join query) have anonymous
- * TupleDesc structs that generally omit any constraint info; therefore the
- * structure is designed to let the constraints be omitted efficiently.
+ * 本结构体在后端内部被传递，用于描述元组的结构。
+ * 对于来自磁盘关系的元组，其信息收集自 pg_attribute、pg_attrdef 和 pg_constraint 系统目录。
+
+ * 瞬态行类型（例如连接查询的结果）拥有匿名的 TupleDesc 结构体，通常会省略任何约束信息；
+ * 因此本结构被设计成可以高效地省略这些约束。
+
  *
- * Note that only user attributes, not system attributes, are mentioned in
- * TupleDesc.
+ * 注意，TupleDesc 中只提及用户属性，而不提及系统属性。
+
  *
- * If the tupdesc is known to correspond to a named rowtype (such as a table's
- * rowtype) then tdtypeid identifies that type and tdtypmod is -1.  Otherwise
- * tdtypeid is RECORDOID, and tdtypmod can be either -1 for a fully anonymous
- * row type, or a value >= 0 to allow the rowtype to be looked up in the
- * typcache.c type cache.
+ * 如果 tupdesc 已知对应于某个具名行类型（例如表的行类型），则 tdtypeid 标识该类型，且 tdtypmod 为 -1。
+ * 否则 tdtypeid 为 RECORDOID，而 tdtypmod 可以是 -1（表示完全匿名的行类型），
+ * 或是 >= 0 的值，以便在 typcache.c 的类型缓存中查找该行类型。
+
+
  *
- * Note that tdtypeid is never the OID of a domain over composite, even if
- * we are dealing with values that are known (at some higher level) to be of
- * a domain-over-composite type.  This is because tdtypeid/tdtypmod need to
- * match up with the type labeling of composite Datums, and those are never
- * explicitly marked as being of a domain type, either.
+ * 注意，tdtypeid 永远不会是"复合之上的域"的 OID，即便我们处理的是（在更高层面上）
+ * 已知属于"复合之上域"类型的值。这是因为 tdtypeid/tdtypmod 需要与组合 Datums 的
+ * 类型标注相匹配，而那些 Datums 也从未被显式标记为某个域类型。
  *
- * Tuple descriptors that live in caches (relcache or typcache, at present)
- * are reference-counted: they can be deleted when their reference count goes
- * to zero.  Tuple descriptors created by the executor need no reference
- * counting, however: they are simply created in the appropriate memory
- * context and go away when the context is freed.  We set the tdrefcount
- * field of such a descriptor to -1, while reference-counted descriptors
- * always have tdrefcount >= 0.
+ * 当前，存活于缓存（relcache 或 typcache）中的元组描述符采用引用计数：当引用计数
+ * 降为零时，它们就可以被删除。然而，由执行器创建的元组描述符不需要引用计数：它们
+ * 只是在适当的内存上下文中创建，并在该上下文被释放时随之消失。我们将此类描述符的
+ * tdrefcount 字段置为 -1，而采用引用计数的描述符其 tdrefcount 总是 >= 0。
  *
- * Beyond the compact_attrs variable length array, the TupleDesc stores an
- * array of FormData_pg_attribute.  The TupleDescAttr() function, as defined
- * below, takes care of calculating the address of the elements of the
- * FormData_pg_attribute array.
+ * 在 compact_attrs 变长数组之外，TupleDesc 还存储了一个 FormData_pg_attribute 数组。
+ * 下文定义的 TupleDescAttr() 函数负责计算 FormData_pg_attribute 数组元素的地址。
  *
- * The array of CompactAttribute is effectively an abbreviated version of the
- * array of FormData_pg_attribute.  Because CompactAttribute is significantly
- * smaller than FormData_pg_attribute, code, especially performance-critical
- * code, should prioritize using the fields from the CompactAttribute over the
- * equivalent fields in FormData_pg_attribute.
+ * CompactAttribute 数组实际上是 FormData_pg_attribute 数组的精简版本。由于
+ * CompactAttribute 比 FormData_pg_attribute 小得多，代码（尤其是性能关键的代码）应当优先使用 CompactAttribute 中的字段，而非 FormData_pg_attribute 中的等价字段。
  *
- * Any code making changes manually to and fields in the FormData_pg_attribute
- * array must subsequently call populate_compact_attribute() to flush the
- * changes out to the corresponding 'compact_attrs' element.
+ * 任何代码在手动修改 FormData_pg_attribute 数组中的字段之后，必须随后调用 populate_compact_attribute() 以将这些修改刷新到对应的 'compact_attrs' 元素中。
  */
 typedef struct TupleDescData
 {
-	int			natts;			/* number of attributes in the tuple */
-	Oid			tdtypeid;		/* composite type ID for tuple type */
-	int32		tdtypmod;		/* typmod for tuple type */
-	int			tdrefcount;		/* reference count, or -1 if not counting */
-	TupleConstr *constr;		/* constraints, or NULL if none */
-	/* compact_attrs[N] is the compact metadata of Attribute Number N+1 */
+	int			natts;			/* 元组中的属性个数 */
+	Oid			tdtypeid;		/* 元组类型对应的复合类型 ID */
+	int32		tdtypmod;		/* 元组类型的 typmod */
+	int			tdrefcount;		/* 引用计数；若不计数为 -1 */
+	TupleConstr *constr;		/* 约束，若无则为 NULL */
+	/* compact_attrs[N] 是属性号 N+1 的紧凑元数据 */
 	CompactAttribute compact_attrs[FLEXIBLE_ARRAY_MEMBER];
 }			TupleDescData;
 typedef struct TupleDescData *TupleDesc;
@@ -147,15 +127,14 @@ typedef struct TupleDescData *TupleDesc;
 extern void populate_compact_attribute(TupleDesc tupdesc, int attnum);
 
 /*
- * Calculates the base address of the Form_pg_attribute at the end of the
- * TupleDescData struct.
+ * 计算 TupleDescData 结构体末尾处 Form_pg_attribute 的基地址。
  */
 #define TupleDescAttrAddress(desc) \
 	(Form_pg_attribute) ((char *) (desc) + \
 	 (offsetof(struct TupleDescData, compact_attrs) + \
 	 (desc)->natts * sizeof(CompactAttribute)))
 
-/* Accessor for the i'th FormData_pg_attribute element of tupdesc. */
+/* 访问 tupdesc 第 i 个 FormData_pg_attribute 元素的访问器。 */
 static inline FormData_pg_attribute *
 TupleDescAttr(TupleDesc tupdesc, int i)
 {
@@ -169,7 +148,7 @@ TupleDescAttr(TupleDesc tupdesc, int i)
 extern void verify_compact_attribute(TupleDesc, int attnum);
 
 /*
- * Accessor for the i'th CompactAttribute element of tupdesc.
+ * 访问 tupdesc 第 i 个 CompactAttribute 元素的访问器。
  */
 static inline CompactAttribute *
 TupleDescCompactAttr(TupleDesc tupdesc, int i)
@@ -178,7 +157,7 @@ TupleDescCompactAttr(TupleDesc tupdesc, int i)
 
 #ifdef USE_ASSERT_CHECKING
 
-	/* Check that the CompactAttribute is correctly populated */
+	/* 检查 CompactAttribute 是否已正确填充 */
 	verify_compact_attribute(tupdesc, i);
 #endif
 

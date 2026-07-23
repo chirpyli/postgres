@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * planner.c
- *	  The query optimizer external interface.
+ *	  查询优化器的外部接口。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -64,20 +64,20 @@
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
 
-/* GUC parameters */
+/* GUC 参数 */
 double		cursor_tuple_fraction = DEFAULT_CURSOR_TUPLE_FRACTION;
 int			debug_parallel_query = DEBUG_PARALLEL_OFF;
 bool		parallel_leader_participation = true;
 bool		enable_distinct_reordering = true;
 
-/* Hook for plugins to get control in planner() */
+/* 供插件在 planner() 中获取控制权的钩子 */
 planner_hook_type planner_hook = NULL;
 
-/* Hook for plugins to get control when grouping_planner() plans upper rels */
+/* 供插件在 grouping_planner() 规划上层关系时获取控制权的钩子 */
 create_upper_paths_hook_type create_upper_paths_hook = NULL;
 
 
-/* Expression kind codes for preprocess_expression */
+/* preprocess_expression 的表达式种类代码 */
 #define EXPRKIND_QUAL				0
 #define EXPRKIND_TARGET				1
 #define EXPRKIND_RTFUNC				2
@@ -94,7 +94,7 @@ create_upper_paths_hook_type create_upper_paths_hook = NULL;
 #define EXPRKIND_GROUPEXPR			13
 
 /*
- * Data specific to grouping sets
+ * 与分组集（grouping sets）相关的专有数据
  */
 typedef struct
 {
@@ -109,32 +109,31 @@ typedef struct
 } grouping_sets_data;
 
 /*
- * Temporary structure for use during WindowClause reordering in order to be
- * able to sort WindowClauses on partitioning/ordering prefix.
+ * 在 WindowClause 重排序期间使用的临时结构，以便能够按照
+ * 分区/排序前缀对 WindowClause 进行排序。
  */
 typedef struct
 {
 	WindowClause *wc;
-	List	   *uniqueOrder;	/* A List of unique ordering/partitioning
-								 * clauses per Window */
+	List	   *uniqueOrder;	/* 每个 Window 的唯一 排序/分区
+								 * 子句列表 */
 } WindowClauseSortData;
 
-/* Passthrough data for standard_qp_callback */
+/* standard_qp_callback 的透传数据 */
 typedef struct
 {
-	List	   *activeWindows;	/* active windows, if any */
-	grouping_sets_data *gset_data;	/* grouping sets data, if any */
-	SetOperationStmt *setop;	/* parent set operation or NULL if not a
-								 * subquery belonging to a set operation */
+	List	   *activeWindows;	/* 活跃窗口（如果有） */
+	grouping_sets_data *gset_data;	/* 分组集数据（如果有） */
+	SetOperationStmt *setop;	/* 父集合操作，或若不是属于集合操作的
+								 * 子查询则为 NULL */
 } standard_qp_extra;
 
 /*
- * Context for the find_having_collation_conflicts walker.
+ * find_having_collation_conflicts 遍历器的上下文。
  *
- * ancestor_collids is a stack of inputcollids contributed by collation-aware
- * ancestors of the current node.  Entries are pushed before recursing into a
- * node's children and popped afterwards, so the stack reflects exactly the
- * inputcollids on the current root-to-node path.
+ * ancestor_collids 是由当前节点的感知排序规则（collation-aware）祖先所
+ * 贡献的 inputcollid 栈。在进入节点的子节点递归之前压入条目、之后弹出，
+ * 因此该栈精确地反映了当前根到节点路径上的 inputcollid。
  */
 typedef struct
 {
@@ -142,7 +141,7 @@ typedef struct
 	List	   *ancestor_collids;
 } having_collation_ctx;
 
-/* Local functions */
+/* 本地函数 */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
 static Bitmapset *find_having_collation_conflicts(Query *parse,
@@ -290,15 +289,14 @@ static List *generate_setop_child_grouplist(SetOperationStmt *op,
 
 /*****************************************************************************
  *
- *	   Query optimizer entry point
+ *	   查询优化器入口点
  *
- * To support loadable plugins that monitor or modify planner behavior,
- * we provide a hook variable that lets a plugin get control before and
- * after the standard planning process.  The plugin would normally call
- * standard_planner().
+ * 为了支持可加载的插件来监视或修改规划器行为，我们提供了一个钩子变量，
+ * 让插件能够在标准规划过程之前和之后获取控制权。插件通常会调用
+ * standard_planner()。
  *
- * Note to plugin authors: standard_planner() scribbles on its Query input,
- * so you'd better copy that data structure if you want to plan more than once.
+ * 给插件作者的提示：standard_planner() 会涂抹（修改）其 Query 输入，
+ * 因此如果你想规划多次，最好先复制该数据结构。
  *
  *****************************************************************************/
 PlannedStmt *
@@ -332,10 +330,9 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 			   *lr;
 
 	/*
-	 * Set up global state for this planner invocation.  This data is needed
-	 * across all levels of sub-Query that might exist in the given command,
-	 * so we keep it in a separate struct that's linked to by each per-Query
-	 * PlannerInfo.
+	 * 为本次规划器调用设置全局状态。给定命令中可能存在的所有层级的子查询
+	 * 都需要用到这些数据，因此我们将它保存在一个独立的结构体中，并由每个
+	 * 每查询（per-Query）的 PlannerInfo 链接到它。
 	 */
 	glob = makeNode(PlannerGlobal);
 
@@ -363,25 +360,20 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	glob->partition_directory = NULL;
 
 	/*
-	 * Assess whether it's feasible to use parallel mode for this query. We
-	 * can't do this in a standalone backend, or if the command will try to
-	 * modify any data, or if this is a cursor operation, or if GUCs are set
-	 * to values that don't permit parallelism, or if parallel-unsafe
-	 * functions are present in the query tree.
+	 * 评估此查询是否适合使用并行模式。在独立后端中、或命令会尝试修改任何数据、
+	 * 或是游标操作、或 GUC 被设为不允许并行的值、或查询树中存在并行不安全
+	 * 的函数时，我们都无法使用并行。
 	 *
-	 * (Note that we do allow CREATE TABLE AS, SELECT INTO, and CREATE
-	 * MATERIALIZED VIEW to use parallel plans, but this is safe only because
-	 * the command is writing into a completely new table which workers won't
-	 * be able to see.  If the workers could see the table, the fact that
-	 * group locking would cause them to ignore the leader's heavyweight GIN
-	 * page locks would make this unsafe.  We'll have to fix that somehow if
-	 * we want to allow parallel inserts in general; updates and deletes have
-	 * additional problems especially around combo CIDs.)
+	 * （注意我们确实允许 CREATE TABLE AS、SELECT INTO 和 CREATE
+	 * MATERIALIZED VIEW 使用并行计划，但这仅因为命令写入的是工作进程
+	 * 完全看不到的全新表。如果工作进程能看到该表，那么组锁会导致它们忽略
+	 * 领导者的重量级 GIN 页锁，这将使并行不安全。如果我们想普遍允许并行插入，
+	 * 就必须以某种方式修复这个问题；更新和删除还有额外的问题，尤其是围绕
+	 * 组合 CID。）
 	 *
-	 * For now, we don't try to use parallel mode if we're running inside a
-	 * parallel worker.  We might eventually be able to relax this
-	 * restriction, but for now it seems best not to have parallel workers
-	 * trying to create their own parallel workers.
+	 * 目前，如果我们运行在并行工作进程内部，则不会尝试使用并行模式。我们
+	 * 最终可能能够放宽这一限制，但现在最好不让并行工作进程尝试创建它们自己
+	 * 的并行工作进程。
 	 */
 	if ((cursorOptions & CURSOR_OPT_PARALLEL_OK) != 0 &&
 		IsUnderPostmaster &&
@@ -390,13 +382,13 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		max_parallel_workers_per_gather > 0 &&
 		!IsParallelWorker())
 	{
-		/* all the cheap tests pass, so scan the query tree */
+		/* 所有廉价测试都通过，因此扫描查询树 */
 		glob->maxParallelHazard = max_parallel_hazard(parse);
 		glob->parallelModeOK = (glob->maxParallelHazard != PROPARALLEL_UNSAFE);
 	}
 	else
 	{
-		/* skip the query tree scan, just assume it's unsafe */
+		/* 跳过查询树扫描，直接假定其不安全 */
 		glob->maxParallelHazard = PROPARALLEL_UNSAFE;
 		glob->parallelModeOK = false;
 	}
@@ -406,37 +398,32 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	 * true during plan creation if a Gather or Gather Merge plan is actually
 	 * created (cf. create_gather_plan, create_gather_merge_plan).
 	 *
-	 * However, if debug_parallel_query = on or debug_parallel_query =
-	 * regress, then we impose parallel mode whenever it's safe to do so, even
-	 * if the final plan doesn't use parallelism.  It's not safe to do so if
-	 * the query contains anything parallel-unsafe; parallelModeOK will be
-	 * false in that case.  Note that parallelModeOK can't change after this
-	 * point. Otherwise, everything in the query is either parallel-safe or
-	 * parallel-restricted, and in either case it should be OK to impose
-	 * parallel-mode restrictions.  If that ends up breaking something, then
-	 * either some function the user included in the query is incorrectly
-	 * labeled as parallel-safe or parallel-restricted when in reality it's
-	 * parallel-unsafe, or else the query planner itself has a bug.
+	 * 然而，如果 debug_parallel_query = on 或 debug_parallel_query =
+	 * regress，那么只要安全我们就会强制使用并行模式，即使最终计划并不
+	 * 使用并行。如果查询包含任何并行不安全的内容，这样做就不安全；
+	 * 那种情况下 parallelModeOK 将为 false。注意 parallelModeOK 在此点之后
+	 * 不能再改变。否则，查询中的一切要么并行安全，要么并行受限，无论哪种
+	 * 情况施加并行模式限制都应该是可以的。如果最终破坏了什么，那么要么
+	 * 是用户查询中某个函数被错误地标记为并行安全或并行受限（而实际上它
+	 * 是并行不安全的），要么是查询规划器本身有 bug。
 	 */
 	glob->parallelModeNeeded = glob->parallelModeOK &&
 		(debug_parallel_query != DEBUG_PARALLEL_OFF);
 
-	/* Determine what fraction of the plan is likely to be scanned */
+	/* 确定计划中可能有多大比例会被扫描 */
 	if (cursorOptions & CURSOR_OPT_FAST_PLAN)
 	{
 		/*
-		 * We have no real idea how many tuples the user will ultimately FETCH
-		 * from a cursor, but it is often the case that he doesn't want 'em
-		 * all, or would prefer a fast-start plan anyway so that he can
-		 * process some of the tuples sooner.  Use a GUC parameter to decide
-		 * what fraction to optimize for.
+		 * 我们无从确切知道用户最终会从游标中 FETCH 多少元组，但通常情况是他
+		 * 并不想要全部，或者无论如何更偏好快速启动计划，以便他能更快地处理
+		 * 其中一部分元组。使用一个 GUC 参数来决定优化多大比例。
 		 */
 		tuple_fraction = cursor_tuple_fraction;
 
 		/*
-		 * We document cursor_tuple_fraction as simply being a fraction, which
-		 * means the edge cases 0 and 1 have to be treated specially here.  We
-		 * convert 1 to 0 ("all the tuples") and 0 to a very small fraction.
+		 * 我们将 cursor_tuple_fraction 文档化为一个简单的比例，这意味着边界
+		 * 情况 0 和 1 必须在此特殊处理。我们将 1 转换为 0（"所有元组"），
+		 * 将 0 转换为一个非常小的比例。
 		 */
 		if (tuple_fraction >= 1.0)
 			tuple_fraction = 0.0;
@@ -445,22 +432,22 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	}
 	else
 	{
-		/* Default assumption is we need all the tuples */
+		/* 默认假设为我们需要所有元组 */
 		tuple_fraction = 0.0;
 	}
 
-	/* primary planning entry point (may recurse for subqueries) */
+	/* 主要的规划入口点（可能针对子查询递归） */
 	root = subquery_planner(glob, parse, NULL, false, tuple_fraction, NULL);
 
-	/* Select best Path and turn it into a Plan */
+	/* 选择最佳路径并将其转换为计划 */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 	best_path = get_cheapest_fractional_path(final_rel, tuple_fraction);
 
 	top_plan = create_plan(root, best_path);
 
 	/*
-	 * If creating a plan for a scrollable cursor, make sure it can run
-	 * backwards on demand.  Add a Material node at the top at need.
+	 * 如果在为可滚动游标创建计划，确保它可以根据需要向后运行。
+	 * 必要时在顶部添加一个 Material 节点。
 	 */
 	if (cursorOptions & CURSOR_OPT_SCROLL)
 	{
@@ -469,16 +456,14 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	}
 
 	/*
-	 * Optionally add a Gather node for testing purposes, provided this is
-	 * actually a safe thing to do.
+	 * 可选地添加一个 Gather 节点用于测试目的，前提是这确实是安全的。
 	 *
-	 * We can add Gather even when top_plan has parallel-safe initPlans, but
-	 * then we have to move the initPlans to the Gather node because of
-	 * SS_finalize_plan's limitations.  That would cause cosmetic breakage of
-	 * regression tests when debug_parallel_query = regress, because initPlans
-	 * that would normally appear on the top_plan move to the Gather, causing
-	 * them to disappear from EXPLAIN output.  That doesn't seem worth kluging
-	 * EXPLAIN to hide, so skip it when debug_parallel_query = regress.
+	 * 即使 top_plan 有并行安全的 initPlan，我们也可以添加 Gather，但那样
+	 * 由于 SS_finalize_plan 的限制，我们必须将 initPlan 移动到 Gather 节点。
+	 * 当 debug_parallel_query = regress 时，这会导致回归测试的表象性破坏，
+	 * 因为通常出现在 top_plan 上的 initPlan 会移动到 Gather，从而从 EXPLAIN
+	 * 输出中消失。这似乎不值得用 hack EXPLAIN 来掩盖，因此在
+	 * debug_parallel_query = regress 时跳过。
 	 */
 	if (debug_parallel_query != DEBUG_PARALLEL_OFF &&
 		top_plan->parallel_safe &&
@@ -497,19 +482,19 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		gather->single_copy = true;
 		gather->invisible = (debug_parallel_query == DEBUG_PARALLEL_REGRESS);
 
-		/* Transfer any initPlans to the new top node */
+		/* 将任何 initPlan 转移到新的顶层节点 */
 		gather->plan.initPlan = top_plan->initPlan;
 		top_plan->initPlan = NIL;
 
 		/*
-		 * Since this Gather has no parallel-aware descendants to signal to,
-		 * we don't need a rescan Param.
+		 * 由于这个 Gather 没有需要通知的并行感知后代，我们不需要 rescan
+		 * Param。
 		 */
 		gather->rescan_param = -1;
 
 		/*
-		 * Ideally we'd use cost_gather here, but setting up dummy path data
-		 * to satisfy it doesn't seem much cleaner than knowing what it does.
+		 * 理想情况下我们这里会调用 cost_gather，但为了满足它而设置虚拟路径
+		 * 数据，并不比直接知道它在做什么更干净。
 		 */
 		gather->plan.startup_cost = top_plan->startup_cost +
 			parallel_setup_cost;
@@ -521,25 +506,24 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		gather->plan.parallel_safe = false;
 
 		/*
-		 * Delete the initplans' cost from top_plan.  We needn't add it to the
-		 * Gather node, since the above coding already included it there.
+		 * 从 top_plan 中删除 initplan 的代价。我们无需将其加到 Gather 节点，
+		 * 因为上面的代码已经把它包含在内了。
 		 */
 		SS_compute_initplan_cost(gather->plan.initPlan,
 								 &initplan_cost, &unsafe_initplans);
 		top_plan->startup_cost -= initplan_cost;
 		top_plan->total_cost -= initplan_cost;
 
-		/* use parallel mode for parallel plans. */
+		/* 对并行计划使用并行模式。 */
 		root->glob->parallelModeNeeded = true;
 
 		top_plan = &gather->plan;
 	}
 
 	/*
-	 * If any Params were generated, run through the plan tree and compute
-	 * each plan node's extParam/allParam sets.  Ideally we'd merge this into
-	 * set_plan_references' tree traversal, but for now it has to be separate
-	 * because we need to visit subplans before not after main plan.
+	 * 如果生成了任何 Param，遍历计划树并计算每个计划节点的 extParam/allParam
+	 * 集合。理想情况下我们会将此合并进 set_plan_references 的树遍历中，但
+	 * 目前它必须分开，因为我们需要在主线计划之前而非之后访问子计划。
 	 */
 	if (glob->paramExecTypes != NIL)
 	{
@@ -554,14 +538,14 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		SS_finalize_plan(root, top_plan);
 	}
 
-	/* final cleanup of the plan */
+	/* 计划的最后清理 */
 	Assert(glob->finalrtable == NIL);
 	Assert(glob->finalrteperminfos == NIL);
 	Assert(glob->finalrowmarks == NIL);
 	Assert(glob->resultRelations == NIL);
 	Assert(glob->appendRelations == NIL);
 	top_plan = set_plan_references(root, top_plan);
-	/* ... and the subplans (both regular subplans and initplans) */
+	/* ... 以及子计划（常规子计划和 initplan 都包括） */
 	Assert(list_length(glob->subplans) == list_length(glob->subroots));
 	forboth(lp, glob->subplans, lr, glob->subroots)
 	{
@@ -571,7 +555,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		lfirst(lp) = set_plan_references(subroot, subplan);
 	}
 
-	/* build the PlannedStmt result */
+	/* 构建 PlannedStmt 结果 */
 	result = makeNode(PlannedStmt);
 
 	result->commandType = parse->commandType;
@@ -596,7 +580,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	result->relationOids = glob->relationOids;
 	result->invalItems = glob->invalItems;
 	result->paramExecTypes = glob->paramExecTypes;
-	/* utilityStmt should be null, but we might as well copy it */
+	/* utilityStmt 应该为 null，但我们不妨也复制它 */
 	result->utilityStmt = parse->utilityStmt;
 	result->stmt_location = parse->stmt_location;
 	result->stmt_len = parse->stmt_len;
@@ -608,7 +592,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		result->jitFlags |= PGJIT_PERFORM;
 
 		/*
-		 * Decide how much effort should be put into generating better code.
+		 * 决定在生成更优代码方面应投入多少精力。
 		 */
 		if (jit_optimize_above_cost >= 0 &&
 			top_plan->total_cost > jit_optimize_above_cost)
@@ -618,7 +602,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 			result->jitFlags |= PGJIT_INLINE;
 
 		/*
-		 * Decide which operations should be JITed.
+		 * 决定哪些操作应被 JIT 编译。
 		 */
 		if (jit_expressions)
 			result->jitFlags |= PGJIT_EXPR;
@@ -635,34 +619,29 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 
 /*--------------------
  * subquery_planner
- *	  Invokes the planner on a subquery.  We recurse to here for each
- *	  sub-SELECT found in the query tree.
+ *	  在子查询上调用规划器。查询树中发现的每个子 SELECT 都会递归到此处。
  *
- * glob is the global state for the current planner run.
- * parse is the querytree produced by the parser & rewriter.
- * parent_root is the immediate parent Query's info (NULL at the top level).
- * hasRecursion is true if this is a recursive WITH query.
- * tuple_fraction is the fraction of tuples we expect will be retrieved.
- * tuple_fraction is interpreted as explained for grouping_planner, below.
- * setops is used for set operation subqueries to provide the subquery with
- * the context in which it's being used so that Paths correctly sorted for the
- * set operation can be generated.  NULL when not planning a set operation
- * child, or when a child of a set op that isn't interested in sorted input.
+ * glob 是当前规划器运行的全局状态。
+ * parse 是解析器和重写器产生的查询树。
+ * parent_root 是紧邻的父查询的信息（顶层为 NULL）。
+ * hasRecursion 如果这是递归 WITH 查询则为 true。
+ * tuple_fraction 是我们期望检索到的元组比例。
+ * tuple_fraction 的解释见下文的 grouping_planner。
+ * setops 用于集合操作子查询，为子查询提供其使用上下文，以便生成正确为
+ * 集合操作排序的路径。当不规划集合操作子节点、或集合操作的子节点对
+ * 排序输入不感兴趣时为 NULL。
  *
- * Basically, this routine does the stuff that should only be done once
- * per Query object.  It then calls grouping_planner.  At one time,
- * grouping_planner could be invoked recursively on the same Query object;
- * that's not currently true, but we keep the separation between the two
- * routines anyway, in case we need it again someday.
+ * 基本上，本例程完成每个 Query 对象只应做一次的事情。然后它调用
+ * grouping_planner。曾经 grouping_planner 可以对同一个 Query 对象递归调用；
+ * 现在已非如此，但我们仍然保持这两个例程之间的分离，以防将来某天再次需要。
  *
- * subquery_planner will be called recursively to handle sub-Query nodes
- * found within the query's expressions and rangetable.
+ * subquery_planner 会被递归调用，以处理在查询的表达式和范围表中发现的
+ * 子查询节点。
  *
- * Returns the PlannerInfo struct ("root") that contains all data generated
- * while planning the subquery.  In particular, the Path(s) attached to
- * the (UPPERREL_FINAL, NULL) upperrel represent our conclusions about the
- * cheapest way(s) to implement the query.  The top level will select the
- * best Path and pass it through createplan.c to produce a finished Plan.
+ * 返回在规划子查询时生成的所有数据所在的 PlannerInfo 结构体（"root"）。
+ * 特别地，附加到 (UPPERREL_FINAL, NULL) 上层关系的路径代表了我们关于
+ * 实现该查询的最廉价方式的结论。顶层将选择最佳路径，并通过 createplan.c
+ * 生成最终的计划。
  *--------------------
  */
 PlannerInfo *
@@ -680,7 +659,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	RelOptInfo *final_rel;
 	ListCell   *l;
 
-	/* Create a PlannerInfo data structure for this subquery */
+	/* 为此子查询创建一个 PlannerInfo 数据结构 */
 	root = makeNode(PlannerInfo);
 	root->parse = parse;
 	root->glob = glob;
@@ -698,7 +677,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	root->last_rinfo_serial = 0;
 	root->all_result_relids =
 		parse->resultRelation ? bms_make_singleton(parse->resultRelation) : NULL;
-	root->leaf_result_relids = NULL;	/* we'll find out leaf-ness later */
+	root->leaf_result_relids = NULL;	/* 我们稍后会确定其是否为叶子 */
 	root->append_rel_list = NIL;
 	root->row_identity_vars = NIL;
 	root->rowMarks = NIL;
@@ -723,79 +702,72 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	root->partColsUpdated = false;
 
 	/*
-	 * Create the top-level join domain.  This won't have valid contents until
-	 * deconstruct_jointree fills it in, but the node needs to exist before
-	 * that so we can build EquivalenceClasses referencing it.
+	 * 创建顶层的连接域（join domain）。在 deconstruct_jointree 填充它之前，
+	 * 它不会有有效内容，但该节点需要在此之前就存在，以便我们构建引用它的
+	 * 等价类（EquivalenceClass）。
 	 */
 	root->join_domains = list_make1(makeNode(JoinDomain));
 
 	/*
-	 * If there is a WITH list, process each WITH query and either convert it
-	 * to RTE_SUBQUERY RTE(s) or build an initplan SubPlan structure for it.
+	 * 如果存在 WITH 列表，处理每个 WITH 查询，将其要么转换为 RTE_SUBQUERY
+	 * 类型的 RTE，要么为其构建 initplan 子计划结构。
 	 */
 	if (parse->cteList)
 		SS_process_ctes(root);
 
 	/*
-	 * If it's a MERGE command, transform the joinlist as appropriate.
+	 * 如果是 MERGE 命令，对 joinlist 做适当转换。
 	 */
 	transform_MERGE_to_join(parse);
 
 	/*
-	 * If the FROM clause is empty, replace it with a dummy RTE_RESULT RTE, so
-	 * that we don't need so many special cases to deal with that situation.
+	 * 如果 FROM 子句为空，用一个虚拟的 RTE_RESULT 类型 RTE 替换它，这样我们
+	 * 就不需要那么多特殊情况来处理这种情形。
 	 */
 	replace_empty_jointree(parse);
 
 	/*
-	 * Look for ANY and EXISTS SubLinks in WHERE and JOIN/ON clauses, and try
-	 * to transform them into joins.  Note that this step does not descend
-	 * into subqueries; if we pull up any subqueries below, their SubLinks are
-	 * processed just before pulling them up.
+	 * 在 WHERE 和 JOIN/ON 子句中查找 ANY 和 EXISTS 子链接，并尝试将它们
+	 * 转换为连接。注意这一步不会下钻到子查询中；如果我们下面拉起了任何子查询，
+	 * 它们的子链接会在拉起之前被处理。
 	 */
 	if (parse->hasSubLinks)
 		pull_up_sublinks(root);
 
 	/*
-	 * Scan the rangetable for function RTEs, do const-simplification on them,
-	 * and then inline them if possible (producing subqueries that might get
-	 * pulled up next).  Recursion issues here are handled in the same way as
-	 * for SubLinks.
+	 * 扫描范围表找到函数类型的 RTE，对它们做常量简化，然后如果可能就内联
+	 * 它们（产生可能接下来被拉起的子查询）。此处的递归问题与子链接的
+	 * 处理方式相同。
 	 */
 	preprocess_function_rtes(root);
 
 	/*
-	 * Scan the rangetable for relations with virtual generated columns, and
-	 * replace all Var nodes in the query that reference these columns with
-	 * the generation expressions.  Recursion issues here are handled in the
-	 * same way as for SubLinks.
+	 * 扫描范围表找到带有虚拟生成列的关系，并将查询中所有引用这些列的 Var
+	 * 节点替换为生成表达式。此处的递归问题与子链接的处理方式相同。
 	 */
 	parse = root->parse = expand_virtual_generated_columns(root);
 
 	/*
-	 * Check to see if any subqueries in the jointree can be merged into this
-	 * query.
+	 * 检查连接树中的任何子查询是否可以合并到本查询中。
 	 */
 	pull_up_subqueries(root);
 
 	/*
-	 * If this is a simple UNION ALL query, flatten it into an appendrel. We
-	 * do this now because it requires applying pull_up_subqueries to the leaf
-	 * queries of the UNION ALL, which weren't touched above because they
-	 * weren't referenced by the jointree (they will be after we do this).
+	 * 如果这是一个简单的 UNION ALL 查询，将其扁平化为一个 appendrel。我们
+	 * 现在做这件事，因为它需要对 UNION ALL 的叶子查询应用 pull_up_subqueries，
+	 * 而那些查询上面没有触及，因为它们没有被连接树引用（在我们做完这步之后
+	 * 它们就会被引用）。
 	 */
 	if (parse->setOperations)
 		flatten_simple_union_all(root);
 
 	/*
-	 * Survey the rangetable to see what kinds of entries are present.  We can
-	 * skip some later processing if relevant SQL features are not used; for
-	 * example if there are no JOIN RTEs we can avoid the expense of doing
-	 * flatten_join_alias_vars().  This must be done after we have finished
-	 * adding rangetable entries, of course.  (Note: actually, processing of
-	 * inherited or partitioned rels can cause RTEs for their child tables to
-	 * get added later; but those must all be RTE_RELATION entries, so they
-	 * don't invalidate the conclusions drawn here.)
+	 * 调查范围表以查看存在哪些种类的条目。如果没有使用相关的 SQL 特性，
+	 * 我们可以跳过一些后续处理；例如如果没有 JOIN 类型的 RTE，我们就可以
+	 * 避免 flatten_join_alias_vars() 的开销。这当然必须在我们完成添加范围表
+	 * 条目之后进行。（注意：实际上，继承或分区关系的处理可能导致它们的子表
+	 * 的 RTE 在之后被添加；但那些必须都是 RTE_RELATION 条目，因此它们不会
+	 * 使此处得出的结论失效。）
 	 */
 	root->hasJoinRTEs = false;
 	root->hasLateralRTEs = false;
@@ -838,7 +810,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 				root->group_rtindex = list_cell_number(parse->rtable, l) + 1;
 				break;
 			default:
-				/* No work here for other RTE types */
+				/* 其他 RTE 类型在此无需处理 */
 				break;
 		}
 
@@ -846,10 +818,9 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 			root->hasLateralRTEs = true;
 
 		/*
-		 * We can also determine the maximum security level required for any
-		 * securityQuals now.  Addition of inheritance-child RTEs won't affect
-		 * this, because child tables don't have their own securityQuals; see
-		 * expand_single_inheritance_child().
+		 * 我们现在还可以确定任何 securityQuals 所需的最大安全级别。
+		 * 继承子 RTE 的添加不会影响这一点，因为子表没有它们自己的
+		 * securityQuals；见 expand_single_inheritance_child()。
 		 */
 		if (rte->securityQuals)
 			root->qual_security_level = Max(root->qual_security_level,
@@ -857,8 +828,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * If we have now verified that the query target relation is
-	 * non-inheriting, mark it as a leaf target.
+	 * 如果我们现在已确认查询的目标关系是非继承的，将其标记为叶子目标。
 	 */
 	if (parse->resultRelation)
 	{
@@ -870,18 +840,15 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * This would be a convenient time to check access permissions for all
-	 * relations mentioned in the query, since it would be better to fail now,
-	 * before doing any detailed planning.  However, for historical reasons,
-	 * we leave this to be done at executor startup.
+	 * 这原本是检查查询中提及的所有关系的访问权限的合适时机，因为最好在
+	 * 进行任何详细规划之前就失败。然而，出于历史原因，我们将此事留到
+	 * 执行器启动时再做。
 	 *
-	 * Note, however, that we do need to check access permissions for any view
-	 * relations mentioned in the query, in order to prevent information being
-	 * leaked by selectivity estimation functions, which only check view owner
-	 * permissions on underlying tables (see all_rows_selectable() and its
-	 * callers).  This is a little ugly, because it means that access
-	 * permissions for views will be checked twice, which is another reason
-	 * why it would be better to do all the ACL checks here.
+	 * 但是请注意，我们确实需要检查查询中提及的任何视图关系的访问权限，
+	 * 以防止信息被选择性估计函数泄露，那些函数只检查视图所有者对底层表
+	 * 的权限（见 all_rows_selectable() 及其调用者）。这有点丑陋，因为这意味着
+	 * 视图的访问权限会被检查两次，这也是为什么最好在这里完成所有 ACL
+	 * 检查的另一条理由。
 	 */
 	foreach(l, parse->rtable)
 	{
@@ -902,23 +869,22 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * Preprocess RowMark information.  We need to do this after subquery
-	 * pullup, so that all base relations are present.
+	 * 预处理 RowMark 信息。我们需要在子查询拉起之后做这件事，
+	 * 以便所有基关系都已存在。
 	 */
 	preprocess_rowmarks(root);
 
 	/*
-	 * Set hasHavingQual to remember if HAVING clause is present.  Needed
-	 * because preprocess_expression will reduce a constant-true condition to
-	 * an empty qual list ... but "HAVING TRUE" is not a semantic no-op.
+	 * 设置 hasHavingQual 以记住是否存在 HAVING 子句。这是必要的，因为
+	 * preprocess_expression 会把常量真条件简化为一个空的限定列表……
+	 * 但 "HAVING TRUE" 在语义上并非空操作。
 	 */
 	root->hasHavingQual = (parse->havingQual != NULL);
 
 	/*
-	 * Do expression preprocessing on targetlist and quals, as well as other
-	 * random expressions in the querytree.  Note that we do not need to
-	 * handle sort/group expressions explicitly, because they are actually
-	 * part of the targetlist.
+	 * 对目标列表和限定条件，以及查询树中的其他零散表达式做表达式预处理。
+	 * 注意我们不需要显式处理排序/分组表达式，因为它们实际上是目标列表
+	 * 的一部分。
 	 */
 	parse->targetList = (List *)
 		preprocess_expression(root, (Node *) parse->targetList,
@@ -949,7 +915,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	{
 		WindowClause *wc = lfirst_node(WindowClause, l);
 
-		/* partitionClause/orderClause are sort/group expressions */
+		/* partitionClause/orderClause 是排序/分组表达式 */
 		wc->startOffset = preprocess_expression(root, wc->startOffset,
 												EXPRKIND_LIMIT);
 		wc->endOffset = preprocess_expression(root, wc->endOffset,
@@ -979,7 +945,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 			preprocess_expression(root,
 								  parse->onConflict->onConflictWhere,
 								  EXPRKIND_QUAL);
-		/* exclRelTlist contains only Vars, so no preprocessing needed */
+		/* exclRelTlist 只包含 Var，因此无需预处理 */
 	}
 
 	foreach(l, parse->mergeActionList)
@@ -1021,11 +987,10 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		else if (rte->rtekind == RTE_SUBQUERY)
 		{
 			/*
-			 * We don't want to do all preprocessing yet on the subquery's
-			 * expressions, since that will happen when we plan it.  But if it
-			 * contains any join aliases of our level, those have to get
-			 * expanded now, because planning of the subquery won't do it.
-			 * That's only possible if the subquery is LATERAL.
+			 * 我们还不想对子查询的表达式做全部预处理，因为那将在规划它时
+			 * 发生。但如果它包含我们这一层的任何连接别名，那些现在就必须
+			 * 展开，因为子查询的规划不会去做。这只可能在子查询是 LATERAL
+			 * 时成立。
 			 */
 			if (rte->lateral && root->hasJoinRTEs)
 				rte->subquery = (Query *)
@@ -1034,38 +999,37 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		}
 		else if (rte->rtekind == RTE_FUNCTION)
 		{
-			/* Preprocess the function expression(s) fully */
+			/* 完整地预处理函数表达式 */
 			kind = rte->lateral ? EXPRKIND_RTFUNC_LATERAL : EXPRKIND_RTFUNC;
 			rte->functions = (List *)
 				preprocess_expression(root, (Node *) rte->functions, kind);
 		}
 		else if (rte->rtekind == RTE_TABLEFUNC)
 		{
-			/* Preprocess the function expression(s) fully */
+			/* 完整地预处理函数表达式 */
 			kind = rte->lateral ? EXPRKIND_TABLEFUNC_LATERAL : EXPRKIND_TABLEFUNC;
 			rte->tablefunc = (TableFunc *)
 				preprocess_expression(root, (Node *) rte->tablefunc, kind);
 		}
 		else if (rte->rtekind == RTE_VALUES)
 		{
-			/* Preprocess the values lists fully */
+			/* 完整地预处理 VALUES 列表 */
 			kind = rte->lateral ? EXPRKIND_VALUES_LATERAL : EXPRKIND_VALUES;
 			rte->values_lists = (List *)
 				preprocess_expression(root, (Node *) rte->values_lists, kind);
 		}
 		else if (rte->rtekind == RTE_GROUP)
 		{
-			/* Preprocess the groupexprs list fully */
+			/* 完整地预处理 groupexprs 列表 */
 			rte->groupexprs = (List *)
 				preprocess_expression(root, (Node *) rte->groupexprs,
 									  EXPRKIND_GROUPEXPR);
 		}
 
 		/*
-		 * Process each element of the securityQuals list as if it were a
-		 * separate qual expression (as indeed it is).  We need to do it this
-		 * way to get proper canonicalization of AND/OR structure.  Note that
-		 * this converts each element into an implicit-AND sublist.
+		 * 将 securityQuals 列表的每个元素当作一个独立的限定表达式（它确实
+		 * 如此）来处理。我们需要这样做以获得 AND/OR 结构的正确规范化。
+		 * 注意这会将每个元素转换为一个隐式 AND 子列表。
 		 */
 		foreach(lcsq, rte->securityQuals)
 		{
@@ -1076,15 +1040,12 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * Now that we are done preprocessing expressions, and in particular done
-	 * flattening join alias variables, get rid of the joinaliasvars lists.
-	 * They no longer match what expressions in the rest of the tree look
-	 * like, because we have not preprocessed expressions in those lists (and
-	 * do not want to; for example, expanding a SubLink there would result in
-	 * a useless unreferenced subplan).  Leaving them in place simply creates
-	 * a hazard for later scans of the tree.  We could try to prevent that by
-	 * using QTW_IGNORE_JOINALIASES in every tree scan done after this point,
-	 * but that doesn't sound very reliable.
+	 * 既然表达式预处理已经完成，特别是连接别名变量的扁平化已经完成，
+	 * 就移除 joinaliasvars 列表。它们不再与树其余部分的表达式相符，因为
+	 * 我们没有预处理那些列表中的表达式（也不想这样做；例如在那里展开
+	 * SubLink 会产生一个无用的未引用子计划）。把它们留在原地只会给后续
+	 * 对树的扫描制造隐患。我们可以试图通过在这一点之后做的每次树扫描中
+	 * 使用 QTW_IGNORE_JOINALIASES 来避免，但那听起来不太可靠。
 	 */
 	if (root->hasJoinRTEs)
 	{
@@ -1097,19 +1058,16 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * Before we flatten GROUP Vars, check which HAVING clauses have collation
-	 * conflicts.  When GROUP BY uses a nondeterministic collation, values
-	 * that are "equal" for grouping may be distinguishable under a different
-	 * collation.  If such a HAVING clause were moved to WHERE, it would
-	 * filter individual rows before grouping, potentially eliminating some
-	 * members of a group and thereby changing aggregate results.
+	 * 在扁平化 GROUP Var 之前，检查哪些 HAVING 子句存在排序规则冲突。
+	 * 当 GROUP BY 使用非确定性排序规则时，对分组而言"相等"的值在另一种
+	 * 排序规则下可能是可区分的。如果这样的 HAVING 子句被移到 WHERE，它将
+	 * 在分组之前过滤单独的各行，可能消除某个组的某些成员，从而改变聚合
+	 * 结果。
 	 *
-	 * We do this check before flatten_group_exprs because we can easily
-	 * identify grouping expressions by checking whether a Var references
-	 * RTE_GROUP, and such Vars directly carry the GROUP BY collation as their
-	 * varcollid.  After flattening, these Vars are replaced by the underlying
-	 * expressions, and we would have to match expressions in the HAVING
-	 * clause back to grouping expressions, which is much more complex.
+	 * 我们在 flatten_group_exprs 之前做这个检查，因为我们通过检查 Var 是否
+	 * 引用 RTE_GROUP 就能轻易识别分组表达式，而这样的 Var 直接以它们的
+	 * varcollid 携带 GROUP BY 排序规则。扁平化之后，这些 Var 被底层表达式
+	 * 替换，我们就必须将 HAVING 子句中的表达式匹配回分组表达式，这要复杂得多。
 	 */
 	if (parse->hasGroupRTE)
 		havingCollationConflicts =
@@ -1118,13 +1076,11 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		havingCollationConflicts = NULL;
 
 	/*
-	 * Replace any Vars in the subquery's targetlist and havingQual that
-	 * reference GROUP outputs with the underlying grouping expressions.
+	 * 将子查询目标列表和 havingQual 中引用 GROUP 输出的任何 Var 替换为底层的
+	 * 分组表达式。
 	 *
-	 * Note that we need to perform this replacement after we've preprocessed
-	 * the grouping expressions.  This is to ensure that there is only one
-	 * instance of SubPlan for each SubLink contained within the grouping
-	 * expressions.
+	 * 注意我们需要在对分组表达式预处理之后执行这个替换。这是为了确保
+	 * 分组表达式中包含的每个 SubLink 只有一个 SubPlan 实例。
 	 */
 	if (parse->hasGroupRTE)
 	{
@@ -1134,15 +1090,14 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 			flatten_group_exprs(root, root->parse, parse->havingQual);
 	}
 
-	/* Constant-folding might have removed all set-returning functions */
+	/* 常量折叠可能已经移除了所有集合返回函数 */
 	if (parse->hasTargetSRFs)
 		parse->hasTargetSRFs = expression_returns_set((Node *) parse->targetList);
 
 	/*
-	 * If we have grouping sets, expand the groupingSets tree of this query to
-	 * a flat list of grouping sets.  We need to do this before optimizing
-	 * HAVING, since we can't easily tell if there's an empty grouping set
-	 * until we have this representation.
+	 * 如果我们有分组集（grouping sets），将本查询的 groupingSets 树展开为
+	 * 一个扁平的分组集列表。我们需要在优化 HAVING 之前做这件事，因为在获得
+	 * 这种表示形式之前，我们无法轻易判断是否存在空分组集。
 	 */
 	if (parse->groupingSets)
 	{
@@ -1151,54 +1106,41 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * In some cases we may want to transfer a HAVING clause into WHERE. We
-	 * cannot do so if the HAVING clause contains aggregates (obviously) or
-	 * volatile functions (since a HAVING clause is supposed to be executed
-	 * only once per group).  We also can't do this if there are any grouping
-	 * sets and the clause references any columns that are nullable by the
-	 * grouping sets; the nulled values of those columns are not available
-	 * before the grouping step.  (The test on groupClause might seem wrong,
-	 * but it's okay: it's just an optimization to avoid running pull_varnos
-	 * when there cannot be any Vars in the HAVING clause.)
+	 * 在某些情况下，我们可能希望将 HAVING 子句转移到 WHERE。如果 HAVING 子句
+	 * 包含聚合函数（显然）或易失函数（因为 HAVING 子句应当每组只执行一次），
+	 * 我们就不能这样做。如果存在任何分组集、并且该子句引用了被分组集置为
+	 * 可空的列，我们也不能这样做；这些列的置空值在分组步骤之前不可用。
+	 * （对 groupClause 的测试看起来似乎不对，但没问题：它只是一个优化，
+	 * 用于避免在没有 HAVING 子句不可能含有任何 Var 的情况下仍运行 pull_varnos。）
 	 *
-	 * We also cannot do this if the HAVING clause uses a different collation
-	 * than the GROUP BY for any grouping expression whose GROUP BY collation
-	 * is nondeterministic.  This is detected before flatten_group_exprs (see
-	 * find_having_collation_conflicts above) and recorded in the
-	 * havingCollationConflicts bitmapset.  The bitmapset indexes remain valid
-	 * here because flatten_group_exprs uses expression_tree_mutator, which
-	 * preserves the list length and ordering of havingQual.
+	 * 如果 HAVING 子句对某个 GROUP BY 排序规则为非确定性的分组表达式使用了
+	 * 与 GROUP BY 不同的排序规则，我们同样不能这样做。这在 flatten_group_exprs
+	 * 之前就被检测（见上文 find_having_collation_conflicts）并记录在
+	 * havingCollationConflicts 位图中。该位图的索引此处仍然有效，因为
+	 * flatten_group_exprs 使用 expression_tree_mutator，它保留了 havingQual
+	 * 的列表长度和顺序。
 	 *
-	 * Also, it may be that the clause is so expensive to execute that we're
-	 * better off doing it only once per group, despite the loss of
-	 * selectivity.  This is hard to estimate short of doing the entire
-	 * planning process twice, so we use a heuristic: clauses containing
-	 * subplans are left in HAVING.  Otherwise, we move or copy the HAVING
-	 * clause into WHERE, in hopes of eliminating tuples before aggregation
-	 * instead of after.
+	 * 此外，该子句的执行可能非常昂贵，以至于我们最好每组只执行一次，即使
+	 * 损失了选择率。这很难在不把整个规划过程做两遍的情况下估算，因此我们
+	 * 使用一个启发式方法：包含子计划的子句留在 HAVING 中。否则，我们将
+	 * HAVING 子句移动或复制到 WHERE，希望在聚合之前而非之后消除元组。
 	 *
-	 * If the query has no empty grouping set then we can simply move such a
-	 * clause into WHERE; any group that fails the clause will not be in the
-	 * output because none of its tuples will reach the grouping or
-	 * aggregation stage.  Otherwise we have to keep the clause in HAVING to
-	 * ensure that we don't emit a bogus aggregated row.  But then the HAVING
-	 * clause must be degenerate (variable-free), so we can copy it into WHERE
-	 * so that query_planner() can use it in a gating Result node. (This could
-	 * be done better, but it seems not worth optimizing.)
+	 * 如果查询没有空分组集，那么我们可以简单地将这样的子句移入 WHERE；
+	 * 任何不满足子句的组都不会出现在输出中，因为它的元组都不会到达分组或
+	 * 聚合阶段。否则我们必须将子句保留在 HAVING 中，以确保不会发出虚假的
+	 * 聚合行。但那样 HAVING 子句必须是退化的（无变量），因此我们可以把它
+	 * 复制到 WHERE，以便 query_planner() 能在一个门控 Result 节点中使用它。
+	 * （这本来可以做得更好，但似乎不值得优化。）
 	 *
-	 * Note that a HAVING clause may contain expressions that are not fully
-	 * preprocessed.  This can happen if these expressions are part of
-	 * grouping items.  In such cases, they are replaced with GROUP Vars in
-	 * the parser and then replaced back after we're done with expression
-	 * preprocessing on havingQual.  This is not an issue if the clause
-	 * remains in HAVING, because these expressions will be matched to lower
-	 * target items in setrefs.c.  However, if the clause is moved or copied
-	 * into WHERE, we need to ensure that these expressions are fully
-	 * preprocessed.
+	 * 注意 HAVING 子句可能包含未完全预处理的表达式。这可能在表达式是分组项
+	 * 的一部分时发生。这种情况下，它们在解析器中被替换为 GROUP Var，然后在
+	 * 对 havingQual 的表达式预处理完成之后被替换回来。如果子句保留在 HAVING
+	 * 中，这就不是问题，因为这些表达式会在 setrefs.c 中匹配到底层目标项。
+	 * 但是，如果子句被移动或复制到 WHERE，我们需要确保这些表达式已被完全
+	 * 预处理。
 	 *
-	 * Note that both havingQual and parse->jointree->quals are in
-	 * implicitly-ANDed-list form at this point, even though they are declared
-	 * as Node *.
+	 * 注意 havingQual 和 parse->jointree->quals 此时都采用隐式 AND 列表形式，
+	 * 尽管它们被声明为 Node *。
 	 */
 	newHaving = NIL;
 	havingIdx = 0;
@@ -1260,38 +1202,35 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		reduce_outer_joins(root);
 
 	/*
-	 * If we have any RTE_RESULT relations, see if they can be deleted from
-	 * the jointree.  We also rely on this processing to flatten single-child
-	 * FromExprs underneath outer joins.  This step is most effectively done
-	 * after we've done expression preprocessing and outer join reduction.
+	 * 如果我们有任何 RTE_RESULT 关系，看它们能否从连接树中删除。我们也依赖
+	 * 这个处理来扁平化外连接下的单子节点 FromExpr。这一步在表达式预处理和
+	 * 外连接归约之后做最为有效。
 	 */
 	if (hasResultRTEs || hasOuterJoins)
 		remove_useless_result_rtes(root);
 
 	/*
-	 * Do the main planning.
+	 * 执行主要的规划。
 	 */
 	grouping_planner(root, tuple_fraction, setops);
 
 	/*
-	 * Capture the set of outer-level param IDs we have access to, for use in
-	 * extParam/allParam calculations later.
+	 * 捕获我们所能访问的外层 param ID 集合，供后续的 extParam/allParam
+	 * 计算使用。
 	 */
 	SS_identify_outer_params(root);
 
 	/*
-	 * If any initPlans were created in this query level, adjust the surviving
-	 * Paths' costs and parallel-safety flags to account for them.  The
-	 * initPlans won't actually get attached to the plan tree till
-	 * create_plan() runs, but we must include their effects now.
+	 * 如果在本查询层级创建了任何 initPlan，调整存活路径的代价和并行安全标志
+	 * 以将其考虑在内。initPlan 实际上要到 create_plan() 运行才会被附加到计划树，
+	 * 但我们现在就必须包含它们的影响。
 	 */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 	SS_charge_for_initplans(root, final_rel);
 
 	/*
-	 * Make sure we've identified the cheapest Path for the final rel.  (By
-	 * doing this here not in grouping_planner, we include initPlan costs in
-	 * the decision, though it's unlikely that will change anything.)
+	 * 确保我们已经为最终关系确定了最廉价的路径。（在这里而非 grouping_planner
+	 * 中做这件事，我们能将 initPlan 代价纳入决策，尽管这不太可能改变任何东西。）
 	 */
 	set_cheapest(final_rel);
 
@@ -1300,29 +1239,27 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 
 /*
  * preprocess_expression
- *		Do subquery_planner's preprocessing work for an expression,
- *		which can be a targetlist, a WHERE clause (including JOIN/ON
- *		conditions), a HAVING clause, or a few other things.
+ *		为表达式做 subquery_planner 的预处理工作，表达式可以是目标列表、
+ *		一个 WHERE 子句（包括 JOIN/ON 条件）、一个 HAVING 子句，或少数
+ *		其他东西。
  */
 static Node *
 preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 {
 	/*
-	 * Fall out quickly if expression is empty.  This occurs often enough to
-	 * be worth checking.  Note that null->null is the correct conversion for
-	 * implicit-AND result format, too.
+	 * 如果表达式为空则快速返回。这种情况出现得足够频繁，值得检查一下。
+	 * 注意 null->null 也是隐式 AND 结果格式的正确转换。
 	 */
 	if (expr == NULL)
 		return NULL;
 
 	/*
-	 * If the query has any join RTEs, replace join alias variables with
-	 * base-relation variables.  We must do this first, since any expressions
-	 * we may extract from the joinaliasvars lists have not been preprocessed.
-	 * For example, if we did this after sublink processing, sublinks expanded
-	 * out from join aliases would not get processed.  But we can skip this in
-	 * non-lateral RTE functions, VALUES lists, and TABLESAMPLE clauses, since
-	 * they can't contain any Vars of the current query level.
+	 * 如果查询有任何连接类型的 RTE，将连接别名变量替换为基关系变量。
+	 * 我们必须先做这件事，因为我们可能从 joinaliasvars 列表中提取出的
+	 * 表达式尚未被预处理。例如，如果我们在子链接处理之后才做此事，从连接
+	 * 别名展开出的子链接就不会被处理。但在非 LATERAL 的函数 RTE、VALUES
+	 * 列表和 TABLESAMPLE 子句中可以跳过，因为它们不可能包含当前查询层级的
+	 * 任何 Var。
 	 */
 	if (root->hasJoinRTEs &&
 		!(kind == EXPRKIND_RTFUNC ||
@@ -1332,29 +1269,24 @@ preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 		expr = flatten_join_alias_vars(root, root->parse, expr);
 
 	/*
-	 * Simplify constant expressions.  For function RTEs, this was already
-	 * done by preprocess_function_rtes.  (But note we must do it again for
-	 * EXPRKIND_RTFUNC_LATERAL, because those might by now contain
-	 * un-simplified subexpressions inserted by flattening of subqueries or
-	 * join alias variables.)
+	 * 简化常量表达式。对于函数类型的 RTE，这已被 preprocess_function_rtes
+	 * 做过。（但注意我们必须对 EXPRKIND_RTFUNC_LATERAL 再做一次，因为它们
+	 * 此刻可能含有由子查询或连接别名变量扁平化插入的未简化子表达式。）
 	 *
-	 * Note: an essential effect of this is to convert named-argument function
-	 * calls to positional notation and insert the current actual values of
-	 * any default arguments for functions.  To ensure that happens, we *must*
-	 * process all expressions here.  Previous PG versions sometimes skipped
-	 * const-simplification if it didn't seem worth the trouble, but we can't
-	 * do that anymore.
+	 * 注意：这一步骤的一个必要效果是将在名参数函数调用转换为位置表示法，
+	 * 并插入函数任何默认参数的当前实际值。为确保这一点发生，我们*必须*在
+	 * 此处处理所有表达式。以前的 PG 版本有时会跳过常量简化，如果它看起来
+	 * 不值得麻烦的话，但我们现在不能再这样做了。
 	 *
-	 * Note: this also flattens nested AND and OR expressions into N-argument
-	 * form.  All processing of a qual expression after this point must be
-	 * careful to maintain AND/OR flatness --- that is, do not generate a tree
-	 * with AND directly under AND, nor OR directly under OR.
+	 * 注意：这还会将嵌套的 AND 和 OR 表达式扁平化为 N 元形式。此点之后的
+	 * 所有限定表达式处理都必须小心维持 AND/OR 的扁平性 —— 即不要生成 AND
+	 * 直接位于 AND 之下、或 OR 直接位于 OR 之下的树。
 	 */
 	if (kind != EXPRKIND_RTFUNC)
 		expr = eval_const_expressions(root, expr);
 
 	/*
-	 * If it's a qual or havingQual, canonicalize it.
+	 * 如果是限定条件或 havingQual，将其规范化。
 	 */
 	if (kind == EXPRKIND_QUAL)
 	{
@@ -1367,33 +1299,31 @@ preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 	}
 
 	/*
-	 * Check for ANY ScalarArrayOpExpr with Const arrays and set the
-	 * hashfuncid of any that might execute more quickly by using hash lookups
-	 * instead of a linear search.
+	 * 检查带有 Const 数组的 ANY ScalarArrayOpExpr，并为那些改用哈希查找
+	 * 可能执行得更快的设置其 hashfuncid，以取代线性搜索。
 	 */
 	if (kind == EXPRKIND_QUAL || kind == EXPRKIND_TARGET)
 	{
 		convert_saop_to_hashed_saop(expr);
 	}
 
-	/* Expand SubLinks to SubPlans */
+	/* 将子链接展开为子计划 */
 	if (root->parse->hasSubLinks)
 		expr = SS_process_sublinks(root, expr, (kind == EXPRKIND_QUAL));
 
 	/*
-	 * XXX do not insert anything here unless you have grokked the comments in
-	 * SS_replace_correlation_vars ...
+	 * XXX 除非你已经读懂了 SS_replace_correlation_vars 中的注释，否则不要
+	 * 在这里插入任何东西……
 	 */
 
-	/* Replace uplevel vars with Param nodes (this IS possible in VALUES) */
+	/* 将上层 Var 替换为 Param 节点（这在 VALUES 中是可能发生的） */
 	if (root->query_level > 1)
 		expr = SS_replace_correlation_vars(root, expr);
 
 	/*
-	 * If it's a qual or havingQual, convert it to implicit-AND format. (We
-	 * don't want to do this before eval_const_expressions, since the latter
-	 * would be unable to simplify a top-level AND correctly. Also,
-	 * SS_process_sublinks expects explicit-AND format.)
+	 * 如果是限定条件或 havingQual，将其转换为隐式 AND 格式。（我们不想在
+	 * eval_const_expressions 之前做这件事，因为后者将无法正确简化顶层
+	 * AND。而且 SS_process_sublinks 期望显式 AND 格式。）
 	 */
 	if (kind == EXPRKIND_QUAL)
 		expr = (Node *) make_ands_implicit((Expr *) expr);
@@ -1413,7 +1343,7 @@ preprocess_qual_conditions(PlannerInfo *root, Node *jtnode)
 		return;
 	if (IsA(jtnode, RangeTblRef))
 	{
-		/* nothing to do here */
+		/* 这里无需处理 */
 	}
 	else if (IsA(jtnode, FromExpr))
 	{
@@ -1441,19 +1371,18 @@ preprocess_qual_conditions(PlannerInfo *root, Node *jtnode)
 
 /*
  * find_having_collation_conflicts
- *	  Identify HAVING clauses that must not be moved to WHERE due to collation
- *	  mismatches with GROUP BY.
+ *	  识别那些由于与 GROUP BY 存在排序规则（collation）不匹配而不能移动到
+ *	  WHERE 的 HAVING 子句。
  *
- * This must be called before flatten_group_exprs, while the HAVING clause
- * still contains GROUP Vars (Vars referencing RTE_GROUP).  These GROUP Vars
- * carry the GROUP BY collation as their varcollid.  A GROUP Var with a
- * nondeterministic varcollid conflicts whenever some collation-aware ancestor
- * on its path applies a different inputcollid: that operator would distinguish
- * values which the GROUP BY considers equal, so the clause is unsafe to push
- * to WHERE.
+ * 本函数必须在 flatten_group_exprs 之前调用，此时 HAVING 子句仍然包含
+ * GROUP Var（引用 RTE_GROUP 的 Var）。这些 GROUP Var 以其 varcollid 携带
+ * GROUP BY 的排序规则。当某个 GROUP Var 的 varcollid 是非确定性的，并且其
+ * 路径上某个感知排序规则的祖先节点应用了不同的 inputcollid 时，就会发生
+ * 冲突：因为该运算符会区分 GROUP BY 认为相等的值，所以将该子句下推到
+ * WHERE 是不安全的。
  *
- * Returns a Bitmapset of zero-based indexes into the havingQual list for
- * clauses that have collation conflicts and must stay in HAVING.
+ * 返回一个 Bitmapset，其中包含 havingQual 列表中那些存在排序规则冲突、
+ * 必须保留在 HAVING 里的子句的从零开始的下标。
  */
 static Bitmapset *
 find_having_collation_conflicts(Query *parse, Index group_rtindex)
@@ -1481,28 +1410,25 @@ find_having_collation_conflicts(Query *parse, Index group_rtindex)
 }
 
 /*
- * Walker function for find_having_collation_conflicts.
+ * find_having_collation_conflicts 的遍历（walker）函数。
  *
- * Walk the clause top-down, maintaining a stack of inputcollids contributed
- * by collation-aware ancestors.  At each GROUP Var with a nondeterministic
- * varcollid, the clause has a conflict if any ancestor's inputcollid differs
- * from the GROUP Var's varcollid.  Most collation-aware nodes expose their
- * inputcollid through exprInputCollation().  Two structural exceptions need
- * special handling:
+ * 自顶向下遍历子句，维护一个由感知排序规则的祖先节点贡献的 inputcollid
+ * 栈。在每个具有非确定性 varcollid 的 GROUP Var 处，如果任一祖先的
+ * inputcollid 与该 GROUP Var 的 varcollid 不同，则该子句存在冲突。大多数
+ * 感知排序规则的节点通过 exprInputCollation() 暴露其 inputcollid。有两种
+ * 结构性的例外需要特殊处理：
  *
- * - RowCompareExpr carries one inputcollid per column in inputcollids[], so we
- *   descend into its (largs[i], rargs[i]) pairs explicitly with the matching
- *   collation pushed onto the stack.
+ * - RowCompareExpr 在 inputcollids[] 中为每一列携带一个 inputcollid，因此
+ *   我们显式地下降到它的 (largs[i], rargs[i]) 对中，并将对应的排序规则压入
+ *   栈中。
  *
- * - A simple CASE (CaseExpr with a non-NULL arg) holds the arg outside the
- *   WHEN's OpExpr, even though the WHEN's OpExpr is the place where the
- *   comparison's inputcollid lives.  Parse analysis builds each WHEN as
- *   "OpExpr(CaseTestExpr op val)" -- the CaseTestExpr is a placeholder for
- *   the arg.  Before walking cexpr->arg we therefore push every WHEN's
- *   inputcollid onto the ancestor stack, so a GROUP Var at the arg is
- *   checked against the same collations the WHEN comparisons would apply.
- *   The WHEN bodies and defresult are then walked under the unchanged stack
- *   so their own collation contexts are picked up by the default path.
+ * - 简单 CASE（arg 非 NULL 的 CaseExpr）把 arg 保存在 WHEN 的 OpExpr 之外，
+ *   尽管 WHEN 的 OpExpr 才是比较的 inputcollid 所在之处。解析分析会将每个
+ *   WHEN 构建为 "OpExpr(CaseTestExpr op val)"——其中 CaseTestExpr 是 arg 的
+ *   占位符。因此在遍历 cexpr->arg 之前，我们将每个 WHEN 的 inputcollid 压入
+ *   祖先栈，这样位于 arg 处的 GROUP Var 就会针对与那些 WHEN 比较相同的
+ *   排序规则进行检查。随后在未改变的栈下遍历 WHEN 体和 defresult，使它们
+ *   自身的排序规则上下文由默认路径捕获。
  */
 static bool
 having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
@@ -1517,7 +1443,7 @@ having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
 	{
 		Var		   *var = (Var *) node;
 
-		/* We should not see any upper-level Vars here */
+		/* 这里不应该看到任何上层的 Var */
 		Assert(var->varlevelsup == 0);
 
 		if (var->varno == ctx->group_rtindex &&
@@ -1541,10 +1467,9 @@ having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
 		ListCell   *lc_c;
 
 		/*
-		 * Each column of a row comparison is compared under its own
-		 * inputcollids[i].  Walk each (largs[i], rargs[i]) pair with that
-		 * collation pushed, so a Var in column i is checked against the
-		 * collation that actually applies to it.
+		 * 行比较的每一列都在其各自的 inputcollids[i] 下进行比较。遍历每个
+		 * (largs[i], rargs[i]) 对，并压入对应的排序规则，这样第 i 列中的 Var
+		 * 就会针对实际应用于它的排序规则进行检查。
 		 */
 		forthree(lc_l, rcexpr->largs,
 				 lc_r, rcexpr->rargs,
@@ -1579,8 +1504,8 @@ having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
 		bool		found;
 
 		/*
-		 * Push every WHEN's inputcollid before walking cexpr->arg, since each
-		 * WHEN implicitly compares the arg under that inputcollid.
+		 * 在遍历 cexpr->arg 之前压入每个 WHEN 的 inputcollid，因为每个 WHEN
+		 * 都隐式地在该 inputcollid 下比较 arg。
 		 */
 		foreach_node(CaseWhen, cw, cexpr->args)
 		{
@@ -1600,9 +1525,8 @@ having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
 			return true;
 
 		/*
-		 * Walk the WHEN bodies and defresult under the unchanged ancestor
-		 * stack; any inputcollids inside them are picked up by the default
-		 * path.
+		 * 在未改变的祖先栈下遍历 WHEN 体和 defresult；它们内部的任何
+		 * inputcollid 都由默认路径捕获。
 		 */
 		foreach_node(CaseWhen, cw, cexpr->args)
 		{
@@ -1630,14 +1554,13 @@ having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
 
 /*
  * preprocess_phv_expression
- *	  Do preprocessing on a PlaceHolderVar expression that's been pulled up.
+ *	  对一个已被上拉（pulled up）的 PlaceHolderVar 表达式进行预处理。
  *
- * If a LATERAL subquery references an output of another subquery, and that
- * output must be wrapped in a PlaceHolderVar because of an intermediate outer
- * join, then we'll push the PlaceHolderVar expression down into the subquery
- * and later pull it back up during find_lateral_references, which runs after
- * subquery_planner has preprocessed all the expressions that were in the
- * current query level to start with.  So we need to preprocess it then.
+ * 如果一个 LATERAL 子查询引用了另一个子查询的输出，而由于中间存在一个外
+ * 连接，该输出必须被包装在 PlaceHolderVar 中，那么我们会将该 PlaceHolderVar
+ * 表达式下推到子查询中，随后在 find_lateral_references 期间再把它上拉回来；
+ * find_lateral_references 在 subquery_planner 已经预处理完当前查询层级最初
+ * 存在的所有表达式之后运行。因此我们需要在那时对它进行预处理。
  */
 Expr *
 preprocess_phv_expression(PlannerInfo *root, Expr *expr)
@@ -1647,29 +1570,23 @@ preprocess_phv_expression(PlannerInfo *root, Expr *expr)
 
 /*--------------------
  * grouping_planner
- *	  Perform planning steps related to grouping, aggregation, etc.
+ *	  执行与分组、聚合等相关的规划步骤。
  *
- * This function adds all required top-level processing to the scan/join
- * Path(s) produced by query_planner.
+ * 本函数将所有必要的顶层处理添加到 query_planner 产生的扫描/连接 Path 上。
  *
- * tuple_fraction is the fraction of tuples we expect will be retrieved.
- * tuple_fraction is interpreted as follows:
- *	  0: expect all tuples to be retrieved (normal case)
- *	  0 < tuple_fraction < 1: expect the given fraction of tuples available
- *		from the plan to be retrieved
- *	  tuple_fraction >= 1: tuple_fraction is the absolute number of tuples
- *		expected to be retrieved (ie, a LIMIT specification).
- * setops is used for set operation subqueries to provide the subquery with
- * the context in which it's being used so that Paths correctly sorted for the
- * set operation can be generated.  NULL when not planning a set operation
- * child, or when a child of a set op that isn't interested in sorted input.
+ * tuple_fraction 是我们预期将被检索的元组比例。tuple_fraction 的解释如下：
+ *	  0：预期检索所有元组（常规情况）
+ *	  0 < tuple_fraction < 1：预期检索计划可提供元组的给定比例
+ *	  tuple_fraction >= 1：tuple_fraction 是预期被检索的元组的绝对数量
+ *		（即一个 LIMIT 规格）。
+ * setops 用于集合操作子查询，为子查询提供其被使用的上下文，以便能够生成
+ * 为集合操作正确排序的 Path。当不是在规划集合操作的子节点时，或者作为一个
+ * 对有序输入不感兴趣的集合操作子节点时，为 NULL。
  *
- * Returns nothing; the useful output is in the Paths we attach to the
- * (UPPERREL_FINAL, NULL) upperrel in *root.  In addition,
- * root->processed_tlist contains the final processed targetlist.
+ * 无返回值；有用的输出在我们附加到 *root 中 (UPPERREL_FINAL, NULL) upperrel
+ * 上的 Path 里。此外，root->processed_tlist 包含最终处理后的目标列表。
  *
- * Note that we have not done set_cheapest() on the final rel; it's convenient
- * to leave this to the caller.
+ * 注意我们尚未对最终 rel 执行 set_cheapest()；把这一步留给调用者更方便。
  *--------------------
  */
 static void
@@ -1690,61 +1607,59 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 	FinalPathExtraData extra;
 	ListCell   *lc;
 
-	/* Tweak caller-supplied tuple_fraction if have LIMIT/OFFSET */
+	/* 如果有 LIMIT/OFFSET，则调整调用者提供的 tuple_fraction */
 	if (parse->limitCount || parse->limitOffset)
 	{
 		tuple_fraction = preprocess_limit(root, tuple_fraction,
 										  &offset_est, &count_est);
 
 		/*
-		 * If we have a known LIMIT, and don't have an unknown OFFSET, we can
-		 * estimate the effects of using a bounded sort.
+		 * 如果我们有一个已知的 LIMIT，且没有未知的 OFFSET，我们就可以估算
+		 * 使用有界排序（bounded sort）的效果。
 		 */
 		if (count_est > 0 && offset_est >= 0)
 			limit_tuples = (double) count_est + (double) offset_est;
 	}
 
-	/* Make tuple_fraction accessible to lower-level routines */
+	/* 使 tuple_fraction 可被较低层级的例程访问 */
 	root->tuple_fraction = tuple_fraction;
 
 	if (parse->setOperations)
 	{
 		/*
-		 * Construct Paths for set operations.  The results will not need any
-		 * work except perhaps a top-level sort and/or LIMIT.  Note that any
-		 * special work for recursive unions is the responsibility of
-		 * plan_set_operations.
+		 * 为集合操作构造 Path。除了可能的顶层排序和/或 LIMIT 之外，结果不
+		 * 再需要任何处理。注意，递归 union 的任何特殊处理由
+		 * plan_set_operations 负责。
 		 */
 		current_rel = plan_set_operations(root);
 
 		/*
-		 * We should not need to call preprocess_targetlist, since we must be
-		 * in a SELECT query node.  Instead, use the processed_tlist returned
-		 * by plan_set_operations (since this tells whether it returned any
-		 * resjunk columns!), and transfer any sort key information from the
-		 * original tlist.
+		 * 我们不应该需要调用 preprocess_targetlist，因为此处必定处于一个
+		 * SELECT 查询节点中。相反，使用 plan_set_operations 返回的
+		 * processed_tlist（因为它告诉我们是否返回了任何 resjunk 列！），并
+		 * 从原始 tlist 中转移任何排序键信息。
 		 */
 		Assert(parse->commandType == CMD_SELECT);
 
-		/* for safety, copy processed_tlist instead of modifying in-place */
+		/* 为安全起见，复制 processed_tlist 而不是就地修改 */
 		root->processed_tlist =
 			postprocess_setop_tlist(copyObject(root->processed_tlist),
 									parse->targetList);
 
-		/* Also extract the PathTarget form of the setop result tlist */
+		/* 同时提取集合操作结果 tlist 的 PathTarget 形式 */
 		final_target = current_rel->cheapest_total_path->pathtarget;
 
-		/* And check whether it's parallel safe */
+		/* 并检查它是否并行安全 */
 		final_target_parallel_safe =
 			is_parallel_safe(root, (Node *) final_target->exprs);
 
-		/* The setop result tlist couldn't contain any SRFs */
+		/* 集合操作结果 tlist 不可能包含任何 SRF */
 		Assert(!parse->hasTargetSRFs);
 		final_targets = final_targets_contain_srfs = NIL;
 
 		/*
-		 * Can't handle FOR [KEY] UPDATE/SHARE here (parser should have
-		 * checked already, but let's make sure).
+		 * 这里无法处理 FOR [KEY] UPDATE/SHARE（解析器应该已经检查过了，但
+		 * 我们还是确认一下）。
 		 */
 		if (parse->rowMarks)
 			ereport(ERROR,
@@ -1756,7 +1671,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 													   parse->rowMarks)->strength))));
 
 		/*
-		 * Calculate pathkeys that represent result ordering requirements
+		 * 计算表示结果排序要求的 pathkeys
 		 */
 		Assert(parse->distinctClause == NIL);
 		root->sort_pathkeys = make_pathkeys_for_sortclauses(root,
@@ -1765,7 +1680,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 	}
 	else
 	{
-		/* No set operations, do regular planning */
+		/* 没有集合操作，执行常规规划 */
 		PathTarget *sort_input_target;
 		List	   *sort_input_targets;
 		List	   *sort_input_targets_contain_srfs;
@@ -1785,32 +1700,31 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		grouping_sets_data *gset_data = NULL;
 		standard_qp_extra qp_extra;
 
-		/* A recursive query should always have setOperations */
+		/* 递归查询应始终具有 setOperations */
 		Assert(!root->hasRecursion);
 
-		/* Preprocess grouping sets and GROUP BY clause, if any */
+		/* 预处理 grouping sets 和 GROUP BY 子句（如果有的话） */
 		if (parse->groupingSets)
 		{
 			gset_data = preprocess_grouping_sets(root);
 		}
 		else if (parse->groupClause)
 		{
-			/* Preprocess regular GROUP BY clause, if any */
+			/* 预处理常规 GROUP BY 子句（如果有的话） */
 			root->processed_groupClause = preprocess_groupclause(root, NIL);
 		}
 
 		/*
-		 * Preprocess targetlist.  Note that much of the remaining planning
-		 * work will be done with the PathTarget representation of tlists, but
-		 * we must also maintain the full representation of the final tlist so
-		 * that we can transfer its decoration (resnames etc) to the topmost
-		 * tlist of the finished Plan.  This is kept in processed_tlist.
+		 * 预处理目标列表。注意，剩余的大部分规划工作将使用 tlist 的
+		 * PathTarget 表示来完成，但我们还必须维护最终 tlist 的完整表示，以便
+		 * 能够将其修饰信息（resnames 等）转移到已完成 Plan 的最顶层 tlist 上。
+		 * 这个完整表示保存在 processed_tlist 中。
 		 */
 		preprocess_targetlist(root);
 
 		/*
-		 * Mark all the aggregates with resolved aggtranstypes, and detect
-		 * aggregates that are duplicates or can share transition state.  We
+		 * 用已解析的 aggtranstype 标记所有聚合，并检测那些重复的、或者可以
+		 * 共享转换状态（transition state）的聚合。我们
 		 * must do this before slicing and dicing the tlist into various
 		 * pathtargets, else some copies of the Aggref nodes might escape
 		 * being marked.
@@ -1834,16 +1748,15 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 			if (wflists->numWindowFuncs > 0)
 			{
 				/*
-				 * See if any modifications can be made to each WindowClause
-				 * to allow the executor to execute the WindowFuncs more
-				 * quickly.
+				 * 看看是否可以对每个 WindowClause 做一些修改，以便让执行器
+				 * 更快地执行 WindowFunc。
 				 */
 				optimize_window_clauses(root, wflists);
 
-				/* Extract the list of windows actually in use. */
+				/* 提取实际使用的窗口列表。 */
 				activeWindows = select_active_windows(root, wflists);
 
-				/* Make sure they all have names, for EXPLAIN's use. */
+				/* 确保它们都有名称，供 EXPLAIN 使用。 */
 				name_active_windows(activeWindows);
 			}
 			else
@@ -1851,19 +1764,17 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * Preprocess MIN/MAX aggregates, if any.  Note: be careful about
-		 * adding logic between here and the query_planner() call.  Anything
-		 * that is needed in MIN/MAX-optimizable cases will have to be
-		 * duplicated in planagg.c.
+		 * 预处理 MIN/MAX 聚合（如果有的话）。注意：在这里与 query_planner()
+		 * 调用之间添加逻辑时要小心。任何在 MIN/MAX 可优化情况下所需的处理，
+		 * 都必须在 planagg.c 中重复实现一份。
 		 */
 		if (parse->hasAggs)
 			preprocess_minmax_aggregates(root);
 
 		/*
-		 * Figure out whether there's a hard limit on the number of rows that
-		 * query_planner's result subplan needs to return.  Even if we know a
-		 * hard limit overall, it doesn't apply if the query has any
-		 * grouping/aggregation operations, or SRFs in the tlist.
+		 * 判断 query_planner 的结果子计划需要返回的行数是否存在硬性上限。
+		 * 即使我们知道一个整体的硬性上限，如果查询包含任何分组/聚合操作，
+		 * 或者 tlist 中含有 SRF，该上限也不适用。
 		 */
 		if (parse->groupClause ||
 			parse->groupingSets ||
@@ -1876,42 +1787,39 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		else
 			root->limit_tuples = limit_tuples;
 
-		/* Set up data needed by standard_qp_callback */
+		/* 设置 standard_qp_callback 所需的数据 */
 		qp_extra.activeWindows = activeWindows;
 		qp_extra.gset_data = gset_data;
 
 		/*
-		 * If we're a subquery for a set operation, store the SetOperationStmt
-		 * in qp_extra.
+		 * 如果我们是某个集合操作的子查询，则将 SetOperationStmt 存入
+		 * qp_extra。
 		 */
 		qp_extra.setop = setops;
 
 		/*
-		 * Generate the best unsorted and presorted paths for the scan/join
-		 * portion of this Query, ie the processing represented by the
-		 * FROM/WHERE clauses.  (Note there may not be any presorted paths.)
-		 * We also generate (in standard_qp_callback) pathkey representations
-		 * of the query's sort clause, distinct clause, etc.
+		 * 为该 Query 的扫描/连接部分（即 FROM/WHERE 子句所代表的处理）生成
+		 * 最优的未排序路径和预排序路径。（注意可能没有任何预排序路径。）
+		 * 我们还会（在 standard_qp_callback 中）生成查询的排序子句、distinct
+		 * 子句等的 pathkey 表示。
 		 */
 		current_rel = query_planner(root, standard_qp_callback, &qp_extra);
 
 		/*
-		 * Convert the query's result tlist into PathTarget format.
+		 * 将查询的结果 tlist 转换为 PathTarget 格式。
 		 *
-		 * Note: this cannot be done before query_planner() has performed
-		 * appendrel expansion, because that might add resjunk entries to
-		 * root->processed_tlist.  Waiting till afterwards is also helpful
-		 * because the target width estimates can use per-Var width numbers
-		 * that were obtained within query_planner().
+		 * 注意：这一步不能在 query_planner() 执行 appendrel 展开之前进行，
+		 * 因为那可能会向 root->processed_tlist 添加 resjunk 条目。等到其后
+		 * 再做还有一个好处：目标宽度估算可以使用在 query_planner() 内部
+		 * 得到的每个 Var 的宽度数值。
 		 */
 		final_target = create_pathtarget(root, root->processed_tlist);
 		final_target_parallel_safe =
 			is_parallel_safe(root, (Node *) final_target->exprs);
 
 		/*
-		 * If ORDER BY was given, consider whether we should use a post-sort
-		 * projection, and compute the adjusted target for preceding steps if
-		 * so.
+		 * 如果给定了 ORDER BY，考虑我们是否应该使用一个排序后（post-sort）
+		 * 的投影，若是，则为前面的步骤计算调整后的 target。
 		 */
 		if (parse->sortClause)
 		{
@@ -1928,9 +1836,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If we have window functions to deal with, the output from any
-		 * grouping step needs to be what the window functions want;
-		 * otherwise, it should be sort_input_target.
+		 * 如果我们有窗口函数要处理，则任何分组步骤的输出都需要是窗口函数
+		 * 所需要的内容；否则，它应当是 sort_input_target。
 		 */
 		if (activeWindows)
 		{
@@ -1947,9 +1854,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If we have grouping or aggregation to do, the topmost scan/join
-		 * plan node must emit what the grouping step wants; otherwise, it
-		 * should emit grouping_target.
+		 * 如果我们有分组或聚合要做，最顶层的扫描/连接计划节点必须发出分组
+		 * 步骤所需要的内容；否则，它应当发出 grouping_target。
 		 */
 		have_grouping = (parse->groupClause || parse->groupingSets ||
 						 parse->hasAggs || root->hasHavingQual);
@@ -1966,33 +1872,32 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If there are any SRFs in the targetlist, we must separate each of
-		 * these PathTargets into SRF-computing and SRF-free targets.  Replace
-		 * each of the named targets with a SRF-free version, and remember the
-		 * list of additional projection steps we need to add afterwards.
+		 * 如果目标列表中有任何 SRF，我们必须将每个这样的 PathTarget 分离为
+		 * 计算 SRF 的 target 和不含 SRF 的 target。用不含 SRF 的版本替换每个
+		 * 命名的 target，并记住我们之后需要添加的额外投影步骤列表。
 		 */
 		if (parse->hasTargetSRFs)
 		{
-			/* final_target doesn't recompute any SRFs in sort_input_target */
+			/* final_target 不重新计算 sort_input_target 中的任何 SRF */
 			split_pathtarget_at_srfs(root, final_target, sort_input_target,
 									 &final_targets,
 									 &final_targets_contain_srfs);
 			final_target = linitial_node(PathTarget, final_targets);
 			Assert(!linitial_int(final_targets_contain_srfs));
-			/* likewise for sort_input_target vs. grouping_target */
+			/* 对 sort_input_target 与 grouping_target 同理 */
 			split_pathtarget_at_srfs(root, sort_input_target, grouping_target,
 									 &sort_input_targets,
 									 &sort_input_targets_contain_srfs);
 			sort_input_target = linitial_node(PathTarget, sort_input_targets);
 			Assert(!linitial_int(sort_input_targets_contain_srfs));
-			/* likewise for grouping_target vs. scanjoin_target */
+			/* 对 grouping_target 与 scanjoin_target 同理 */
 			split_pathtarget_at_srfs_grouping(root,
 											  grouping_target, scanjoin_target,
 											  &grouping_targets,
 											  &grouping_targets_contain_srfs);
 			grouping_target = linitial_node(PathTarget, grouping_targets);
 			Assert(!linitial_int(grouping_targets_contain_srfs));
-			/* scanjoin_target will not have any SRFs precomputed for it */
+			/* scanjoin_target 不会为其预先计算任何 SRF */
 			split_pathtarget_at_srfs(root, scanjoin_target, NULL,
 									 &scanjoin_targets,
 									 &scanjoin_targets_contain_srfs);
@@ -2001,7 +1906,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 		else
 		{
-			/* initialize lists; for most of these, dummy values are OK */
+			/* 初始化列表；对其中大多数来说，哑值即可 */
 			final_targets = final_targets_contain_srfs = NIL;
 			sort_input_targets = sort_input_targets_contain_srfs = NIL;
 			grouping_targets = grouping_targets_contain_srfs = NIL;
@@ -2009,7 +1914,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 			scanjoin_targets_contain_srfs = NIL;
 		}
 
-		/* Apply scan/join target. */
+		/* 应用扫描/连接 target。 */
 		scanjoin_target_same_exprs = list_length(scanjoin_targets) == 1
 			&& equal(scanjoin_target->exprs, current_rel->reltarget->exprs);
 		apply_scanjoin_target_to_paths(root, current_rel, scanjoin_targets,
@@ -2018,11 +1923,10 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 									   scanjoin_target_same_exprs);
 
 		/*
-		 * Save the various upper-rel PathTargets we just computed into
-		 * root->upper_targets[].  The core code doesn't use this, but it
-		 * provides a convenient place for extensions to get at the info.  For
-		 * consistency, we save all the intermediate targets, even though some
-		 * of the corresponding upperrels might not be needed for this query.
+		 * 将我们刚刚计算出的各种 upper-rel 的 PathTarget 保存到
+		 * root->upper_targets[] 中。核心代码并不使用它，但它为扩展提供了一个
+		 * 方便的位置来获取这些信息。为了保持一致，我们保存所有中间 target，
+		 * 即便其中某些对应的 upperrel 在本次查询中可能并不需要。
 		 */
 		root->upper_targets[UPPERREL_FINAL] = final_target;
 		root->upper_targets[UPPERREL_ORDERED] = final_target;
@@ -2032,9 +1936,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		root->upper_targets[UPPERREL_GROUP_AGG] = grouping_target;
 
 		/*
-		 * If we have grouping and/or aggregation, consider ways to implement
-		 * that.  We build a new upperrel representing the output of this
-		 * phase.
+		 * 如果我们有分组和/或聚合，考虑实现它的各种方式。我们构建一个新的
+		 * upperrel 来表示这一阶段的输出。
 		 */
 		if (have_grouping)
 		{
@@ -2043,7 +1946,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 												grouping_target,
 												grouping_target_parallel_safe,
 												gset_data);
-			/* Fix things up if grouping_target contains SRFs */
+			/* 如果 grouping_target 包含 SRF，则做相应修正 */
 			if (parse->hasTargetSRFs)
 				adjust_paths_for_srfs(root, current_rel,
 									  grouping_targets,
@@ -2051,8 +1954,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If we have window functions, consider ways to implement those.  We
-		 * build a new upperrel representing the output of this phase.
+		 * 如果我们有窗口函数，考虑实现它们的各种方式。我们构建一个新的
+		 * upperrel 来表示这一阶段的输出。
 		 */
 		if (activeWindows)
 		{
@@ -2063,7 +1966,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 											  sort_input_target_parallel_safe,
 											  wflists,
 											  activeWindows);
-			/* Fix things up if sort_input_target contains SRFs */
+			/* 如果 sort_input_target 包含 SRF，则做相应修正 */
 			if (parse->hasTargetSRFs)
 				adjust_paths_for_srfs(root, current_rel,
 									  sort_input_targets,
@@ -2071,8 +1974,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If there is a DISTINCT clause, consider ways to implement that. We
-		 * build a new upperrel representing the output of this phase.
+		 * 如果有 DISTINCT 子句，考虑实现它的各种方式。我们构建一个新的
+		 * upperrel 来表示这一阶段的输出。
 		 */
 		if (parse->distinctClause)
 		{
@@ -2080,14 +1983,13 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 												current_rel,
 												sort_input_target);
 		}
-	}							/* end of if (setOperations) */
+	}							/* if (setOperations) 结束 */
 
 	/*
-	 * If ORDER BY was given, consider ways to implement that, and generate a
-	 * new upperrel containing only paths that emit the correct ordering and
-	 * project the correct final_target.  We can apply the original
-	 * limit_tuples limit in sort costing here, but only if there are no
-	 * postponed SRFs.
+	 * 如果给定了 ORDER BY，考虑实现它的各种方式，并生成一个新的 upperrel，
+	 * 其中只包含发出正确排序、并投影正确 final_target 的路径。我们可以在此处
+	 * 的排序代价计算中应用原始的 limit_tuples 限制，但仅当没有被推迟的 SRF
+	 * 时才行。
 	 */
 	if (parse->sortClause)
 	{
@@ -2097,7 +1999,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 										   final_target_parallel_safe,
 										   have_postponed_srfs ? -1.0 :
 										   limit_tuples);
-		/* Fix things up if final_target contains SRFs */
+		/* 如果 final_target 包含 SRF，则做相应修正 */
 		if (parse->hasTargetSRFs)
 			adjust_paths_for_srfs(root, current_rel,
 								  final_targets,
@@ -2105,16 +2007,15 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 	}
 
 	/*
-	 * Now we are prepared to build the final-output upperrel.
+	 * 现在我们准备构建最终输出的 upperrel。
 	 */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 
 	/*
-	 * If the input rel is marked consider_parallel and there's nothing that's
-	 * not parallel-safe in the LIMIT clause, then the final_rel can be marked
-	 * consider_parallel as well.  Note that if the query has rowMarks or is
-	 * not a SELECT, consider_parallel will be false for every relation in the
-	 * query.
+	 * 如果输入 rel 被标记为 consider_parallel，并且 LIMIT 子句中没有任何非
+	 * 并行安全的内容，那么 final_rel 也可以被标记为 consider_parallel。注意，
+	 * 如果查询有 rowMarks，或者不是 SELECT，则该查询中每个关系的
+	 * consider_parallel 都将为 false。
 	 */
 	if (current_rel->consider_parallel &&
 		is_parallel_safe(root, parse->limitOffset) &&
@@ -2122,7 +2023,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		final_rel->consider_parallel = true;
 
 	/*
-	 * If the current_rel belongs to a single FDW, so does the final_rel.
+	 * 如果 current_rel 属于单个 FDW，那么 final_rel 也是如此。
 	 */
 	final_rel->serverid = current_rel->serverid;
 	final_rel->userid = current_rel->userid;
@@ -2130,19 +2031,18 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 	final_rel->fdwroutine = current_rel->fdwroutine;
 
 	/*
-	 * Generate paths for the final_rel.  Insert all surviving paths, with
-	 * LockRows, Limit, and/or ModifyTable steps added if needed.
+	 * 为 final_rel 生成路径。插入所有存活下来的路径，并在需要时添加
+	 * LockRows、Limit 和/或 ModifyTable 步骤。
 	 */
 	foreach(lc, current_rel->pathlist)
 	{
 		Path	   *path = (Path *) lfirst(lc);
 
 		/*
-		 * If there is a FOR [KEY] UPDATE/SHARE clause, add the LockRows node.
-		 * (Note: we intentionally test parse->rowMarks not root->rowMarks
-		 * here.  If there are only non-locking rowmarks, they should be
-		 * handled by the ModifyTable node instead.  However, root->rowMarks
-		 * is what goes into the LockRows node.)
+		 * 如果有 FOR [KEY] UPDATE/SHARE 子句，则添加 LockRows 节点。
+		 * （注意：我们这里有意测试 parse->rowMarks 而非 root->rowMarks。
+		 * 如果只有非加锁的 rowmark，它们应改由 ModifyTable 节点处理。不过，
+		 * 进入 LockRows 节点的是 root->rowMarks。）
 		 */
 		if (parse->rowMarks)
 		{
@@ -2152,7 +2052,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If there is a LIMIT/OFFSET clause, add the LIMIT node.
+		 * 如果有 LIMIT/OFFSET 子句，则添加 LIMIT 节点。
 		 */
 		if (limit_needed(parse))
 		{
@@ -2164,7 +2064,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/*
-		 * If this is an INSERT/UPDATE/DELETE/MERGE, add the ModifyTable node.
+		 * 如果这是一个 INSERT/UPDATE/DELETE/MERGE，则添加 ModifyTable 节点。
 		 */
 		if (parse->commandType != CMD_SELECT)
 		{
@@ -2179,15 +2079,15 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 
 			if (bms_membership(root->all_result_relids) == BMS_MULTIPLE)
 			{
-				/* Inherited UPDATE/DELETE/MERGE */
+				/* 继承的 UPDATE/DELETE/MERGE */
 				RelOptInfo *top_result_rel = find_base_rel(root,
 														   parse->resultRelation);
 				int			resultRelation = -1;
 
-				/* Pass the root result rel forward to the executor. */
+				/* 将根结果 rel 向前传递给执行器。 */
 				rootRelation = parse->resultRelation;
 
-				/* Add only leaf children to ModifyTable. */
+				/* 只把叶子子节点添加到 ModifyTable。 */
 				while ((resultRelation = bms_next_member(root->leaf_result_relids,
 														 resultRelation)) >= 0)
 				{
@@ -2195,14 +2095,13 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 																resultRelation);
 
 					/*
-					 * Also exclude any leaf rels that have turned dummy since
-					 * being added to the list, for example, by being excluded
-					 * by constraint exclusion.
+					 * 同时排除任何自加入列表以来已变为哑（dummy）的叶子
+					 * rel，例如被约束排除（constraint exclusion）排除掉的。
 					 */
 					if (IS_DUMMY_REL(this_result_rel))
 						continue;
 
-					/* Build per-target-rel lists needed by ModifyTable */
+					/* 构建 ModifyTable 所需的每个目标 rel 的列表 */
 					resultRelations = lappend_int(resultRelations,
 												  resultRelation);
 					if (parse->commandType == CMD_UPDATE)
@@ -2250,8 +2149,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 						List	   *mergeActionList = NIL;
 
 						/*
-						 * Copy MergeActions and translate stuff that
-						 * references attribute numbers.
+						 * 复制 MergeAction，并转换其中引用属性编号的内容。
 						 */
 						foreach(l, parse->mergeActionList)
 						{
@@ -2299,15 +2197,12 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 				if (resultRelations == NIL)
 				{
 					/*
-					 * We managed to exclude every child rel, so generate a
-					 * dummy one-relation plan using info for the top target
-					 * rel (even though that may not be a leaf target).
-					 * Although it's clear that no data will be updated or
-					 * deleted, we still need to have a ModifyTable node so
-					 * that any statement triggers will be executed.  (This
-					 * could be cleaner if we fixed nodeModifyTable.c to allow
-					 * zero target relations, but that probably wouldn't be a
-					 * net win.)
+					 * 我们把每一个子 rel 都排除掉了，因此使用顶层目标 rel
+					 * 的信息生成一个哑的单关系计划（即便它可能不是叶子
+					 * 目标）。虽然很明显不会有任何数据被更新或删除，我们仍然
+					 * 需要有一个 ModifyTable 节点，以便执行任何语句级触发器。
+					 * （如果我们修改 nodeModifyTable.c 以允许零个目标关系，
+					 * 这里会更整洁一些，但那大概得不偿失。）
 					 */
 					resultRelations = list_make1_int(parse->resultRelation);
 					if (parse->commandType == CMD_UPDATE)
@@ -2324,8 +2219,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 			}
 			else
 			{
-				/* Single-relation INSERT/UPDATE/DELETE/MERGE. */
-				rootRelation = 0;	/* there's no separate root rel */
+				/* 单关系的 INSERT/UPDATE/DELETE/MERGE。 */
+				rootRelation = 0;	/* 没有单独的根 rel */
 				resultRelations = list_make1_int(parse->resultRelation);
 				if (parse->commandType == CMD_UPDATE)
 					updateColnosLists = list_make1(root->update_colnos);
@@ -2340,9 +2235,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 			}
 
 			/*
-			 * If there was a FOR [KEY] UPDATE/SHARE clause, the LockRows node
-			 * will have dealt with fetching non-locked marked rows, else we
-			 * need to have ModifyTable do that.
+			 * 如果有 FOR [KEY] UPDATE/SHARE 子句，LockRows 节点将已经处理了
+			 * 获取未加锁的被标记行的工作，否则我们需要让 ModifyTable 来做。
 			 */
 			if (parse->rowMarks)
 				rowMarks = NIL;
@@ -2368,13 +2262,12 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 										assign_special_exec_param(root));
 		}
 
-		/* And shove it into final_rel */
+		/* 然后把它塞进 final_rel */
 		add_path(final_rel, path);
 	}
 
 	/*
-	 * Generate partial paths for final_rel, too, if outer query levels might
-	 * be able to make use of them.
+	 * 如果外层查询层级可能能够利用它们，也为 final_rel 生成 partial path。
 	 */
 	if (final_rel->consider_parallel && root->query_level > 1 &&
 		!limit_needed(parse))
@@ -2394,8 +2287,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 	extra.offset_est = offset_est;
 
 	/*
-	 * If there is an FDW that's responsible for all baserels of the query,
-	 * let it consider adding ForeignPaths.
+	 * 如果有一个 FDW 负责该查询的所有 baserel，则让它考虑添加 ForeignPath。
 	 */
 	if (final_rel->fdwroutine &&
 		final_rel->fdwroutine->GetForeignUpperPaths)
@@ -2403,22 +2295,21 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 													current_rel, final_rel,
 													&extra);
 
-	/* Let extensions possibly add some more paths */
+	/* 让扩展有可能添加更多的路径 */
 	if (create_upper_paths_hook)
 		(*create_upper_paths_hook) (root, UPPERREL_FINAL,
 									current_rel, final_rel, &extra);
 
-	/* Note: currently, we leave it to callers to do set_cheapest() */
+	/* 注意：目前我们把 set_cheapest() 留给调用者来做 */
 }
 
 /*
- * Do preprocessing for groupingSets clause and related data.
+ * 对 groupingSets 子句及相关数据进行预处理。
  *
- * We expect that parse->groupingSets has already been expanded into a flat
- * list of grouping sets (that is, just integer Lists of ressortgroupref
- * numbers) by expand_grouping_sets().  This function handles the preliminary
- * steps of organizing the grouping sets into lists of rollups, and preparing
- * annotations which will later be filled in with size estimates.
+ * 我们期望 parse->groupingSets 已经由 expand_grouping_sets() 展开为一个扁平
+ * 的 grouping set 列表（即只是由 ressortgroupref 编号组成的整数 List）。本
+ * 函数处理前期步骤：把这些 grouping set 组织成 rollup 列表，并准备好稍后将
+ * 填入尺寸估算的注解（annotation）。
  */
 static grouping_sets_data *
 preprocess_grouping_sets(PlannerInfo *root)
@@ -2430,12 +2321,12 @@ preprocess_grouping_sets(PlannerInfo *root)
 	grouping_sets_data *gd = palloc0(sizeof(grouping_sets_data));
 
 	/*
-	 * We don't currently make any attempt to optimize the groupClause when
-	 * there are grouping sets, so just duplicate it in processed_groupClause.
+	 * 当存在 grouping set 时，我们目前不尝试对 groupClause 做任何优化，因此
+	 * 只是把它原样复制到 processed_groupClause 中。
 	 */
 	root->processed_groupClause = parse->groupClause;
 
-	/* Detect unhashable and unsortable grouping expressions */
+	/* 检测不可哈希和不可排序的分组表达式 */
 	gd->any_hashable = false;
 	gd->unhashable_refs = NULL;
 	gd->unsortable_refs = NULL;
@@ -2461,14 +2352,13 @@ preprocess_grouping_sets(PlannerInfo *root)
 		}
 	}
 
-	/* Allocate workspace array for remapping */
+	/* 为重映射分配工作区数组 */
 	gd->tleref_to_colnum_map = (int *) palloc((maxref + 1) * sizeof(int));
 
 	/*
-	 * If we have any unsortable sets, we must extract them before trying to
-	 * prepare rollups. Unsortable sets don't go through
-	 * reorder_grouping_sets, so we must apply the GroupingSetData annotation
-	 * here.
+	 * 如果我们有任何不可排序的 set，则必须在尝试准备 rollup 之前先把它们
+	 * 提取出来。不可排序的 set 不会经过 reorder_grouping_sets，所以我们必须
+	 * 在这里应用 GroupingSetData 注解。
 	 */
 	if (!bms_is_empty(gd->unsortable_refs))
 	{
@@ -2487,12 +2377,12 @@ preprocess_grouping_sets(PlannerInfo *root)
 				gd->unsortable_sets = lappend(gd->unsortable_sets, gs);
 
 				/*
-				 * We must enforce here that an unsortable set is hashable;
-				 * later code assumes this.  Parse analysis only checks that
-				 * every individual column is either hashable or sortable.
+				 * 我们必须在这里强制要求不可排序的 set 是可哈希的；后续
+				 * 代码假定了这一点。解析分析只检查每一个单独的列要么可哈希、
+				 * 要么可排序。
 				 *
-				 * Note that passing this test doesn't guarantee we can
-				 * generate a plan; there might be other showstoppers.
+				 * 注意，通过此项测试并不能保证我们一定能生成计划；可能还有
+				 * 其他障碍。
 				 */
 				if (bms_overlap_list(gd->unhashable_refs, gset))
 					ereport(ERROR,
@@ -2519,14 +2409,12 @@ preprocess_grouping_sets(PlannerInfo *root)
 		GroupingSetData *gs;
 
 		/*
-		 * Reorder the current list of grouping sets into correct prefix
-		 * order.  If only one aggregation pass is needed, try to make the
-		 * list match the ORDER BY clause; if more than one pass is needed, we
-		 * don't bother with that.
+		 * 将当前的 grouping set 列表重新排序为正确的前缀顺序。如果只需要一次
+		 * 聚合遍历（aggregation pass），则尝试让该列表匹配 ORDER BY 子句；
+		 * 如果需要多于一次遍历，我们就不做这件事。
 		 *
-		 * Note that this reorders the sets from smallest-member-first to
-		 * largest-member-first, and applies the GroupingSetData annotations,
-		 * though the data will be filled in later.
+		 * 注意，这会把这些 set 从成员最少者在前重新排序为成员最多者在前，
+		 * 并应用 GroupingSetData 注解，尽管其数据要到稍后才会填入。
 		 */
 		current_sets = reorder_grouping_sets(current_sets,
 											 (list_length(sets) == 1
@@ -2534,18 +2422,18 @@ preprocess_grouping_sets(PlannerInfo *root)
 											  : NIL));
 
 		/*
-		 * Get the initial (and therefore largest) grouping set.
+		 * 获取初始的（因而也是最大的）grouping set。
 		 */
 		gs = linitial_node(GroupingSetData, current_sets);
 
 		/*
-		 * Order the groupClause appropriately.  If the first grouping set is
-		 * empty, then the groupClause must also be empty; otherwise we have
-		 * to force the groupClause to match that grouping set's order.
+		 * 适当地排列 groupClause 的顺序。如果第一个 grouping set 为空，那么
+		 * groupClause 也必须为空；否则我们必须强制 groupClause 匹配该
+		 * grouping set 的顺序。
 		 *
-		 * (The first grouping set can be empty even though parse->groupClause
-		 * is not empty only if all non-empty grouping sets are unsortable.
-		 * The groupClauses for hashed grouping sets are built later on.)
+		 * （只有当所有非空的 grouping set 都不可排序时，第一个 grouping set
+		 * 才可能为空而 parse->groupClause 却非空。用于哈希 grouping set 的
+		 * groupClause 会在稍后构建。）
 		 */
 		if (gs->set)
 			rollup->groupClause = preprocess_groupclause(root, gs->set);
@@ -2553,10 +2441,9 @@ preprocess_grouping_sets(PlannerInfo *root)
 			rollup->groupClause = NIL;
 
 		/*
-		 * Is it hashable? We pretend empty sets are hashable even though we
-		 * actually force them not to be hashed later. But don't bother if
-		 * there's nothing but empty sets (since in that case we can't hash
-		 * anything).
+		 * 它可哈希吗？我们假装空 set 是可哈希的，尽管实际上我们稍后会强制
+		 * 它们不被哈希。但如果只有空 set 而没有别的，就不必费心（因为那种
+		 * 情况下我们无法哈希任何东西）。
 		 */
 		if (gs->set &&
 			!bms_overlap_list(gd->unhashable_refs, gs->set))
@@ -2566,11 +2453,10 @@ preprocess_grouping_sets(PlannerInfo *root)
 		}
 
 		/*
-		 * Now that we've pinned down an order for the groupClause for this
-		 * list of grouping sets, we need to remap the entries in the grouping
-		 * sets from sortgrouprefs to plain indices (0-based) into the
-		 * groupClause for this collection of grouping sets. We keep the
-		 * original form for later use, though.
+		 * 既然我们已经为这个 grouping set 列表确定了 groupClause 的顺序，
+		 * 我们需要把 grouping set 中的条目从 sortgroupref 重映射为针对这组
+		 * grouping set 的 groupClause 的普通下标（从 0 开始）。不过我们会保留
+		 * 原始形式以供稍后使用。
 		 */
 		rollup->gsets = remap_to_groupclause_idx(rollup->groupClause,
 												 current_sets,
@@ -2583,9 +2469,8 @@ preprocess_grouping_sets(PlannerInfo *root)
 	if (gd->unsortable_sets)
 	{
 		/*
-		 * We have not yet pinned down a groupclause for this, but we will
-		 * need index-based lists for estimation purposes. Construct
-		 * hash_sets_idx based on the entire original groupclause for now.
+		 * 我们尚未为此确定一个 groupclause，但出于估算目的将需要基于下标的
+		 * 列表。目前先基于整个原始 groupclause 构造 hash_sets_idx。
 		 */
 		gd->hash_sets_idx = remap_to_groupclause_idx(parse->groupClause,
 													 gd->unsortable_sets,
@@ -2597,8 +2482,8 @@ preprocess_grouping_sets(PlannerInfo *root)
 }
 
 /*
- * Given a groupclause and a list of GroupingSetData, return equivalent sets
- * (without annotation) mapped to indexes into the given groupclause.
+ * 给定一个 groupclause 和一个 GroupingSetData 列表，返回等价的 set（不带
+ * 注解），这些 set 被映射为给定 groupclause 中的下标。
  */
 static List *
 remap_to_groupclause_idx(List *groupClause,
@@ -2635,7 +2520,7 @@ remap_to_groupclause_idx(List *groupClause,
 
 
 /*
- * preprocess_rowmarks - set up PlanRowMarks if needed
+ * preprocess_rowmarks - 如有需要则设置 PlanRowMark
  */
 static void
 preprocess_rowmarks(PlannerInfo *root)
@@ -2649,10 +2534,9 @@ preprocess_rowmarks(PlannerInfo *root)
 	if (parse->rowMarks)
 	{
 		/*
-		 * We've got trouble if FOR [KEY] UPDATE/SHARE appears inside
-		 * grouping, since grouping renders a reference to individual tuple
-		 * CTIDs invalid.  This is also checked at parse time, but that's
-		 * insufficient because of rule substitution, query pullup, etc.
+		 * 如果 FOR [KEY] UPDATE/SHARE 出现在分组内部，就会有麻烦，因为分组
+		 * 会使对单个元组 CTID 的引用失效。这在解析时也会检查，但由于规则
+		 * 替换、查询上拉（pullup）等原因，那还不够。
 		 */
 		CheckSelectLocking(parse, linitial_node(RowMarkClause,
 												parse->rowMarks)->strength);
@@ -2660,8 +2544,8 @@ preprocess_rowmarks(PlannerInfo *root)
 	else
 	{
 		/*
-		 * We only need rowmarks for UPDATE, DELETE, MERGE, or FOR [KEY]
-		 * UPDATE/SHARE.
+		 * 我们只在 UPDATE、DELETE、MERGE，或 FOR [KEY] UPDATE/SHARE 时才需要
+		 * rowmark。
 		 */
 		if (parse->commandType != CMD_UPDATE &&
 			parse->commandType != CMD_DELETE &&
@@ -2670,16 +2554,16 @@ preprocess_rowmarks(PlannerInfo *root)
 	}
 
 	/*
-	 * We need to have rowmarks for all base relations except the target. We
-	 * make a bitmapset of all base rels and then remove the items we don't
-	 * need or have FOR [KEY] UPDATE/SHARE marks for.
+	 * 除目标外，我们需要为所有基础关系设置 rowmark。我们构造一个包含所有
+	 * base rel 的 bitmapset，然后移除那些我们不需要的、或者已经有
+	 * FOR [KEY] UPDATE/SHARE 标记的项。
 	 */
 	rels = get_relids_in_jointree((Node *) parse->jointree, false, false);
 	if (parse->resultRelation)
 		rels = bms_del_member(rels, parse->resultRelation);
 
 	/*
-	 * Convert RowMarkClauses to PlanRowMark representation.
+	 * 将 RowMarkClause 转换为 PlanRowMark 表示。
 	 */
 	prowmarks = NIL;
 	foreach(l, parse->rowMarks)
@@ -2689,17 +2573,16 @@ preprocess_rowmarks(PlannerInfo *root)
 		PlanRowMark *newrc;
 
 		/*
-		 * Currently, it is syntactically impossible to have FOR UPDATE et al
-		 * applied to an update/delete target rel.  If that ever becomes
-		 * possible, we should drop the target from the PlanRowMark list.
+		 * 目前，从语法上不可能把 FOR UPDATE 等应用到 update/delete 的目标
+		 * rel 上。如果将来这成为可能，我们应该把目标从 PlanRowMark 列表中
+		 * 剔除。
 		 */
 		Assert(rc->rti != parse->resultRelation);
 
 		/*
-		 * Ignore RowMarkClauses for subqueries; they aren't real tables and
-		 * can't support true locking.  Subqueries that got flattened into the
-		 * main query should be ignored completely.  Any that didn't will get
-		 * ROW_MARK_COPY items in the next loop.
+		 * 忽略子查询的 RowMarkClause；它们不是真正的表，无法支持真正的加锁。
+		 * 被扁平化合并进主查询的子查询应被完全忽略。任何未被扁平化的子查询
+		 * 会在下一个循环中获得 ROW_MARK_COPY 项。
 		 */
 		if (rte->rtekind != RTE_RELATION)
 			continue;
@@ -2719,7 +2602,7 @@ preprocess_rowmarks(PlannerInfo *root)
 	}
 
 	/*
-	 * Now, add rowmarks for any non-target, non-locked base relations.
+	 * 现在，为任何非目标、未加锁的基础关系添加 rowmark。
 	 */
 	i = 0;
 	foreach(l, parse->rtable)
@@ -2737,7 +2620,7 @@ preprocess_rowmarks(PlannerInfo *root)
 		newrc->markType = select_rowmark_type(rte, LCS_NONE);
 		newrc->allMarkTypes = (1 << newrc->markType);
 		newrc->strength = LCS_NONE;
-		newrc->waitPolicy = LockWaitBlock;	/* doesn't matter */
+		newrc->waitPolicy = LockWaitBlock;	/* 无所谓 */
 		newrc->isParent = false;
 
 		prowmarks = lappend(prowmarks, newrc);
@@ -2747,36 +2630,35 @@ preprocess_rowmarks(PlannerInfo *root)
 }
 
 /*
- * Select RowMarkType to use for a given table
+ * 为给定的表选择要使用的 RowMarkType
  */
 RowMarkType
 select_rowmark_type(RangeTblEntry *rte, LockClauseStrength strength)
 {
 	if (rte->rtekind != RTE_RELATION)
 	{
-		/* If it's not a table at all, use ROW_MARK_COPY */
+		/* 如果它根本不是一个表，则使用 ROW_MARK_COPY */
 		return ROW_MARK_COPY;
 	}
 	else if (rte->relkind == RELKIND_FOREIGN_TABLE)
 	{
-		/* Let the FDW select the rowmark type, if it wants to */
+		/* 如果 FDW 愿意，就让它选择 rowmark 类型 */
 		FdwRoutine *fdwroutine = GetFdwRoutineByRelId(rte->relid);
 
 		if (fdwroutine->GetForeignRowMarkType != NULL)
 			return fdwroutine->GetForeignRowMarkType(rte, strength);
-		/* Otherwise, use ROW_MARK_COPY by default */
+		/* 否则，默认使用 ROW_MARK_COPY */
 		return ROW_MARK_COPY;
 	}
 	else
 	{
-		/* Regular table, apply the appropriate lock type */
+		/* 常规表，应用适当的锁类型 */
 		switch (strength)
 		{
 			case LCS_NONE:
 
 				/*
-				 * We don't need a tuple lock, only the ability to re-fetch
-				 * the row.
+				 * 我们不需要元组锁，只需要重新获取该行的能力。
 				 */
 				return ROW_MARK_REFERENCE;
 				break;
@@ -2794,26 +2676,23 @@ select_rowmark_type(RangeTblEntry *rte, LockClauseStrength strength)
 				break;
 		}
 		elog(ERROR, "unrecognized LockClauseStrength %d", (int) strength);
-		return ROW_MARK_EXCLUSIVE;	/* keep compiler quiet */
+		return ROW_MARK_EXCLUSIVE;	/* 让编译器闭嘴 */
 	}
 }
 
 /*
- * preprocess_limit - do pre-estimation for LIMIT and/or OFFSET clauses
+ * preprocess_limit - 对 LIMIT 和/或 OFFSET 子句做预估算
  *
- * We try to estimate the values of the LIMIT/OFFSET clauses, and pass the
- * results back in *count_est and *offset_est.  These variables are set to
- * 0 if the corresponding clause is not present, and -1 if it's present
- * but we couldn't estimate the value for it.  (The "0" convention is OK
- * for OFFSET but a little bit bogus for LIMIT: effectively we estimate
- * LIMIT 0 as though it were LIMIT 1.  But this is in line with the planner's
- * usual practice of never estimating less than one row.)  These values will
- * be passed to create_limit_path, which see if you change this code.
+ * 我们尝试估算 LIMIT/OFFSET 子句的值，并把结果通过 *count_est 和
+ * *offset_est 返回。如果对应子句不存在，这些变量被设为 0；如果存在但我们
+ * 无法估算其值，则被设为 -1。（对 OFFSET 而言 “0” 的约定是可以的，但对
+ * LIMIT 稍有些不准确：实际上我们把 LIMIT 0 当作 LIMIT 1 来估算。不过这与
+ * 规划器从不估算少于一行的一贯做法是一致的。）这些值将被传递给
+ * create_limit_path，如果你修改此代码请参阅它。
  *
- * The return value is the suitably adjusted tuple_fraction to use for
- * planning the query.  This adjustment is not overridable, since it reflects
- * plan actions that grouping_planner() will certainly take, not assumptions
- * about context.
+ * 返回值是用于规划该查询的、经过适当调整的 tuple_fraction。此调整不可被
+ * 覆盖，因为它反映的是 grouping_planner() 必定会采取的计划动作，而非关于
+ * 上下文的假设。
  */
 static double
 preprocess_limit(PlannerInfo *root, double tuple_fraction,
@@ -2823,12 +2702,12 @@ preprocess_limit(PlannerInfo *root, double tuple_fraction,
 	Node	   *est;
 	double		limit_fraction;
 
-	/* Should not be called unless LIMIT or OFFSET */
+	/* 除非有 LIMIT 或 OFFSET，否则不应调用本函数 */
 	Assert(parse->limitCount || parse->limitOffset);
 
 	/*
-	 * Try to obtain the clause values.  We use estimate_expression_value
-	 * primarily because it can sometimes do something useful with Params.
+	 * 尝试获取子句的值。我们使用 estimate_expression_value，主要是因为它有时
+	 * 能对 Param 做一些有用的处理。
 	 */
 	if (parse->limitCount)
 	{
@@ -2837,21 +2716,21 @@ preprocess_limit(PlannerInfo *root, double tuple_fraction,
 		{
 			if (((Const *) est)->constisnull)
 			{
-				/* NULL indicates LIMIT ALL, ie, no limit */
-				*count_est = 0; /* treat as not present */
+				/* NULL 表示 LIMIT ALL，即无限制 */
+				*count_est = 0; /* 视为不存在 */
 			}
 			else
 			{
 				*count_est = DatumGetInt64(((Const *) est)->constvalue);
 				if (*count_est <= 0)
-					*count_est = 1; /* force to at least 1 */
+					*count_est = 1; /* 强制为至少 1 */
 			}
 		}
 		else
-			*count_est = -1;	/* can't estimate */
+			*count_est = -1;	/* 无法估算 */
 	}
 	else
-		*count_est = 0;			/* not present */
+		*count_est = 0;			/* 不存在 */
 
 	if (parse->limitOffset)
 	{
@@ -2860,88 +2739,84 @@ preprocess_limit(PlannerInfo *root, double tuple_fraction,
 		{
 			if (((Const *) est)->constisnull)
 			{
-				/* Treat NULL as no offset; the executor will too */
-				*offset_est = 0;	/* treat as not present */
+				/* 把 NULL 当作无 offset；执行器也会这样做 */
+				*offset_est = 0;	/* 视为不存在 */
 			}
 			else
 			{
 				*offset_est = DatumGetInt64(((Const *) est)->constvalue);
 				if (*offset_est < 0)
-					*offset_est = 0;	/* treat as not present */
+					*offset_est = 0;	/* 视为不存在 */
 			}
 		}
 		else
-			*offset_est = -1;	/* can't estimate */
+			*offset_est = -1;	/* 无法估算 */
 	}
 	else
-		*offset_est = 0;		/* not present */
+		*offset_est = 0;		/* 不存在 */
 
 	if (*count_est != 0)
 	{
 		/*
-		 * A LIMIT clause limits the absolute number of tuples returned.
-		 * However, if it's not a constant LIMIT then we have to guess; for
-		 * lack of a better idea, assume 10% of the plan's result is wanted.
+		 * LIMIT 子句限制返回元组的绝对数量。然而，如果它不是常量 LIMIT，
+		 * 我们就只能猜测；由于没有更好的办法，假设需要计划结果的 10%。
 		 */
 		if (*count_est < 0 || *offset_est < 0)
 		{
-			/* LIMIT or OFFSET is an expression ... punt ... */
+			/* LIMIT 或 OFFSET 是一个表达式……只好放弃精确估算…… */
 			limit_fraction = 0.10;
 		}
 		else
 		{
-			/* LIMIT (plus OFFSET, if any) is max number of tuples needed */
+			/* LIMIT（加上 OFFSET，如果有的话）是所需元组的最大数量 */
 			limit_fraction = (double) *count_est + (double) *offset_est;
 		}
 
 		/*
-		 * If we have absolute limits from both caller and LIMIT, use the
-		 * smaller value; likewise if they are both fractional.  If one is
-		 * fractional and the other absolute, we can't easily determine which
-		 * is smaller, but we use the heuristic that the absolute will usually
-		 * be smaller.
+		 * 如果我们从调用者和 LIMIT 都得到了绝对限制，则使用较小的值；两者
+		 * 都是比例（fractional）时同理。如果一个是比例、另一个是绝对值，我们
+		 * 无法轻易判断哪个更小，但我们采用一种启发式：通常绝对值会更小。
 		 */
 		if (tuple_fraction >= 1.0)
 		{
 			if (limit_fraction >= 1.0)
 			{
-				/* both absolute */
+				/* 两者都是绝对值 */
 				tuple_fraction = Min(tuple_fraction, limit_fraction);
 			}
 			else
 			{
-				/* caller absolute, limit fractional; use caller's value */
+				/* 调用者是绝对值，limit 是比例；使用调用者的值 */
 			}
 		}
 		else if (tuple_fraction > 0.0)
 		{
 			if (limit_fraction >= 1.0)
 			{
-				/* caller fractional, limit absolute; use limit */
+				/* 调用者是比例，limit 是绝对值；使用 limit */
 				tuple_fraction = limit_fraction;
 			}
 			else
 			{
-				/* both fractional */
+				/* 两者都是比例 */
 				tuple_fraction = Min(tuple_fraction, limit_fraction);
 			}
 		}
 		else
 		{
-			/* no info from caller, just use limit */
+			/* 调用者没有提供信息，就直接使用 limit */
 			tuple_fraction = limit_fraction;
 		}
 	}
 	else if (*offset_est != 0 && tuple_fraction > 0.0)
 	{
 		/*
-		 * We have an OFFSET but no LIMIT.  This acts entirely differently
-		 * from the LIMIT case: here, we need to increase rather than decrease
-		 * the caller's tuple_fraction, because the OFFSET acts to cause more
-		 * tuples to be fetched instead of fewer.  This only matters if we got
-		 * a tuple_fraction > 0, however.
+		 * 我们有 OFFSET 但没有 LIMIT。这与 LIMIT 情况的行为完全不同：这里，
+		 * 我们需要增大而不是减小调用者的 tuple_fraction，因为 OFFSET 的作用
+		 * 是导致获取更多而非更少的元组。不过，这只有在我们得到
+		 * tuple_fraction > 0 时才有意义。
 		 *
-		 * As above, use 10% if OFFSET is present but unestimatable.
+		 * 与上面一样，如果 OFFSET 存在但无法估算，则使用 10%。
 		 */
 		if (*offset_est < 0)
 			limit_fraction = 0.10;
@@ -2949,21 +2824,20 @@ preprocess_limit(PlannerInfo *root, double tuple_fraction,
 			limit_fraction = (double) *offset_est;
 
 		/*
-		 * If we have absolute counts from both caller and OFFSET, add them
-		 * together; likewise if they are both fractional.  If one is
-		 * fractional and the other absolute, we want to take the larger, and
-		 * we heuristically assume that's the fractional one.
+		 * 如果我们从调用者和 OFFSET 都得到了绝对计数，则把它们相加；两者都是
+		 * 比例时同理。如果一个是比例、另一个是绝对值，我们想取较大者，并
+		 * 启发式地假设那就是比例的那个。
 		 */
 		if (tuple_fraction >= 1.0)
 		{
 			if (limit_fraction >= 1.0)
 			{
-				/* both absolute, so add them together */
+				/* 两者都是绝对值，所以把它们相加 */
 				tuple_fraction += limit_fraction;
 			}
 			else
 			{
-				/* caller absolute, limit fractional; use limit */
+				/* 调用者是绝对值，limit 是比例；使用 limit */
 				tuple_fraction = limit_fraction;
 			}
 		}
@@ -2971,14 +2845,14 @@ preprocess_limit(PlannerInfo *root, double tuple_fraction,
 		{
 			if (limit_fraction >= 1.0)
 			{
-				/* caller fractional, limit absolute; use caller's value */
+				/* 调用者是比例，limit 是绝对值；使用调用者的值 */
 			}
 			else
 			{
-				/* both fractional, so add them together */
+				/* 两者都是比例，所以把它们相加 */
 				tuple_fraction += limit_fraction;
 				if (tuple_fraction >= 1.0)
-					tuple_fraction = 0.0;	/* assume fetch all */
+					tuple_fraction = 0.0;	/* 假设获取全部 */
 			}
 		}
 	}
@@ -2987,18 +2861,15 @@ preprocess_limit(PlannerInfo *root, double tuple_fraction,
 }
 
 /*
- * limit_needed - do we actually need a Limit plan node?
+ * limit_needed - 我们真的需要一个 Limit 计划节点吗？
  *
- * If we have constant-zero OFFSET and constant-null LIMIT, we can skip adding
- * a Limit node.  This is worth checking for because "OFFSET 0" is a common
- * locution for an optimization fence.  (Because other places in the planner
- * merely check whether parse->limitOffset isn't NULL, it will still work as
- * an optimization fence --- we're just suppressing unnecessary run-time
- * overhead.)
+ * 如果我们有常量 0 的 OFFSET 和常量 NULL 的 LIMIT，就可以跳过添加 Limit
+ * 节点。这值得检查，因为 "OFFSET 0" 是一种常见的优化栅栏（optimization
+ * fence）写法。（因为规划器中的其他地方只是检查 parse->limitOffset 是否非
+ * NULL，所以它仍然可以作为优化栅栏——我们只是在抑制不必要的运行时开销。）
  *
- * This might look like it could be merged into preprocess_limit, but there's
- * a key distinction: here we need hard constants in OFFSET/LIMIT, whereas
- * in preprocess_limit it's good enough to consider estimated values.
+ * 这看起来似乎可以合并进 preprocess_limit，但有一个关键区别：这里我们需要
+ * OFFSET/LIMIT 是硬常量，而在 preprocess_limit 中考虑估算值就足够了。
  */
 bool
 limit_needed(Query *parse)
@@ -3010,12 +2881,12 @@ limit_needed(Query *parse)
 	{
 		if (IsA(node, Const))
 		{
-			/* NULL indicates LIMIT ALL, ie, no limit */
+			/* NULL 表示 LIMIT ALL，即无限制 */
 			if (!((Const *) node)->constisnull)
-				return true;	/* LIMIT with a constant value */
+				return true;	/* 带常量值的 LIMIT */
 		}
 		else
-			return true;		/* non-constant LIMIT */
+			return true;		/* 非常量的 LIMIT */
 	}
 
 	node = parse->limitOffset;
@@ -3023,36 +2894,33 @@ limit_needed(Query *parse)
 	{
 		if (IsA(node, Const))
 		{
-			/* Treat NULL as no offset; the executor would too */
+			/* 把 NULL 当作无 offset；执行器也会这样做 */
 			if (!((Const *) node)->constisnull)
 			{
 				int64		offset = DatumGetInt64(((Const *) node)->constvalue);
 
 				if (offset != 0)
-					return true;	/* OFFSET with a nonzero value */
+					return true;	/* 带非零值的 OFFSET */
 			}
 		}
 		else
-			return true;		/* non-constant OFFSET */
+			return true;		/* 非常量的 OFFSET */
 	}
 
-	return false;				/* don't need a Limit plan node */
+	return false;				/* 不需要 Limit 计划节点 */
 }
 
 /*
- * preprocess_groupclause - do preparatory work on GROUP BY clause
+ * preprocess_groupclause - 对 GROUP BY 子句做准备工作
  *
- * The idea here is to adjust the ordering of the GROUP BY elements
- * (which in itself is semantically insignificant) to match ORDER BY,
- * thereby allowing a single sort operation to both implement the ORDER BY
- * requirement and set up for a Unique step that implements GROUP BY.
- * We also consider partial match between GROUP BY and ORDER BY elements,
- * which could allow to implement ORDER BY using the incremental sort.
+ * 这里的思路是调整 GROUP BY 元素的顺序（其本身在语义上无关紧要）以匹配
+ * ORDER BY，从而使单次排序操作既能实现 ORDER BY 要求，又能为实现 GROUP BY
+ * 的 Unique 步骤做好准备。我们还会考虑 GROUP BY 与 ORDER BY 元素之间的部分
+ * 匹配，这可能允许使用增量排序（incremental sort）来实现 ORDER BY。
  *
- * We also consider other orderings of the GROUP BY elements, which could
- * match the sort ordering of other possible plans (eg an indexscan) and
- * thereby reduce cost.  This is implemented during the generation of grouping
- * paths.  See get_useful_group_keys_orderings() for details.
+ * 我们也会考虑 GROUP BY 元素的其他排序方式，它们可能匹配其他可能计划（例如
+ * 索引扫描）的排序顺序，从而降低代价。这在生成分组路径（grouping path）
+ * 期间实现。详见 get_useful_group_keys_orderings()。
  *
  * Note: we need no comparable processing of the distinctClause because
  * the parser already enforced that that matches ORDER BY.
@@ -3074,7 +2942,7 @@ preprocess_groupclause(PlannerInfo *root, List *force)
 	ListCell   *sl;
 	ListCell   *gl;
 
-	/* For grouping sets, we need to force the ordering */
+	/* 对于 grouping set，我们需要强制其顺序 */
 	if (force)
 	{
 		foreach(sl, force)
@@ -3088,15 +2956,15 @@ preprocess_groupclause(PlannerInfo *root, List *force)
 		return new_groupclause;
 	}
 
-	/* If no ORDER BY, nothing useful to do here */
+	/* 如果没有 ORDER BY，这里就没有什么有用的事可做 */
 	if (parse->sortClause == NIL)
 		return list_copy(parse->groupClause);
 
 	/*
-	 * Scan the ORDER BY clause and construct a list of matching GROUP BY
-	 * items, but only as far as we can make a matching prefix.
+	 * 扫描 ORDER BY 子句并构造一个匹配的 GROUP BY 项列表，但只到我们能构成
+	 * 匹配前缀（prefix）的程度为止。
 	 *
-	 * This code assumes that the sortClause contains no duplicate items.
+	 * 此代码假定 sortClause 中不包含重复项。
 	 */
 	foreach(sl, parse->sortClause)
 	{
@@ -3113,61 +2981,55 @@ preprocess_groupclause(PlannerInfo *root, List *force)
 			}
 		}
 		if (gl == NULL)
-			break;				/* no match, so stop scanning */
+			break;				/* 没有匹配，因此停止扫描 */
 	}
 
 
-	/* If no match at all, no point in reordering GROUP BY */
+	/* 如果根本没有任何匹配，就没必要重排 GROUP BY */
 	if (new_groupclause == NIL)
 		return list_copy(parse->groupClause);
 
 	/*
-	 * Add any remaining GROUP BY items to the new list.  We don't require a
-	 * complete match, because even partial match allows ORDER BY to be
-	 * implemented using incremental sort.  Also, give up if there are any
-	 * non-sortable GROUP BY items, since then there's no hope anyway.
+	 * 将任何剩余的 GROUP BY 项添加到新列表中。我们不要求完全匹配，因为即便
+	 * 部分匹配也允许使用增量排序来实现 ORDER BY。另外，如果存在任何不可
+	 * 排序的 GROUP BY 项就放弃，因为那样反正也没有希望。
 	 */
 	foreach(gl, parse->groupClause)
 	{
 		SortGroupClause *gc = lfirst_node(SortGroupClause, gl);
 
 		if (list_member_ptr(new_groupclause, gc))
-			continue;			/* it matched an ORDER BY item */
-		if (!OidIsValid(gc->sortop))	/* give up, GROUP BY can't be sorted */
+			continue;			/* 它匹配了某个 ORDER BY 项 */
+		if (!OidIsValid(gc->sortop))	/* 放弃，GROUP BY 无法排序 */
 			return list_copy(parse->groupClause);
 		new_groupclause = lappend(new_groupclause, gc);
 	}
 
-	/* Success --- install the rearranged GROUP BY list */
+	/* 成功——安装重排后的 GROUP BY 列表 */
 	Assert(list_length(parse->groupClause) == list_length(new_groupclause));
 	return new_groupclause;
 }
 
 /*
- * Extract lists of grouping sets that can be implemented using a single
- * rollup-type aggregate pass each. Returns a list of lists of grouping sets.
+ * 提取那些各自可以用单次 rollup 型聚合遍历实现的 grouping set 列表。返回一个
+ * 由 grouping set 列表组成的列表。
  *
- * Input must be sorted with smallest sets first. Result has each sublist
- * sorted with smallest sets first.
+ * 输入必须按最小集在前排序。结果中每个子列表也按最小集在前排序。
  *
- * We want to produce the absolute minimum possible number of lists here to
- * avoid excess sorts. Fortunately, there is an algorithm for this; the problem
- * of finding the minimal partition of a partially-ordered set into chains
- * (which is what we need, taking the list of grouping sets as a poset ordered
- * by set inclusion) can be mapped to the problem of finding the maximum
- * cardinality matching on a bipartite graph, which is solvable in polynomial
- * time with a worst case of no worse than O(n^2.5) and usually much
- * better. Since our N is at most 4096, we don't need to consider fallbacks to
- * heuristic or approximate methods.  (Planning time for a 12-d cube is under
- * half a second on my modest system even with optimization off and assertions
- * on.)
+ * 我们希望在这里生成绝对最少数量的列表，以避免多余的排序。幸运的是，为此
+ * 存在一种算法；将一个偏序集划分为若干链（chain）的最小划分问题（这正是
+ * 我们所需要的，把 grouping set 列表视为按集合包含关系排序的偏序集），可以
+ * 映射为在二部图上寻找最大基数匹配（maximum cardinality matching）的问题，
+ * 后者可在多项式时间内求解，最坏情况不差于 O(n^2.5)，通常好得多。由于我们的
+ * N 至多为 4096，我们无需考虑退化到启发式或近似方法。（在我这台一般配置的
+ * 机器上，即便关闭优化并开启断言，一个 12 维 cube 的规划时间也不到半秒。）
  */
 static List *
 extract_rollup_sets(List *groupingSets)
 {
 	int			num_sets_raw = list_length(groupingSets);
 	int			num_empty = 0;
-	int			num_sets = 0;	/* distinct sets */
+	int			num_sets = 0;	/* 去重后的集合数 */
 	int			num_chains = 0;
 	List	   *result = NIL;
 	List	  **results;
@@ -3184,9 +3046,8 @@ extract_rollup_sets(List *groupingSets)
 	ListCell   *lc;
 
 	/*
-	 * Start by stripping out empty sets.  The algorithm doesn't require this,
-	 * but the planner currently needs all empty sets to be returned in the
-	 * first list, so we strip them here and add them back after.
+	 * 首先剥离掉空集。算法本身并不要求这么做，但规划器目前需要所有空集都
+	 * 在第一个列表中返回，所以我们在这里把它们剥离，之后再加回去。
 	 */
 	while (lc1 && lfirst(lc1) == NIL)
 	{
@@ -3194,26 +3055,25 @@ extract_rollup_sets(List *groupingSets)
 		lc1 = lnext(groupingSets, lc1);
 	}
 
-	/* bail out now if it turns out that all we had were empty sets. */
+	/* 如果结果是我们拥有的全部都是空集，就现在退出。 */
 	if (!lc1)
 		return list_make1(groupingSets);
 
 	/*----------
-	 * We don't strictly need to remove duplicate sets here, but if we don't,
-	 * they tend to become scattered through the result, which is a bit
-	 * confusing (and irritating if we ever decide to optimize them out).
-	 * So we remove them here and add them back after.
+	 * 严格来说我们在这里并不需要移除重复的集合，但如果不移除，它们往往会
+	 * 散布在结果各处，这有点令人困惑（而且如果我们哪天决定把它们优化掉，
+	 * 还会很烦人）。所以我们在这里移除它们，之后再加回去。
 	 *
-	 * For each non-duplicate set, we fill in the following:
+	 * 对于每个非重复集合，我们填入以下内容：
 	 *
-	 * orig_sets[i] = list of the original set lists
-	 * set_masks[i] = bitmapset for testing inclusion
-	 * adjacency[i] = array [n, v1, v2, ... vn] of adjacency indices
+	 * orig_sets[i] = 原始集合列表的列表
+	 * set_masks[i] = 用于测试包含关系的 bitmapset
+	 * adjacency[i] = 邻接下标数组 [n, v1, v2, ... vn]
 	 *
-	 * chains[i] will be the result group this set is assigned to.
+	 * chains[i] 将是该集合被分配到的结果分组。
 	 *
-	 * We index all of these from 1 rather than 0 because it is convenient
-	 * to leave 0 free for the NIL node in the graph algorithm.
+	 * 我们把所有这些都从 1 而非 0 开始编号，因为在图算法中把 0 留给 NIL
+	 * 节点很方便。
 	 *----------
 	 */
 	orig_sets = palloc0((num_sets_raw + 1) * sizeof(List *));
@@ -3237,7 +3097,7 @@ extract_rollup_sets(List *groupingSets)
 			candidate_set = bms_add_member(candidate_set, lfirst_int(lc2));
 		}
 
-		/* we can only be a dup if we're the same length as a previous set */
+		/* 只有当我们与之前某个集合长度相同时，才可能是重复 */
 		if (j_size == list_length(candidate))
 		{
 			int			k;
@@ -3270,7 +3130,7 @@ extract_rollup_sets(List *groupingSets)
 			orig_sets[i] = list_make1(candidate);
 			set_masks[i] = candidate_set;
 
-			/* fill in adjacency list; no need to compare equal-size sets */
+			/* 填充邻接表；无需比较大小相同的集合 */
 
 			for (k = j - 1; k > 0; --k)
 			{
@@ -3294,15 +3154,14 @@ extract_rollup_sets(List *groupingSets)
 	num_sets = i - 1;
 
 	/*
-	 * Apply the graph matching algorithm to do the work.
+	 * 应用图匹配算法来完成这项工作。
 	 */
 	state = BipartiteMatch(num_sets, num_sets, adjacency);
 
 	/*
-	 * Now, the state->pair* fields have the info we need to assign sets to
-	 * chains. Two sets (u,v) belong to the same chain if pair_uv[u] = v or
-	 * pair_vu[v] = u (both will be true, but we check both so that we can do
-	 * it in one pass)
+	 * 现在，state->pair* 字段拥有我们把集合分配到链所需的信息。如果
+	 * pair_uv[u] = v 或 pair_vu[v] = u，则两个集合 (u,v) 属于同一条链（两者
+	 * 都会为真，但我们两个都检查，以便可以一次遍历完成）
 	 */
 	chains = palloc0((num_sets + 1) * sizeof(int));
 
@@ -3319,7 +3178,7 @@ extract_rollup_sets(List *groupingSets)
 			chains[i] = ++num_chains;
 	}
 
-	/* build result lists. */
+	/* 构建结果列表。 */
 	results = palloc0((num_chains + 1) * sizeof(List *));
 
 	for (i = 1; i <= num_sets; ++i)
@@ -3331,19 +3190,19 @@ extract_rollup_sets(List *groupingSets)
 		results[c] = list_concat(results[c], orig_sets[i]);
 	}
 
-	/* push any empty sets back on the first list. */
+	/* 把所有空集重新压回第一个列表。 */
 	while (num_empty-- > 0)
 		results[1] = lcons(NIL, results[1]);
 
-	/* make result list */
+	/* 生成结果列表 */
 	for (i = 1; i <= num_chains; ++i)
 		result = lappend(result, results[i]);
 
 	/*
-	 * Free all the things.
+	 * 释放所有东西。
 	 *
-	 * (This is over-fussy for small sets but for large sets we could have
-	 * tied up a nontrivial amount of memory.)
+	 * （对小集合来说这有点过于讲究，但对大集合我们可能占用了相当可观的
+	 * 内存。）
 	 */
 	BipartiteMatchFree(state);
 	pfree(results);
@@ -3362,17 +3221,15 @@ extract_rollup_sets(List *groupingSets)
 }
 
 /*
- * Reorder the elements of a list of grouping sets such that they have correct
- * prefix relationships. Also inserts the GroupingSetData annotations.
+ * 重排 grouping set 列表中各元素的顺序，使它们具有正确的前缀（prefix）
+ * 关系。同时插入 GroupingSetData 注解。
  *
- * The input must be ordered with smallest sets first; the result is returned
- * with largest sets first.  Note that the result shares no list substructure
- * with the input, so it's safe for the caller to modify it later.
+ * 输入必须按最小集在前排序；结果按最大集在前返回。注意结果与输入不共享
+ * 任何列表子结构，因此调用者稍后修改它是安全的。
  *
- * If we're passed in a sortclause, we follow its order of columns to the
- * extent possible, to minimize the chance that we add unnecessary sorts.
- * (We're trying here to ensure that GROUPING SETS ((a,b,c),(c)) ORDER BY c,b,a
- * gets implemented in one pass.)
+ * 如果传入了 sortclause，我们会尽可能地遵循其列顺序，以最小化我们添加不
+ * 必要排序的可能性。（这里我们试图确保 GROUPING SETS ((a,b,c),(c))
+ * ORDER BY c,b,a 能在一次遍历中实现。）
  */
 static List *
 reorder_grouping_sets(List *groupingSets, List *sortclause)
@@ -3400,7 +3257,7 @@ reorder_grouping_sets(List *groupingSets, List *sortclause)
 			}
 			else
 			{
-				/* diverged from the sortclause; give up on it */
+				/* 与 sortclause 出现分歧；放弃它 */
 				sortclause = NIL;
 				break;
 			}
@@ -3419,8 +3276,8 @@ reorder_grouping_sets(List *groupingSets, List *sortclause)
 
 /*
  * has_volatile_pathkey
- *		Returns true if any PathKey in 'keys' has an EquivalenceClass
- *		containing a volatile function.  Otherwise returns false.
+ *		如果 'keys' 中任何 PathKey 拥有一个包含 volatile 函数的
+ *		EquivalenceClass，则返回 true。否则返回 false。
  */
 static bool
 has_volatile_pathkey(List *keys)
@@ -3440,32 +3297,27 @@ has_volatile_pathkey(List *keys)
 
 /*
  * adjust_group_pathkeys_for_groupagg
- *		Add pathkeys to root->group_pathkeys to reflect the best set of
- *		pre-ordered input for ordered aggregates.
+ *		向 root->group_pathkeys 添加 pathkey，以反映有序聚合（ordered
+ *		aggregate）的最佳预排序输入集合。
  *
- * We define "best" as the pathkeys that suit the largest number of
- * aggregate functions.  We find these by looking at the first ORDER BY /
- * DISTINCT aggregate and take the pathkeys for that before searching for
- * other aggregates that require the same or a more strict variation of the
- * same pathkeys.  We then repeat that process for any remaining aggregates
- * with different pathkeys and if we find another set of pathkeys that suits a
- * larger number of aggregates then we select those pathkeys instead.
+ * 我们把 “最佳” 定义为适合最多聚合函数的 pathkey。我们通过查看第一个
+ * ORDER BY / DISTINCT 聚合并取其 pathkey，然后再搜索其他需要相同、或相同
+ * pathkey 的更严格变体的聚合，来找到这些 pathkey。接着我们对任何具有不同
+ * pathkey 的剩余聚合重复该过程，如果我们找到另一组适合更多聚合的 pathkey，
+ * 就改为选择那组 pathkey。
  *
- * When the best pathkeys are found we also mark each Aggref that can use
- * those pathkeys as aggpresorted = true.
+ * 当找到最佳 pathkey 后，我们还会把每个能使用这些 pathkey 的 Aggref 标记为
+ * aggpresorted = true。
  *
- * Note: When an aggregate function's ORDER BY / DISTINCT clause contains any
- * volatile functions, we never make use of these pathkeys.  We want to ensure
- * that sorts using volatile functions are done independently in each Aggref
- * rather than once at the query level.  If we were to allow this then Aggrefs
- * with compatible sort orders would all transition their rows in the same
- * order if those pathkeys were deemed to be the best pathkeys to sort on.
- * Whereas, if some other set of Aggref's pathkeys happened to be deemed
- * better pathkeys to sort on, then the volatile function Aggrefs would be
- * left to perform their sorts individually.  To avoid this inconsistent
- * behavior which could make Aggref results depend on what other Aggrefs the
- * query contains, we always force Aggrefs with volatile functions to perform
- * their own sorts.
+ * 注意：当某个聚合函数的 ORDER BY / DISTINCT 子句包含任何 volatile 函数时，
+ * 我们绝不使用这些 pathkey。我们希望确保使用 volatile 函数的排序在每个
+ * Aggref 中独立完成，而不是在查询层级统一进行一次。如果我们允许这么做，那么
+ * 当那些 pathkey 被认定为最佳排序 pathkey 时，具有兼容排序顺序的多个 Aggref
+ * 就会以相同顺序转换（transition）它们的行。而如果碰巧另一组 Aggref 的
+ * pathkey 被认定为更好的排序 pathkey，那么这些使用 volatile 函数的 Aggref
+ * 就会被留下来各自单独执行排序。为避免这种可能使 Aggref 结果依赖于查询中
+ * 包含哪些其他 Aggref 的不一致行为，我们总是强制使用 volatile 函数的 Aggref
+ * 执行它们自己的排序。
  */
 static void
 adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
@@ -3487,8 +3339,8 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 		return;
 
 	/*
-	 * Make a first pass over all AggInfos to collect a Bitmapset containing
-	 * the indexes of all AggInfos to be processed below.
+	 * 先对所有 AggInfo 做第一遍遍历，收集一个包含下面将要处理的所有 AggInfo
+	 * 下标的 Bitmapset。
 	 */
 	unprocessed_aggs = NULL;
 	foreach(lc, root->agginfos)
@@ -3499,28 +3351,24 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 		if (AGGKIND_IS_ORDERED_SET(aggref->aggkind))
 			continue;
 
-		/* Skip unless there's a DISTINCT or ORDER BY clause */
+		/* 除非有 DISTINCT 或 ORDER BY 子句，否则跳过 */
 		if (aggref->aggdistinct == NIL && aggref->aggorder == NIL)
 			continue;
 
-		/* Additional safety checks are needed if there's a FILTER clause */
+		/* 如果有 FILTER 子句，则需要额外的安全检查 */
 		if (aggref->aggfilter != NULL)
 		{
 			ListCell   *lc2;
 			bool		allow_presort = true;
 
 			/*
-			 * When the Aggref has a FILTER clause, it's possible that the
-			 * filter removes rows that cannot be sorted because the
-			 * expression to sort by results in an error during its
-			 * evaluation.  This is a problem for presorting as that happens
-			 * before the FILTER, whereas without presorting, the Aggregate
-			 * node will apply the FILTER *before* sorting.  So that we never
-			 * try to sort anything that might error, here we aim to skip over
-			 * any Aggrefs with arguments with expressions which, when
-			 * evaluated, could cause an ERROR.  Vars and Consts are ok. There
-			 * may be more cases that should be allowed, but more thought
-			 * needs to be given.  Err on the side of caution.
+			 * 当 Aggref 有 FILTER 子句时，有可能该 filter 会移除那些无法排序
+			 * 的行——因为用于排序的表达式在其求值过程中会导致错误。这对预排序
+			 * 是个问题，因为预排序发生在 FILTER 之前；而如果不预排序，
+			 * Aggregate 节点会在排序*之前*应用 FILTER。因此，为了确保我们
+			 * 绝不尝试对任何可能出错的东西排序，这里我们打算跳过任何参数
+			 * 表达式在求值时可能导致 ERROR 的 Aggref。Var 和 Const 是可以的。
+			 * 可能还有更多应被允许的情况，但需要更多考量。宁可谨慎为上。
 			 */
 			foreach(lc2, aggref->args)
 			{
@@ -3530,16 +3378,16 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 				while (IsA(expr, RelabelType))
 					expr = (Expr *) (castNode(RelabelType, expr))->arg;
 
-				/* Common case, Vars and Consts are ok */
+				/* 常见情况，Var 和 Const 是可以的 */
 				if (IsA(expr, Var) || IsA(expr, Const))
 					continue;
 
-				/* Unsupported.  Don't try to presort for this Aggref */
+				/* 不支持。不要为这个 Aggref 尝试预排序 */
 				allow_presort = false;
 				break;
 			}
 
-			/* Skip unsupported Aggrefs */
+			/* 跳过不支持的 Aggref */
 			if (!allow_presort)
 				continue;
 		}
@@ -3549,19 +3397,15 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 	}
 
 	/*
-	 * Now process all the unprocessed_aggs to find the best set of pathkeys
-	 * for the given set of aggregates.
+	 * 现在处理所有 unprocessed_aggs，以便为给定的聚合集合找到最佳的 pathkey
+	 * 集合。
 	 *
-	 * On the first outer loop here 'bestaggs' will be empty.   We'll populate
-	 * this during the first loop using the pathkeys for the very first
-	 * AggInfo then taking any stronger pathkeys from any other AggInfos with
-	 * a more strict set of compatible pathkeys.  Once the outer loop is
-	 * complete, we mark off all the aggregates with compatible pathkeys then
-	 * remove those from the unprocessed_aggs and repeat the process to try to
-	 * find another set of pathkeys that are suitable for a larger number of
-	 * aggregates.  The outer loop will stop when there are not enough
-	 * unprocessed aggregates for it to be possible to find a set of pathkeys
-	 * to suit a larger number of aggregates.
+	 * 在这里第一次外层循环时 'bestaggs' 将为空。我们会在第一轮循环中用最开头
+	 * 那个 AggInfo 的 pathkey 来填充它，然后从任何拥有更严格的兼容 pathkey
+	 * 集合的其他 AggInfo 那里获取更强的 pathkey。外层循环完成一次后，我们把
+	 * 所有具有兼容 pathkey 的聚合标记出来，然后从 unprocessed_aggs 中移除它们
+	 * 并重复该过程，以尝试找到另一组适合更多聚合的 pathkey。当剩余未处理的
+	 * 聚合数量已不足以找到一组适合更多聚合的 pathkey 时，外层循环将停止。
 	 */
 	bestpathkeys = NIL;
 	bestaggs = NULL;
@@ -3587,8 +3431,8 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 													 aggref->args);
 
 			/*
-			 * Ignore Aggrefs which have volatile functions in their ORDER BY
-			 * or DISTINCT clause.
+			 * 忽略那些在其 ORDER BY 或 DISTINCT 子句中含有 volatile 函数的
+			 * Aggref。
 			 */
 			if (has_volatile_pathkey(pathkeys))
 			{
@@ -3597,44 +3441,43 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 			}
 
 			/*
-			 * When not set yet, take the pathkeys from the first unprocessed
-			 * aggregate.
+			 * 当尚未设置时，取第一个未处理聚合的 pathkey。
 			 */
 			if (currpathkeys == NIL)
 			{
 				currpathkeys = pathkeys;
 
-				/* include the GROUP BY pathkeys, if they exist */
+				/* 如果 GROUP BY pathkey 存在，则将其包含进来 */
 				if (grouppathkeys != NIL)
 					currpathkeys = append_pathkeys(list_copy(grouppathkeys),
 												   currpathkeys);
 
-				/* record that we found pathkeys for this aggregate */
+				/* 记录我们为这个聚合找到了 pathkey */
 				aggindexes = bms_add_member(aggindexes, i);
 			}
 			else
 			{
-				/* now look for a stronger set of matching pathkeys */
+				/* 现在寻找一组更强的匹配 pathkey */
 
-				/* include the GROUP BY pathkeys, if they exist */
+				/* 如果 GROUP BY pathkey 存在，则将其包含进来 */
 				if (grouppathkeys != NIL)
 					pathkeys = append_pathkeys(list_copy(grouppathkeys),
 											   pathkeys);
 
-				/* are 'pathkeys' compatible or better than 'currpathkeys'? */
+				/* 'pathkeys' 是否与 'currpathkeys' 兼容或更好？ */
 				switch (compare_pathkeys(currpathkeys, pathkeys))
 				{
 					case PATHKEYS_BETTER2:
-						/* 'pathkeys' are stronger, use these ones instead */
+						/* 'pathkeys' 更强，改用它们 */
 						currpathkeys = pathkeys;
 						/* FALLTHROUGH */
 
 					case PATHKEYS_BETTER1:
-						/* 'pathkeys' are less strict */
+						/* 'pathkeys' 不那么严格 */
 						/* FALLTHROUGH */
 
 					case PATHKEYS_EQUAL:
-						/* mark this aggregate as covered by 'currpathkeys' */
+						/* 把这个聚合标记为被 'currpathkeys' 覆盖 */
 						aggindexes = bms_add_member(aggindexes, i);
 						break;
 
@@ -3644,12 +3487,11 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 			}
 		}
 
-		/* remove the aggregates that we've just processed */
+		/* 移除我们刚刚处理过的聚合 */
 		unprocessed_aggs = bms_del_members(unprocessed_aggs, aggindexes);
 
 		/*
-		 * If this pass included more aggregates than the previous best then
-		 * use these ones as the best set.
+		 * 如果这一轮包含的聚合比之前的最佳结果更多，就把它们作为最佳集合。
 		 */
 		if (bms_num_members(aggindexes) > bms_num_members(bestaggs))
 		{
@@ -3659,20 +3501,18 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 	}
 
 	/*
-	 * If we found any ordered aggregates, update root->group_pathkeys to add
-	 * the best set of aggregate pathkeys.  Note that bestpathkeys includes
-	 * the original GROUP BY pathkeys already.
+	 * 如果我们找到了任何有序聚合，则更新 root->group_pathkeys 以添加最佳的
+	 * 聚合 pathkey 集合。注意 bestpathkeys 已经包含了原始的 GROUP BY
+	 * pathkey。
 	 */
 	if (bestpathkeys != NIL)
 		root->group_pathkeys = bestpathkeys;
 
 	/*
-	 * Now that we've found the best set of aggregates we can set the
-	 * presorted flag to indicate to the executor that it needn't bother
-	 * performing a sort for these Aggrefs.  We're able to do this now as
-	 * there's no chance of a Hash Aggregate plan as create_grouping_paths
-	 * will not mark the GROUP BY as GROUPING_CAN_USE_HASH due to the presence
-	 * of ordered aggregates.
+	 * 既然我们已经找到了最佳的聚合集合，就可以设置 presorted 标志，以告知
+	 * 执行器它不必费心为这些 Aggref 执行排序。我们现在可以这样做，是因为
+	 * 由于存在有序聚合，create_grouping_paths 不会把该 GROUP BY 标记为
+	 * GROUPING_CAN_USE_HASH，因此不可能出现 Hash Aggregate 计划。
 	 */
 	i = -1;
 	while ((i = bms_next_member(bestaggs, i)) >= 0)
@@ -3689,7 +3529,7 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 }
 
 /*
- * Compute query_pathkeys and other pathkeys during plan generation
+ * 在计划生成期间计算 query_pathkeys 和其他 pathkey
  */
 static void
 standard_qp_callback(PlannerInfo *root, void *extra)
@@ -3700,16 +3540,14 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 	List	   *activeWindows = qp_extra->activeWindows;
 
 	/*
-	 * Calculate pathkeys that represent grouping/ordering and/or ordered
-	 * aggregate requirements.
+	 * 计算表示分组/排序和/或有序聚合要求的 pathkey。
 	 */
 	if (qp_extra->gset_data)
 	{
 		/*
-		 * With grouping sets, just use the first RollupData's groupClause. We
-		 * don't make any effort to optimize grouping clauses when there are
-		 * grouping sets, nor can we combine aggregate ordering keys with
-		 * grouping.
+		 * 对于 grouping set，直接使用第一个 RollupData 的 groupClause。当存在
+		 * grouping set 时，我们不做任何优化分组子句的努力，也无法将聚合排序
+		 * 键与分组结合起来。
 		 */
 		List	   *rollups = qp_extra->gset_data->rollups;
 		List	   *groupClause = (rollups ? linitial_node(RollupData, rollups)->groupClause : NIL);
@@ -3719,10 +3557,9 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 			bool		sortable;
 
 			/*
-			 * The groupClause is logically below the grouping step.  So if
-			 * there is an RTE entry for the grouping step, we need to remove
-			 * its RT index from the sort expressions before we make PathKeys
-			 * for them.
+			 * groupClause 在逻辑上位于分组步骤之下。因此，如果分组步骤有一个
+			 * RTE 条目，我们需要在为这些排序表达式生成 PathKey 之前，先从中
+			 * 移除它的 RT 索引。
 			 */
 			root->group_pathkeys =
 				make_pathkeys_for_sortclauses_extended(root,
@@ -3744,18 +3581,17 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 	else if (parse->groupClause || root->numOrderedAggs > 0)
 	{
 		/*
-		 * With a plain GROUP BY list, we can remove any grouping items that
-		 * are proven redundant by EquivalenceClass processing.  For example,
-		 * we can remove y given "WHERE x = y GROUP BY x, y".  These aren't
-		 * especially common cases, but they're nearly free to detect.  Note
-		 * that we remove redundant items from processed_groupClause but not
-		 * the original parse->groupClause.
+		 * 对于普通的 GROUP BY 列表，我们可以移除任何被 EquivalenceClass
+		 * 处理证明是冗余的分组项。例如，在 "WHERE x = y GROUP BY x, y" 中我们
+		 * 可以移除 y。这些不是特别常见的情况，但检测它们几乎不需要成本。注意
+		 * 我们从 processed_groupClause 中移除冗余项，而不是从原始的
+		 * parse->groupClause 中移除。
 		 */
 		bool		sortable;
 
 		/*
-		 * Convert group clauses into pathkeys.  Set the ec_sortref field of
-		 * EquivalenceClass'es if it's not set yet.
+		 * 将分组子句转换为 pathkey。如果 EquivalenceClass 的 ec_sortref 字段
+		 * 尚未设置，则将其设置。
 		 */
 		root->group_pathkeys =
 			make_pathkeys_for_sortclauses_extended(root,
@@ -3767,14 +3603,14 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 												   true);
 		if (!sortable)
 		{
-			/* Can't sort; no point in considering aggregate ordering either */
+			/* 无法排序；那么也没必要考虑聚合排序 */
 			root->group_pathkeys = NIL;
 			root->num_groupby_pathkeys = 0;
 		}
 		else
 		{
 			root->num_groupby_pathkeys = list_length(root->group_pathkeys);
-			/* If we have ordered aggs, consider adding onto group_pathkeys */
+			/* 如果我们有有序聚合，考虑追加到 group_pathkeys 上 */
 			if (root->numOrderedAggs > 0)
 				adjust_group_pathkeys_for_groupagg(root);
 		}
@@ -3785,7 +3621,7 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 		root->num_groupby_pathkeys = 0;
 	}
 
-	/* We consider only the first (bottom) window in pathkeys logic */
+	/* 在 pathkey 逻辑中我们只考虑第一个（最底部的）窗口 */
 	if (activeWindows != NIL)
 	{
 		WindowClause *wc = linitial_node(WindowClause, activeWindows);
@@ -3798,16 +3634,15 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 		root->window_pathkeys = NIL;
 
 	/*
-	 * As with GROUP BY, we can discard any DISTINCT items that are proven
-	 * redundant by EquivalenceClass processing.  The non-redundant list is
-	 * kept in root->processed_distinctClause, leaving the original
-	 * parse->distinctClause alone.
+	 * 与 GROUP BY 一样，我们可以丢弃任何被 EquivalenceClass 处理证明是冗余的
+	 * DISTINCT 项。非冗余列表保存在 root->processed_distinctClause 中，而
+	 * 原始的 parse->distinctClause 保持不变。
 	 */
 	if (parse->distinctClause)
 	{
 		bool		sortable;
 
-		/* Make a copy since pathkey processing can modify the list */
+		/* 复制一份，因为 pathkey 处理可能会修改该列表 */
 		root->processed_distinctClause = list_copy(parse->distinctClause);
 		root->distinct_pathkeys =
 			make_pathkeys_for_sortclauses_extended(root,
@@ -3828,7 +3663,7 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 									  parse->sortClause,
 									  tlist);
 
-	/* setting setop_pathkeys might be useful to the union planner */
+	/* 设置 setop_pathkeys 可能对 union 规划器有用 */
 	if (qp_extra->setop != NULL)
 	{
 		List	   *groupClauses;
@@ -3851,24 +3686,20 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 		root->setop_pathkeys = NIL;
 
 	/*
-	 * Figure out whether we want a sorted result from query_planner.
+	 * 判断我们是否希望从 query_planner 得到一个已排序的结果。
 	 *
-	 * If we have a sortable GROUP BY clause, then we want a result sorted
-	 * properly for grouping.  Otherwise, if we have window functions to
-	 * evaluate, we try to sort for the first window.  Otherwise, if there's a
-	 * sortable DISTINCT clause that's more rigorous than the ORDER BY clause,
-	 * we try to produce output that's sufficiently well sorted for the
-	 * DISTINCT.  Otherwise, if there is an ORDER BY clause, we want to sort
-	 * by the ORDER BY clause.  Otherwise, if we're a subquery being planned
-	 * for a set operation which can benefit from presorted results and have a
-	 * sortable targetlist, we want to sort by the target list.
+	 * 如果我们有一个可排序的 GROUP BY 子句，那么我们希望得到一个为分组正确
+	 * 排序的结果。否则，如果我们有窗口函数要求值，我们尝试为第一个窗口排序。
+	 * 否则，如果有一个比 ORDER BY 子句更严格的、可排序的 DISTINCT 子句，我们
+	 * 尝试产生对该 DISTINCT 而言排序足够好的输出。否则，如果有 ORDER BY
+	 * 子句，我们希望按 ORDER BY 子句排序。否则，如果我们是一个正在为某个能从
+	 * 预排序结果获益的集合操作而规划、并且拥有可排序目标列表的子查询，我们
+	 * 希望按目标列表排序。
 	 *
-	 * Note: if we have both ORDER BY and GROUP BY, and ORDER BY is a superset
-	 * of GROUP BY, it would be tempting to request sort by ORDER BY --- but
-	 * that might just leave us failing to exploit an available sort order at
-	 * all.  Needs more thought.  The choice for DISTINCT versus ORDER BY is
-	 * much easier, since we know that the parser ensured that one is a
-	 * superset of the other.
+	 * 注意：如果我们同时有 ORDER BY 和 GROUP BY，并且 ORDER BY 是 GROUP BY
+	 * 的超集，那么请求按 ORDER BY 排序会很有诱惑力——但那可能会让我们完全
+	 * 无法利用某个可用的排序顺序。这需要更多思考。DISTINCT 与 ORDER BY 之间
+	 * 的选择要容易得多，因为我们知道解析器已确保其中一个是另一个的超集。
 	 */
 	if (root->group_pathkeys)
 		root->query_pathkeys = root->group_pathkeys;
@@ -3886,15 +3717,14 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 }
 
 /*
- * Estimate number of groups produced by grouping clauses (1 if not grouping)
+ * 估算分组子句产生的分组数量（如果没有分组则为 1）
  *
- * path_rows: number of output rows from scan/join step
- * gd: grouping sets data including list of grouping sets and their clauses
- * target_list: target list containing group clause references
+ * path_rows：扫描/连接步骤的输出行数
+ * gd：grouping set 数据，包括 grouping set 列表及其子句
+ * target_list：包含分组子句引用的目标列表
  *
- * If doing grouping sets, we also annotate the gsets data with the estimates
- * for each set and each individual rollup list, with a view to later
- * determining whether some combination of them could be hashed instead.
+ * 如果在执行 grouping set，我们还会用每个 set 和每个单独 rollup 列表的估算
+ * 来标注 gsets 数据，以便稍后判断它们的某种组合是否可以改为哈希实现。
  */
 static double
 get_number_of_groups(PlannerInfo *root,
@@ -3911,10 +3741,10 @@ get_number_of_groups(PlannerInfo *root,
 
 		if (parse->groupingSets)
 		{
-			/* Add up the estimates for each grouping set */
+			/* 把每个 grouping set 的估算值累加起来 */
 			ListCell   *lc;
 
-			Assert(gd);			/* keep Coverity happy */
+			Assert(gd);			/* 让 Coverity 满意 */
 
 			dNumGroups = 0;
 
@@ -3974,7 +3804,7 @@ get_number_of_groups(PlannerInfo *root,
 		}
 		else
 		{
-			/* Plain GROUP BY -- estimate based on optimized groupClause */
+			/* 普通 GROUP BY —— 基于优化后的 groupClause 进行估算 */
 			groupExprs = get_sortgrouplist_exprs(root->processed_groupClause,
 												 target_list);
 
@@ -3984,17 +3814,17 @@ get_number_of_groups(PlannerInfo *root,
 	}
 	else if (parse->groupingSets)
 	{
-		/* Empty grouping sets ... one result row for each one */
+		/* 空的 grouping set……每一个产生一行结果 */
 		dNumGroups = list_length(parse->groupingSets);
 	}
 	else if (parse->hasAggs || root->hasHavingQual)
 	{
-		/* Plain aggregation, one result row */
+		/* 普通聚合，一行结果 */
 		dNumGroups = 1;
 	}
 	else
 	{
-		/* Not grouping */
+		/* 不分组 */
 		dNumGroups = 1;
 	}
 
@@ -4004,19 +3834,18 @@ get_number_of_groups(PlannerInfo *root,
 /*
  * create_grouping_paths
  *
- * Build a new upperrel containing Paths for grouping and/or aggregation.
- * Along the way, we also build an upperrel for Paths which are partially
- * grouped and/or aggregated.  A partially grouped and/or aggregated path
- * needs a FinalizeAggregate node to complete the aggregation.  Currently,
- * the only partially grouped paths we build are also partial paths; that
- * is, they need a Gather and then a FinalizeAggregate.
+ * 构建一个新的 upperrel，其中包含用于分组和/或聚合的 Path。在此过程中，我们
+ * 还会为部分分组和/或部分聚合的 Path 构建一个 upperrel。部分分组和/或部分
+ * 聚合的路径需要一个 FinalizeAggregate 节点来完成聚合。目前，我们构建的唯一
+ * 一种部分分组路径也是 partial path；也就是说，它们需要一个 Gather，然后再
+ * 接一个 FinalizeAggregate。
  *
- * input_rel: contains the source-data Paths
- * target: the pathtarget for the result Paths to compute
- * gd: grouping sets data including list of grouping sets and their clauses
+ * input_rel：包含源数据的 Path
+ * target：结果 Path 要计算的 pathtarget
+ * gd：grouping set 数据，包括 grouping set 列表及其子句
  *
- * Note: all Paths in input_rel are expected to return the target computed
- * by make_group_input_target.
+ * 注意：期望 input_rel 中的所有 Path 都返回由 make_group_input_target 计算
+ * 出的 target。
  */
 static RelOptInfo *
 create_grouping_paths(PlannerInfo *root,
@@ -4034,15 +3863,14 @@ create_grouping_paths(PlannerInfo *root,
 	get_agg_clause_costs(root, AGGSPLIT_SIMPLE, &agg_costs);
 
 	/*
-	 * Create grouping relation to hold fully aggregated grouping and/or
-	 * aggregation paths.
+	 * 创建分组关系，用于保存完全聚合的分组和/或聚合路径。
 	 */
 	grouped_rel = make_grouping_rel(root, input_rel, target,
 									target_parallel_safe, parse->havingQual);
 
 	/*
-	 * Create either paths for a degenerate grouping or paths for ordinary
-	 * grouping, as appropriate.
+	 * 视情况而定，创建退化分组（degenerate grouping）的路径，或者普通分组的
+	 * 路径。
 	 */
 	if (is_degenerate_grouping(root))
 		create_degenerate_grouping_paths(root, input_rel, grouped_rel);
@@ -4052,39 +3880,33 @@ create_grouping_paths(PlannerInfo *root,
 		GroupPathExtraData extra;
 
 		/*
-		 * Determine whether it's possible to perform sort-based
-		 * implementations of grouping.  (Note that if processed_groupClause
-		 * is empty, grouping_is_sortable() is trivially true, and all the
-		 * pathkeys_contained_in() tests will succeed too, so that we'll
-		 * consider every surviving input path.)
+		 * 判断是否可以执行基于排序的分组实现。（注意，如果
+		 * processed_groupClause 为空，grouping_is_sortable() 平凡地为真，并且
+		 * 所有 pathkeys_contained_in() 测试也都会成功，因此我们会考虑每一条
+		 * 存活下来的输入路径。）
 		 *
-		 * If we have grouping sets, we might be able to sort some but not all
-		 * of them; in this case, we need can_sort to be true as long as we
-		 * must consider any sorted-input plan.
+		 * 如果我们有 grouping set，我们可能能对其中一些而非全部排序；在这种
+		 * 情况下，只要我们必须考虑任何有序输入计划，就需要 can_sort 为真。
 		 */
 		if ((gd && gd->rollups != NIL)
 			|| grouping_is_sortable(root->processed_groupClause))
 			flags |= GROUPING_CAN_USE_SORT;
 
 		/*
-		 * Determine whether we should consider hash-based implementations of
-		 * grouping.
+		 * 判断我们是否应当考虑基于哈希的分组实现。
 		 *
-		 * Hashed aggregation only applies if we're grouping. If we have
-		 * grouping sets, some groups might be hashable but others not; in
-		 * this case we set can_hash true as long as there is nothing globally
-		 * preventing us from hashing (and we should therefore consider plans
-		 * with hashes).
+		 * 哈希聚合仅在我们进行分组时适用。如果我们有 grouping set，某些分组
+		 * 可能可哈希而另一些不可；在这种情况下，只要没有全局性的因素阻止我们
+		 * 哈希（因此我们应当考虑带哈希的计划），我们就把 can_hash 设为真。
 		 *
-		 * Executor doesn't support hashed aggregation with DISTINCT or ORDER
-		 * BY aggregates.  (Doing so would imply storing *all* the input
-		 * values in the hash table, and/or running many sorts in parallel,
-		 * either of which seems like a certain loser.)  We similarly don't
-		 * support ordered-set aggregates in hashed aggregation, but that case
-		 * is also included in the numOrderedAggs count.
+		 * 执行器不支持带 DISTINCT 或 ORDER BY 聚合的哈希聚合。（这样做将意味着
+		 * 把*所有*输入值存储在哈希表中，和/或并行运行大量排序，两者看起来都
+		 * 必定得不偿失。）我们同样不支持在哈希聚合中使用有序集聚合
+		 * （ordered-set aggregate），不过那种情况也已包含在 numOrderedAggs
+		 * 计数中。
 		 *
-		 * Note: grouping_is_hashable() is much more expensive to check than
-		 * the other gating conditions, so we want to do it last.
+		 * 注意：grouping_is_hashable() 的检查开销比其他门控条件大得多，所以
+		 * 我们希望最后再做它。
 		 */
 		if ((parse->groupClause != NIL &&
 			 root->numOrderedAggs == 0 &&
@@ -4092,7 +3914,7 @@ create_grouping_paths(PlannerInfo *root,
 			flags |= GROUPING_CAN_USE_HASH;
 
 		/*
-		 * Determine whether partial aggregation is possible.
+		 * 判断是否可能进行部分聚合（partial aggregation）。
 		 */
 		if (can_partial_agg(root))
 			flags |= GROUPING_CAN_PARTIAL_AGG;
@@ -4104,10 +3926,10 @@ create_grouping_paths(PlannerInfo *root,
 		extra.partial_costs_set = false;
 
 		/*
-		 * Determine whether partitionwise aggregation is in theory possible.
-		 * It can be disabled by the user, and for now, we don't try to
-		 * support grouping sets.  create_ordinary_grouping_paths() will check
-		 * additional conditions, such as whether input_rel is partitioned.
+		 * 判断分区级聚合（partitionwise aggregation）在理论上是否可能。它可以
+		 * 被用户禁用，而且目前我们不尝试支持 grouping set。
+		 * create_ordinary_grouping_paths() 会检查额外的条件，例如 input_rel
+		 * 是否已分区。
 		 */
 		if (enable_partitionwise_aggregate && !parse->groupingSets)
 			extra.patype = PARTITIONWISE_AGGREGATE_FULL;
@@ -4126,10 +3948,10 @@ create_grouping_paths(PlannerInfo *root,
 /*
  * make_grouping_rel
  *
- * Create a new grouping rel and set basic properties.
+ * 创建一个新的分组 rel 并设置基本属性。
  *
- * input_rel represents the underlying scan/join relation.
- * target is the output expected from the grouping relation.
+ * input_rel 表示底层的扫描/连接关系。
+ * target 是期望从分组关系得到的输出。
  */
 static RelOptInfo *
 make_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
@@ -4147,27 +3969,25 @@ make_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 	else
 	{
 		/*
-		 * By tradition, the relids set for the main grouping relation is
-		 * NULL.  (This could be changed, but might require adjustments
-		 * elsewhere.)
+		 * 按照惯例，主分组关系的 relids 集合为 NULL。（这可以更改，但可能
+		 * 需要在其他地方做相应调整。）
 		 */
 		grouped_rel = fetch_upper_rel(root, UPPERREL_GROUP_AGG, NULL);
 	}
 
-	/* Set target. */
+	/* 设置 target。 */
 	grouped_rel->reltarget = target;
 
 	/*
-	 * If the input relation is not parallel-safe, then the grouped relation
-	 * can't be parallel-safe, either.  Otherwise, it's parallel-safe if the
-	 * target list and HAVING quals are parallel-safe.
+	 * 如果输入关系不是并行安全的，那么分组关系也不可能是并行安全的。否则，
+	 * 如果目标列表和 HAVING qual 都是并行安全的，它就是并行安全的。
 	 */
 	if (input_rel->consider_parallel && target_parallel_safe &&
 		is_parallel_safe(root, (Node *) havingQual))
 		grouped_rel->consider_parallel = true;
 
 	/*
-	 * If the input rel belongs to a single FDW, so does the grouped rel.
+	 * 如果输入 rel 属于单个 FDW，那么分组 rel 也是如此。
 	 */
 	grouped_rel->serverid = input_rel->serverid;
 	grouped_rel->userid = input_rel->userid;
@@ -4180,9 +4000,8 @@ make_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 /*
  * is_degenerate_grouping
  *
- * A degenerate grouping is one in which the query has a HAVING qual and/or
- * grouping sets, but no aggregates and no GROUP BY (which implies that the
- * grouping sets are all empty).
+ * 退化分组（degenerate grouping）是指查询有 HAVING qual 和/或 grouping set，
+ * 但没有聚合、也没有 GROUP BY（这意味着这些 grouping set 全都为空）的情形。
  */
 static bool
 is_degenerate_grouping(PlannerInfo *root)
@@ -4196,14 +4015,11 @@ is_degenerate_grouping(PlannerInfo *root)
 /*
  * create_degenerate_grouping_paths
  *
- * When the grouping is degenerate (see is_degenerate_grouping), we are
- * supposed to emit either zero or one row for each grouping set depending on
- * whether HAVING succeeds.  Furthermore, there cannot be any variables in
- * either HAVING or the targetlist, so we actually do not need the FROM table
- * at all! We can just throw away the plan-so-far and generate a Result node.
- * This is a sufficiently unusual corner case that it's not worth contorting
- * the structure of this module to avoid having to generate the earlier paths
- * in the first place.
+ * 当分组是退化的（见 is_degenerate_grouping）时，我们应当为每个 grouping set
+ * 发出零行或一行，取决于 HAVING 是否成立。此外，HAVING 或目标列表中都不可能
+ * 有任何变量，所以我们实际上根本不需要 FROM 表！我们可以直接丢弃到目前为止
+ * 的计划并生成一个 Result 节点。这是一个足够不寻常的边角情况，不值得为了
+ * 一开始就避免生成前面的路径而扭曲本模块的结构。
  */
 static void
 create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
@@ -4217,11 +4033,10 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	if (nrows > 1)
 	{
 		/*
-		 * Doesn't seem worthwhile writing code to cons up a generate_series
-		 * or a values scan to emit multiple rows. Instead just make N clones
-		 * and append them.  (With a volatile HAVING clause, this means you
-		 * might get between 0 and N output rows. Offhand I think that's
-		 * desired.)
+		 * 似乎不值得编写代码去拼凑一个 generate_series 或一个 values 扫描来
+		 * 发出多行。相反，只需制作 N 个克隆并把它们 append 起来。（对于
+		 * volatile 的 HAVING 子句，这意味着你可能得到 0 到 N 之间的输出行。
+		 * 直觉上我认为这是符合预期的。）
 		 */
 		List	   *paths = NIL;
 
@@ -4246,7 +4061,7 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	}
 	else
 	{
-		/* No grouping sets, or just one, so one output row */
+		/* 没有 grouping set，或只有一个，因此只有一行输出 */
 		path = (Path *)
 			create_group_result_path(root, grouped_rel,
 									 grouped_rel->reltarget,
@@ -4259,15 +4074,14 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 /*
  * create_ordinary_grouping_paths
  *
- * Create grouping paths for the ordinary (that is, non-degenerate) case.
+ * 为普通（即非退化）情形创建分组路径。
  *
- * We need to consider sorted and hashed aggregation in the same function,
- * because otherwise (1) it would be harder to throw an appropriate error
- * message if neither way works, and (2) we should not allow hashtable size
- * considerations to dissuade us from using hashing if sorting is not possible.
+ * 我们需要在同一个函数中同时考虑排序聚合和哈希聚合，因为否则（1）如果两种
+ * 方式都不可行，抛出恰当的错误消息会更困难；并且（2）如果排序不可行，我们
+ * 不应让哈希表大小方面的考量劝阻我们使用哈希。
  *
- * *partially_grouped_rel_p will be set to the partially grouped rel which this
- * function creates, or to NULL if it doesn't create one.
+ * *partially_grouped_rel_p 将被设置为本函数创建的部分分组 rel，如果它没有
+ * 创建，则设置为 NULL。
  */
 static void
 create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
@@ -4283,26 +4097,22 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	PartitionwiseAggregateType patype = PARTITIONWISE_AGGREGATE_NONE;
 
 	/*
-	 * If this is the topmost grouping relation or if the parent relation is
-	 * doing some form of partitionwise aggregation, then we may be able to do
-	 * it at this level also.  However, if the input relation is not
-	 * partitioned, partitionwise aggregate is impossible.
+	 * 如果这是最顶层的分组关系，或者父关系正在执行某种形式的分区级聚合，
+	 * 那么我们在这一层也许也能做。然而，如果输入关系没有分区，分区级聚合
+	 * 就不可能。
 	 */
 	if (extra->patype != PARTITIONWISE_AGGREGATE_NONE &&
 		IS_PARTITIONED_REL(input_rel))
 	{
 		/*
-		 * If this is the topmost relation or if the parent relation is doing
-		 * full partitionwise aggregation, then we can do full partitionwise
-		 * aggregation provided that the GROUP BY clause contains all of the
-		 * partitioning columns at this level and the collation used by GROUP
-		 * BY matches the partitioning collation.  Otherwise, we can do at
-		 * most partial partitionwise aggregation.  But if partial aggregation
-		 * is not supported in general then we can't use it for partitionwise
-		 * aggregation either.
+		 * 如果这是最顶层关系，或者父关系正在执行完整的分区级聚合，那么只要
+		 * GROUP BY 子句在这一层包含所有分区列、且 GROUP BY 使用的排序规则
+		 * 匹配分区的排序规则，我们就可以执行完整的分区级聚合。否则，我们至多
+		 * 只能执行部分分区级聚合。但如果部分聚合总体上不被支持，那么我们也
+		 * 无法将它用于分区级聚合。
 		 *
-		 * Check parse->groupClause not processed_groupClause, because it's
-		 * okay if some of the partitioning columns were proved redundant.
+		 * 检查 parse->groupClause 而非 processed_groupClause，因为即便某些
+		 * 分区列被证明是冗余的也没有关系。
 		 */
 		if (extra->patype == PARTITIONWISE_AGGREGATE_FULL &&
 			group_by_has_partkey(input_rel, extra->targetList,
@@ -4315,18 +4125,16 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	}
 
 	/*
-	 * Before generating paths for grouped_rel, we first generate any possible
-	 * partially grouped paths; that way, later code can easily consider both
-	 * parallel and non-parallel approaches to grouping.
+	 * 在为 grouped_rel 生成路径之前，我们首先生成任何可能的部分分组路径；
+	 * 这样，后续代码就可以轻松地同时考虑分组的并行方式和非并行方式。
 	 */
 	if ((extra->flags & GROUPING_CAN_PARTIAL_AGG) != 0)
 	{
 		bool		force_rel_creation;
 
 		/*
-		 * If we're doing partitionwise aggregation at this level, force
-		 * creation of a partially_grouped_rel so we can add partitionwise
-		 * paths to it.
+		 * 如果我们在这一层执行分区级聚合，则强制创建一个
+		 * partially_grouped_rel，以便我们可以向它添加分区级路径。
 		 */
 		force_rel_creation = (patype == PARTITIONWISE_AGGREGATE_PARTIAL);
 
@@ -4339,16 +4147,16 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 										  force_rel_creation);
 	}
 
-	/* Set out parameter. */
+	/* 设置输出参数。 */
 	*partially_grouped_rel_p = partially_grouped_rel;
 
-	/* Apply partitionwise aggregation technique, if possible. */
+	/* 如果可能，应用分区级聚合技术。 */
 	if (patype != PARTITIONWISE_AGGREGATE_NONE)
 		create_partitionwise_grouping_paths(root, input_rel, grouped_rel,
 											partially_grouped_rel, agg_costs,
 											gd, patype, extra);
 
-	/* If we are doing partial aggregation only, return. */
+	/* 如果我们只做部分聚合，则返回。 */
 	if (extra->patype == PARTITIONWISE_AGGREGATE_PARTIAL)
 	{
 		Assert(partially_grouped_rel);
@@ -4359,7 +4167,7 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 		return;
 	}
 
-	/* Gather any partially grouped partial paths. */
+	/* 收集（Gather）任何部分分组的 partial path。 */
 	if (partially_grouped_rel && partially_grouped_rel->partial_pathlist)
 	{
 		gather_grouping_paths(root, partially_grouped_rel);
@@ -4367,19 +4175,19 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	}
 
 	/*
-	 * Estimate number of groups.
+	 * 估算分组数量。
 	 */
 	dNumGroups = get_number_of_groups(root,
 									  cheapest_path->rows,
 									  gd,
 									  extra->targetList);
 
-	/* Build final grouping paths */
+	/* 构建最终的分组路径 */
 	add_paths_to_grouping_rel(root, input_rel, grouped_rel,
 							  partially_grouped_rel, agg_costs, gd,
 							  dNumGroups, extra);
 
-	/* Give a helpful error if we failed to find any implementation */
+	/* 如果我们未能找到任何实现方式，给出一个有帮助的错误 */
 	if (grouped_rel->pathlist == NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -4387,8 +4195,7 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 				 errdetail("Some of the datatypes only support hashing, while others only support sorting.")));
 
 	/*
-	 * If there is an FDW that's responsible for all baserels of the query,
-	 * let it consider adding ForeignPaths.
+	 * 如果有一个 FDW 负责该查询的所有 baserel，则让它考虑添加 ForeignPath。
 	 */
 	if (grouped_rel->fdwroutine &&
 		grouped_rel->fdwroutine->GetForeignUpperPaths)
@@ -4396,7 +4203,7 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 													  input_rel, grouped_rel,
 													  extra);
 
-	/* Let extensions possibly add some more paths */
+	/* 让扩展有可能添加更多的路径 */
 	if (create_upper_paths_hook)
 		(*create_upper_paths_hook) (root, UPPERREL_GROUP_AGG,
 									input_rel, grouped_rel,
@@ -4404,10 +4211,9 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 }
 
 /*
- * For a given input path, consider the possible ways of doing grouping sets on
- * it, by combinations of hashing and sorting.  This can be called multiple
- * times, so it's important that it not scribble on input.  No result is
- * returned, but any generated paths are added to grouped_rel.
+ * 对于给定的输入路径，通过哈希与排序的各种组合，考虑在其上执行 grouping set
+ * 的各种可能方式。本函数可能被多次调用，因此重要的是它不能改写（scribble）
+ * 输入。不返回任何结果，但任何生成的路径都会被添加到 grouped_rel。
  */
 static void
 consider_groupingsets_paths(PlannerInfo *root,

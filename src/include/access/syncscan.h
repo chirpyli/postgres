@@ -17,7 +17,7 @@
 #include "storage/block.h"
 #include "utils/relcache.h"
 
-/* GUC variables */
+/* GUC 变量 */
 #ifdef TRACE_SYNCSCAN
 extern PGDLLIMPORT bool trace_syncscan;
 #endif

@@ -1,15 +1,14 @@
 /*-------------------------------------------------------------------------
  *
  * tidstore.c
- *		TID (ItemPointerData) storage implementation.
+ *		TID (ItemPointerData) 存储实现。
  *
- * TidStore is a in-memory data structure to store TIDs (ItemPointerData).
- * Internally it uses a radix tree as the storage for TIDs. The key is the
- * BlockNumber and the value is a bitmap of offsets, BlocktableEntry.
+ * TidStore 是一种用于存放 TID（ItemPointerData）的内存数据结构。
+ * 在内部，它使用基数树（radix tree）作为 TID 的存储。键是 BlockNumber，
+ * 值是偏移量的位图，即 BlocktableEntry。
  *
- * TidStore can be shared among parallel worker processes by using
- * TidStoreCreateShared(). Other backends can attach to the shared TidStore
- * by TidStoreAttach().
+ * TidStore 可以通过 TidStoreCreateShared() 在并行的多个工作进程之间共享。
+ * 其他后端可以通过 TidStoreAttach() 附加到这个共享的 TidStore 上。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -31,15 +30,15 @@
 #define WORDNUM(x)	((x) / BITS_PER_BITMAPWORD)
 #define BITNUM(x)	((x) % BITS_PER_BITMAPWORD)
 
-/* number of active words for a page: */
+/* 一个页面中活跃的字（word）数量： */
 #define WORDS_PER_PAGE(n) ((n) / BITS_PER_BITMAPWORD + 1)
 
-/* number of offsets we can store in the header of a BlocktableEntry */
+/* 我们可以在 BlocktableEntry 头部中存储的偏移量数量 */
 #define NUM_FULL_OFFSETS ((sizeof(uintptr_t) - sizeof(uint8) - sizeof(int8)) / sizeof(OffsetNumber))
 
 /*
- * This is named similarly to PagetableEntry in tidbitmap.c
- * because the two have a similar function.
+ * 此名称与 tidbitmap.c 中的 PagetableEntry 相似，
+ * 因为两者具有类似的功能。
  */
 typedef struct BlocktableEntry
 {
@@ -47,9 +46,9 @@ typedef struct BlocktableEntry
 	{
 #ifndef WORDS_BIGENDIAN
 		/*
-		 * We need to position this member to reserve space for the backing
-		 * radix tree to tag the lowest bit when struct 'header' is stored
-		 * inside a pointer or DSA pointer.
+		 * 我们需要放置这个成员的位置，以便为背后的基数树预留空间，
+		 * 使得当结构体 'header' 被存储在指针或 DSA 指针内部时，基数树
+		 * 能够标记最低位。
 		 */
 		uint8		flags;
 
@@ -57,8 +56,7 @@ typedef struct BlocktableEntry
 #endif
 
 		/*
-		 * We can store a small number of offsets here to avoid wasting space
-		 * with a sparse bitmap.
+		 * 我们可以在这里存储少量的偏移量，以避免因稀疏位图而浪费空间。
 		 */
 		OffsetNumber full_offsets[NUM_FULL_OFFSETS];
 
@@ -69,17 +67,17 @@ typedef struct BlocktableEntry
 	}			header;
 
 	/*
-	 * We don't expect any padding space here, but to be cautious, code
-	 * creating new entries should zero out space up to 'words'.
+	 * 我们预期这里不会存在任何填充空间，但为了谨慎起见，创建新条目的
+	 * 代码应当把直到 'words' 之前的空间全部清零。
 	 */
 
 	bitmapword	words[FLEXIBLE_ARRAY_MEMBER];
 } BlocktableEntry;
 
 /*
- * The type of 'nwords' limits the max number of words in the 'words' array.
- * This computes the max offset we can actually store in the bitmap. In
- * practice, it's almost always the same as MaxOffsetNumber.
+ * 'nwords' 的类型限制了 'words' 数组中字（word）的最大数量。这里计算
+ * 的是我们实际可以在位图中存储的最大偏移量。在实践中，它几乎总是与
+ * MaxOffsetNumber 相同。
  */
 #define MAX_OFFSET_IN_BITMAP Min(BITS_PER_BITMAPWORD * PG_INT8_MAX - 1, MaxOffsetNumber)
 
@@ -110,53 +108,51 @@ typedef struct BlocktableEntry
 #define RT_RUNTIME_EMBEDDABLE_VALUE
 #include "lib/radixtree.h"
 
-/* Per-backend state for a TidStore */
+/* 一个 TidStore 的每后端（per-backend）状态 */
 struct TidStore
 {
 	/*
-	 * MemoryContext for the radix tree when using local memory, NULL for
-	 * shared memory
+	 * 在使用本地内存时用于基数树（radix tree）的 MemoryContext，
+	 * 在使用共享内存时为 NULL
 	 */
 	MemoryContext rt_context;
 
-	/* Storage for TIDs. Use either one depending on TidStoreIsShared() */
+	/* TID 的存储。根据 TidStoreIsShared() 的结果选用其中之一 */
 	union
 	{
 		local_ts_radix_tree *local;
 		shared_ts_radix_tree *shared;
 	}			tree;
 
-	/* DSA area for TidStore if using shared memory */
+	/* 如果使用共享内存，则为 TidStore 使用的 DSA 区域 */
 	dsa_area   *area;
 };
 #define TidStoreIsShared(ts) ((ts)->area != NULL)
 
-/* Iterator for TidStore */
+/* TidStore 的迭代器 */
 struct TidStoreIter
 {
 	TidStore   *ts;
 
-	/* iterator of radix tree. Use either one depending on TidStoreIsShared() */
+	/* 基数树的迭代器。根据 TidStoreIsShared() 的结果选用其中之一 */
 	union
 	{
 		shared_ts_iter *shared;
 		local_ts_iter *local;
 	}			tree_iter;
 
-	/* output for the caller */
+	/* 返回给调用方的输出 */
 	TidStoreIterResult output;
 };
 
 /*
- * Create a TidStore. The TidStore will live in the memory context that is
- * CurrentMemoryContext at the time of this call. The TID storage, backed
- * by a radix tree, will live in its child memory context, rt_context.
+ * 创建一个 TidStore。该 TidStore 会存活在本调用时刻的 CurrentMemoryContext
+ * 中。由基数树支撑的 TID 存储，会存活在它的子内存上下文 rt_context 中。
  *
- * "max_bytes" is not an internally-enforced limit; it is used only as a
- * hint to cap the memory block size of the memory context for TID storage.
- * This reduces space wastage due to over-allocation. If the caller wants to
- * monitor memory usage, it must compare its limit with the value reported
- * by TidStoreMemoryUsage().
+ * "max_bytes" 并非一个在内部强制执行的限制；它仅被用作一个提示，来
+ * 限制用于 TID 存储的内存上下文的块大小上限。这可以减少因过度分配而
+ * 导致的空间浪费。如果调用方想要监控内存使用情况，它必须将自身的
+ * 限制与 TidStoreMemoryUsage() 所报告的值进行比较。
  */
 TidStore *
 TidStoreCreateLocal(size_t max_bytes, bool insert_only)
@@ -168,14 +164,14 @@ TidStoreCreateLocal(size_t max_bytes, bool insert_only)
 
 	ts = palloc0(sizeof(TidStore));
 
-	/* choose the maxBlockSize to be no larger than 1/16 of max_bytes */
+	/* 选择 maxBlockSize，使其不大于 max_bytes 的 1/16 */
 	while (16 * maxBlockSize > max_bytes)
 		maxBlockSize >>= 1;
 
 	if (maxBlockSize < ALLOCSET_DEFAULT_INITSIZE)
 		maxBlockSize = ALLOCSET_DEFAULT_INITSIZE;
 
-	/* Create a memory context for the TID storage */
+	/* 为 TID 存储创建一个内存上下文 */
 	if (insert_only)
 	{
 		ts->rt_context = BumpContextCreate(CurrentMemoryContext,
@@ -199,10 +195,10 @@ TidStoreCreateLocal(size_t max_bytes, bool insert_only)
 }
 
 /*
- * Similar to TidStoreCreateLocal() but create a shared TidStore on a
- * DSA area.
+ * 与 TidStoreCreateLocal() 类似，但会在 DSA 区域上创建一个共享的
+ * TidStore。
  *
- * The returned object is allocated in backend-local memory.
+ * 返回的对象被分配在后端本地的内存中。
  */
 TidStore *
 TidStoreCreateShared(size_t max_bytes, int tranche_id)
@@ -215,8 +211,7 @@ TidStoreCreateShared(size_t max_bytes, int tranche_id)
 	ts = palloc0(sizeof(TidStore));
 
 	/*
-	 * Choose the initial and maximum DSA segment sizes to be no longer than
-	 * 1/8 of max_bytes.
+	 * 选择初始和最大的 DSA 段大小，使其不长于 max_bytes 的 1/8。
 	 */
 	while (8 * dsa_max_size > max_bytes)
 		dsa_max_size >>= 1;
@@ -235,10 +230,9 @@ TidStoreCreateShared(size_t max_bytes, int tranche_id)
 }
 
 /*
- * Attach to the shared TidStore. 'area_handle' is the DSA handle where
- * the TidStore is created. 'handle' is the dsa_pointer returned by
- * TidStoreGetHandle(). The returned object is allocated in backend-local
- * memory using the CurrentMemoryContext.
+ * 附加到共享的 TidStore。'area_handle' 是创建该 TidStore 的 DSA 句柄。
+ * 'handle' 是由 TidStoreGetHandle() 返回的 dsa_pointer。返回的对象使用
+ * CurrentMemoryContext 分配在后端本地内存中。
  */
 TidStore *
 TidStoreAttach(dsa_handle area_handle, dsa_pointer handle)
@@ -249,12 +243,12 @@ TidStoreAttach(dsa_handle area_handle, dsa_pointer handle)
 	Assert(area_handle != DSA_HANDLE_INVALID);
 	Assert(DsaPointerIsValid(handle));
 
-	/* create per-backend state */
+	/* 创建每后端（per-backend）状态 */
 	ts = palloc0(sizeof(TidStore));
 
 	area = dsa_attach(area_handle);
 
-	/* Find the shared the shared radix tree */
+	/* 找到共享的基数树 */
 	ts->tree.shared = shared_ts_attach(area, handle);
 	ts->area = area;
 
@@ -262,8 +256,8 @@ TidStoreAttach(dsa_handle area_handle, dsa_pointer handle)
 }
 
 /*
- * Detach from a TidStore. This also detaches from radix tree and frees
- * the backend-local resources.
+ * 从一个 TidStore 分离（detach）。这同时也会从基数树分离，并释放
+ * 后端本地的资源。
  */
 void
 TidStoreDetach(TidStore *ts)
@@ -277,10 +271,10 @@ TidStoreDetach(TidStore *ts)
 }
 
 /*
- * Lock support functions.
+ * 锁支持函数。
  *
- * We can use the radix tree's lock for shared TidStore as the data we
- * need to protect is only the shared radix tree.
+ * 对于共享的 TidStore，我们可以使用基数树的锁，因为需要保护的数据
+ * 只有那棵共享的基数树。
  */
 
 void
@@ -305,18 +299,17 @@ TidStoreUnlock(TidStore *ts)
 }
 
 /*
- * Destroy a TidStore, returning all memory.
+ * 销毁一个 TidStore，释放所有内存。
  *
- * Note that the caller must be certain that no other backend will attempt to
- * access the TidStore before calling this function. Other backend must
- * explicitly call TidStoreDetach() to free up backend-local memory associated
- * with the TidStore. The backend that calls TidStoreDestroy() must not call
- * TidStoreDetach().
+ * 注意：调用方必须确保，在调用本函数之前，没有任何其他后端会尝试访问
+ * 该 TidStore。其他后端必须显式调用 TidStoreDetach() 来释放与该 TidStore
+ * 相关联的后端本地内存。调用 TidStoreDestroy() 的那个后端则不得再调用
+ * TidStoreDetach()。
  */
 void
 TidStoreDestroy(TidStore *ts)
 {
-	/* Destroy underlying radix tree */
+	/* 销毁底层的基数树 */
 	if (TidStoreIsShared(ts))
 	{
 		shared_ts_free(ts->tree.shared);
@@ -332,14 +325,14 @@ TidStoreDestroy(TidStore *ts)
 }
 
 /*
- * Create or replace an entry for the given block and array of offsets.
+ * 为给定的块和偏移量数组创建或替换一个条目。
  *
- * NB: This function is designed and optimized for vacuum's heap scanning
- * phase, so has some limitations:
+ * 注意：本函数是为 vacuum 的堆扫描阶段而设计并优化的，因此有一些
+ * 限制：
  *
- * - The offset numbers "offsets" must be sorted in ascending order.
- * - If the block number already exists, the entry will be replaced --
- *	 there is no way to add or remove offsets from an entry.
+ * - 偏移号 "offsets" 必须按升序排列。
+ * - 如果块号已存在，则该条目会被替换 —— 无法向条目中添加或从中
+ *   移除偏移量。
  */
 void
 TidStoreSetBlockOffsets(TidStore *ts, BlockNumber blkno, OffsetNumber *offsets,
@@ -358,7 +351,7 @@ TidStoreSetBlockOffsets(TidStore *ts, BlockNumber blkno, OffsetNumber *offsets,
 
 	Assert(num_offsets > 0);
 
-	/* Check if the given offset numbers are ordered */
+	/* 检查给定的偏移号是否有序 */
 	for (int i = 1; i < num_offsets; i++)
 		Assert(offsets[i] > offsets[i - 1]);
 
@@ -370,7 +363,7 @@ TidStoreSetBlockOffsets(TidStore *ts, BlockNumber blkno, OffsetNumber *offsets,
 		{
 			OffsetNumber off = offsets[i];
 
-			/* safety check to ensure we don't overrun bit array bounds */
+			/* 安全检查，确保不会超出位数组的边界 */
 			if (off == InvalidOffsetNumber || off > MAX_OFFSET_IN_BITMAP)
 				elog(ERROR, "tuple offset out of range: %u", off);
 
@@ -391,7 +384,7 @@ TidStoreSetBlockOffsets(TidStore *ts, BlockNumber blkno, OffsetNumber *offsets,
 			{
 				OffsetNumber off = offsets[idx];
 
-				/* safety check to ensure we don't overrun bit array bounds */
+				/* 安全检查，确保不会超出位数组的边界 */
 				if (off == InvalidOffsetNumber || off > MAX_OFFSET_IN_BITMAP)
 					elog(ERROR, "tuple offset out of range: %u", off);
 
@@ -402,7 +395,7 @@ TidStoreSetBlockOffsets(TidStore *ts, BlockNumber blkno, OffsetNumber *offsets,
 				idx++;
 			}
 
-			/* write out offset bitmap for this wordnum */
+			/* 为本 wordnum 写出偏移量位图 */
 			page->words[wordnum] = word;
 		}
 
@@ -416,7 +409,7 @@ TidStoreSetBlockOffsets(TidStore *ts, BlockNumber blkno, OffsetNumber *offsets,
 		local_ts_set(ts->tree.local, blkno, page);
 }
 
-/* Return true if the given TID is present in the TidStore */
+/* 如果给定的 TID 存在于 TidStore 中，则返回 true */
 bool
 TidStoreIsMember(TidStore *ts, ItemPointer tid)
 {
@@ -431,13 +424,13 @@ TidStoreIsMember(TidStore *ts, ItemPointer tid)
 	else
 		page = local_ts_find(ts->tree.local, blk);
 
-	/* no entry for the blk */
+	/* 该 blk 没有对应的条目 */
 	if (page == NULL)
 		return false;
 
 	if (page->header.nwords == 0)
 	{
-		/* we have offsets in the header */
+		/* 偏移量存放在头部中 */
 		for (int i = 0; i < NUM_FULL_OFFSETS; i++)
 		{
 			if (page->header.full_offsets[i] == off)
@@ -450,7 +443,7 @@ TidStoreIsMember(TidStore *ts, ItemPointer tid)
 		wordnum = WORDNUM(off);
 		bitnum = BITNUM(off);
 
-		/* no bitmap for the off */
+		/* 该 off 没有对应的位图 */
 		if (wordnum >= page->header.nwords)
 			return false;
 
@@ -459,13 +452,12 @@ TidStoreIsMember(TidStore *ts, ItemPointer tid)
 }
 
 /*
- * Prepare to iterate through a TidStore.
+ * 准备对 TidStore 进行遍历（iterate）。
  *
- * The TidStoreIter struct is created in the caller's memory context, and it
- * will be freed in TidStoreEndIterate.
+ * TidStoreIter 结构体被创建在调用方的内存上下文中，并将在
+ * TidStoreEndIterate 中被释放。
  *
- * The caller is responsible for locking TidStore until the iteration is
- * finished.
+ * 在迭代完成之前，由调用方负责持有 TidStore 上的锁。
  */
 TidStoreIter *
 TidStoreBeginIterate(TidStore *ts)
@@ -485,9 +477,8 @@ TidStoreBeginIterate(TidStore *ts)
 
 
 /*
- * Return a result that contains the next block number and that can be used to
- * obtain the set of offsets by calling TidStoreGetBlockOffsets().  The result
- * is copyable.
+ * 返回一个结果，其中包含下一个块号，并可用于通过调用
+ * TidStoreGetBlockOffsets() 来获取偏移量集合。该结果是可复制的。
  */
 TidStoreIterResult *
 TidStoreIterateNext(TidStoreIter *iter)
@@ -510,9 +501,9 @@ TidStoreIterateNext(TidStoreIter *iter)
 }
 
 /*
- * Finish the iteration on TidStore.
+ * 结束对 TidStore 的遍历（iteration）。
  *
- * The caller is responsible for releasing any locks.
+ * 由调用方负责释放任何持有的锁。
  */
 void
 TidStoreEndIterate(TidStoreIter *iter)
@@ -526,7 +517,7 @@ TidStoreEndIterate(TidStoreIter *iter)
 }
 
 /*
- * Return the memory usage of TidStore.
+ * 返回 TidStore 的内存使用量。
  */
 size_t
 TidStoreMemoryUsage(TidStore *ts)
@@ -538,7 +529,7 @@ TidStoreMemoryUsage(TidStore *ts)
 }
 
 /*
- * Return the DSA area where the TidStore lives.
+ * 返回 TidStore 所在的 DSA 区域。
  */
 dsa_area *
 TidStoreGetDSA(TidStore *ts)
@@ -557,10 +548,9 @@ TidStoreGetHandle(TidStore *ts)
 }
 
 /*
- * Given a TidStoreIterResult returned by TidStoreIterateNext(), extract the
- * offset numbers.  Returns the number of offsets filled in, if <=
- * max_offsets.  Otherwise, fills in as much as it can in the given space, and
- * returns the size of the buffer that would be needed.
+ * 给定一个由 TidStoreIterateNext() 返回的 TidStoreIterResult，提取其中的
+ * 偏移号。如果数量 <= max_offsets，则返回填入的偏移量个数；否则，在
+ * 给定空间中尽可能多地填入，并返回所需缓冲区的大小。
  */
 int
 TidStoreGetBlockOffsets(TidStoreIterResult *result,
@@ -573,7 +563,7 @@ TidStoreGetBlockOffsets(TidStoreIterResult *result,
 
 	if (page->header.nwords == 0)
 	{
-		/* we have offsets in the header */
+		/* 偏移量存放在头部中 */
 		for (int i = 0; i < NUM_FULL_OFFSETS; i++)
 		{
 			if (page->header.full_offsets[i] != InvalidOffsetNumber)

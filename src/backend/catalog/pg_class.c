@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * pg_class.c
- *	  routines to support manipulation of the pg_class relation
+ *	  用于支持对 pg_class 关系进行操作的例程。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -17,8 +17,7 @@
 #include "catalog/pg_class.h"
 
 /*
- * Issue an errdetail() informing that the relkind is not supported for this
- * operation.
+ * 发出一条 errdetail()，告知该 relkind 不被此操作支持。
  */
 int
 errdetail_relkind_not_supported(char relkind)

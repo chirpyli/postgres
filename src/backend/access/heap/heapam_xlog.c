@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * heapam_xlog.c
- *	  WAL replay logic for heap access method.
+ *	  堆访问方法（heap access method）的 WAL 重放逻辑。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -24,7 +24,7 @@
 
 
 /*
- * Replay XLOG_HEAP2_PRUNE_* records.
+ * Replay XLOG_HEAP2_PRUNE_* 记录。
  */
 static void
 heap_xlog_prune_freeze(XLogReaderState *record)
@@ -42,25 +42,22 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 	maindataptr += SizeOfHeapPrune;
 
 	/*
-	 * We will take an ordinary exclusive lock or a cleanup lock depending on
-	 * whether the XLHP_CLEANUP_LOCK flag is set.  With an ordinary exclusive
-	 * lock, we better not be doing anything that requires moving existing
-	 * tuple data.
+	 * 我们将根据 XLHP_CLEANUP_LOCK 标志是否设置，来使用普通排他锁或 cleanup
+	 * 锁。对于普通排他锁，我们最好不要执行任何需要移动已有元组数据的操作。
 	 */
 	Assert((xlrec.flags & XLHP_CLEANUP_LOCK) != 0 ||
 		   (xlrec.flags & (XLHP_HAS_REDIRECTIONS | XLHP_HAS_DEAD_ITEMS)) == 0);
 
 	/*
-	 * We are about to remove and/or freeze tuples.  In Hot Standby mode,
-	 * ensure that there are no queries running for which the removed tuples
-	 * are still visible or which still consider the frozen xids as running.
-	 * The conflict horizon XID comes after xl_heap_prune.
+	 * 我们即将删除和/或冻结元组。在 Hot Standby 模式下，要确保没有正在运行的
+	 * 查询仍然能看到这些被删除的元组，也没有查询仍然认为被冻结的 xid 处于
+	 * 运行状态。冲突边界 XID 紧跟在 xl_heap_prune 之后。
 	 */
 	if ((xlrec.flags & XLHP_HAS_CONFLICT_HORIZON) != 0)
 	{
 		TransactionId snapshot_conflict_horizon;
 
-		/* memcpy() because snapshot_conflict_horizon is stored unaligned */
+		/* memcpy() 是因为 snapshot_conflict_horizon 是未对齐存储的 */
 		memcpy(&snapshot_conflict_horizon, maindataptr, sizeof(TransactionId));
 		maindataptr += sizeof(TransactionId);
 
@@ -71,7 +68,7 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 	}
 
 	/*
-	 * If we have a full-page image, restore it and we're done.
+	 * 如果我们有全页镜像，就恢复它，然后就完成了。
 	 */
 	action = XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL,
 										   (xlrec.flags & XLHP_CLEANUP_LOCK) != 0,
@@ -98,8 +95,7 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 											   &nunused, &nowunused);
 
 		/*
-		 * Update all line pointers per the record, and repair fragmentation
-		 * if needed.
+		 * 根据记录更新所有行指针，并在需要时修复碎片。
 		 */
 		if (nredirected > 0 || ndead > 0 || nunused > 0)
 			heap_page_prune_execute(buffer,
@@ -108,20 +104,20 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 									nowdead, ndead,
 									nowunused, nunused);
 
-		/* Freeze tuples */
+		/* 冻结元组 */
 		for (int p = 0; p < nplans; p++)
 		{
 			HeapTupleFreeze frz;
 
 			/*
-			 * Convert freeze plan representation from WAL record into
-			 * per-tuple format used by heap_execute_freeze_tuple
+			 * 将冻结计划在 WAL 记录中的表示形式转换为
+			 * heap_execute_freeze_tuple 所使用的逐元组格式
 			 */
 			frz.xmax = plans[p].xmax;
 			frz.t_infomask2 = plans[p].t_infomask2;
 			frz.t_infomask = plans[p].t_infomask;
 			frz.frzflags = plans[p].frzflags;
-			frz.offset = InvalidOffsetNumber;	/* unused, but be tidy */
+			frz.offset = InvalidOffsetNumber;	/* 未使用，但保持整洁 */
 
 			for (int i = 0; i < plans[p].ntuples; i++)
 			{
@@ -135,12 +131,12 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 			}
 		}
 
-		/* There should be no more data */
+		/* 应该没有更多数据了 */
 		Assert((char *) frz_offsets == dataptr + datalen);
 
 		/*
-		 * Note: we don't worry about updating the page's prunability hints.
-		 * At worst this will cause an extra prune cycle to occur soon.
+		 * 注意：我们不必费心更新页面的可清理提示。最差情况下，这会导致
+		 * 不久后多进行一次清理周期。
 		 */
 
 		PageSetLSN(page, lsn);
@@ -148,10 +144,9 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 	}
 
 	/*
-	 * If we released any space or line pointers, update the free space map.
+	 * 如果我们释放了任何空间或行指针，就更新空闲空间映射。
 	 *
-	 * Do this regardless of a full-page image being applied, since the FSM
-	 * data is not in the page anyway.
+	 * 无论是否应用了全页镜像，都要这样做，因为 FSM 数据本来也不在页面中。
 	 */
 	if (BufferIsValid(buffer))
 	{
@@ -171,12 +166,11 @@ heap_xlog_prune_freeze(XLogReaderState *record)
 }
 
 /*
- * Replay XLOG_HEAP2_VISIBLE records.
+ * Replay XLOG_HEAP2_VISIBLE 记录。
  *
- * The critical integrity requirement here is that we must never end up with
- * a situation where the visibility map bit is set, and the page-level
- * PD_ALL_VISIBLE bit is clear.  If that were to occur, then a subsequent
- * page modification would fail to clear the visibility map bit.
+ * 这里至关重要的完整性要求是：我们绝不能出现可见性映射位被设置、而页面级的
+ * PD_ALL_VISIBLE 位被清除的情况。如果发生这种情况，后续对该页面的修改将无法
+ * 清除可见性映射位。
  */
 static void
 heap_xlog_visible(XLogReaderState *record)
@@ -195,13 +189,11 @@ heap_xlog_visible(XLogReaderState *record)
 	XLogRecGetBlockTag(record, 1, &rlocator, NULL, &blkno);
 
 	/*
-	 * If there are any Hot Standby transactions running that have an xmin
-	 * horizon old enough that this page isn't all-visible for them, they
-	 * might incorrectly decide that an index-only scan can skip a heap fetch.
+	 * 如果有任何 Hot Standby 事务正在运行，且其 xmin 边界足够旧、以至于该页面
+	 * 对它们并非全可见，那么它们可能会错误地认为仅索引扫描可以跳过堆读取。
 	 *
-	 * NB: It might be better to throw some kind of "soft" conflict here that
-	 * forces any index-only scan that is in flight to perform heap fetches,
-	 * rather than killing the transaction outright.
+	 * 注意：在此处抛出某种“软”冲突，强制任何正在进行的仅索引扫描去执行堆
+	 * 读取，可能比直接杀死事务更好。
 	 */
 	if (InHotStandby)
 		ResolveRecoveryConflictWithSnapshot(xlrec->snapshotConflictHorizon,
@@ -209,19 +201,16 @@ heap_xlog_visible(XLogReaderState *record)
 											rlocator);
 
 	/*
-	 * Read the heap page, if it still exists. If the heap file has dropped or
-	 * truncated later in recovery, we don't need to update the page, but we'd
-	 * better still update the visibility map.
+	 * 读取堆页面（如果它仍然存在）。如果在恢复过程中堆文件后来被删除或截断，
+	 * 我们就不需要更新该页面，但最好仍然更新可见性映射。
 	 */
 	action = XLogReadBufferForRedo(record, 1, &buffer);
 	if (action == BLK_NEEDS_REDO)
 	{
 		/*
-		 * We don't bump the LSN of the heap page when setting the visibility
-		 * map bit (unless checksums or wal_hint_bits is enabled, in which
-		 * case we must). This exposes us to torn page hazards, but since
-		 * we're not inspecting the existing page contents in any way, we
-		 * don't care.
+		 * 在设置可见性映射位时，我们不会提升堆页面的 LSN（除非启用了校验和或
+		 * wal_hint_bits，在这种情况下我们必须提升）。这使我们面临页面撕裂的
+		 * 风险，但由于我们根本不会以任何方式检查现有页面内容，所以我们并不在意。
 		 */
 		page = BufferGetPage(buffer);
 
@@ -235,9 +224,8 @@ heap_xlog_visible(XLogReaderState *record)
 	else if (action == BLK_RESTORED)
 	{
 		/*
-		 * If heap block was backed up, we already restored it and there's
-		 * nothing more to do. (This can only happen with checksums or
-		 * wal_log_hints enabled.)
+		 * 如果堆块已被备份，我们已经恢复了它，没有更多事情要做。（这只可能在
+		 * 启用了校验和或 wal_log_hints 时发生。）
 		 */
 	}
 
@@ -248,31 +236,25 @@ heap_xlog_visible(XLogReaderState *record)
 		UnlockReleaseBuffer(buffer);
 
 		/*
-		 * Since FSM is not WAL-logged and only updated heuristically, it
-		 * easily becomes stale in standbys.  If the standby is later promoted
-		 * and runs VACUUM, it will skip updating individual free space
-		 * figures for pages that became all-visible (or all-frozen, depending
-		 * on the vacuum mode,) which is troublesome when FreeSpaceMapVacuum
-		 * propagates too optimistic free space values to upper FSM layers;
-		 * later inserters try to use such pages only to find out that they
-		 * are unusable.  This can cause long stalls when there are many such
-		 * pages.
+		 * 由于 FSM 没有被 WAL 记录，并且只是启发式地更新，它在备机上很容易变得
+		 * 陈旧。如果备机后来被提升为主机并运行 VACUUM，它会跳过对变为全可见
+		 * （或全冻结，取决于 VACUUM 模式）的页面的各空闲空间数值的更新，而当
+		 * FreeSpaceMapVacuum 将过于乐观的空闲空间值传播到上层 FSM 时，这会成为
+		 * 问题；后续的插入者试图使用这些页面，结果却发现它们不可用。当存在大量
+		 * 此类页面时，这会导致长时间的停顿。
 		 *
-		 * Forestall those problems by updating FSM's idea about a page that
-		 * is becoming all-visible or all-frozen.
+		 * 通过更新 FSM 中关于正在变为全可见或全冻结页面的认识，来预防这些问题。
 		 *
-		 * Do this regardless of a full-page image being applied, since the
-		 * FSM data is not in the page anyway.
+		 * 无论是否应用了全页镜像，都要这样做，因为 FSM 数据本来也不在页面中。
 		 */
 		if (xlrec->flags & VISIBILITYMAP_VALID_BITS)
 			XLogRecordPageWithFreeSpace(rlocator, blkno, space);
 	}
 
 	/*
-	 * Even if we skipped the heap page update due to the LSN interlock, it's
-	 * still safe to update the visibility map.  Any WAL record that clears
-	 * the visibility map bit does so before checking the page LSN, so any
-	 * bits that need to be cleared will still be cleared.
+	 * 即使由于 LSN 互斥机制而跳过了堆页面更新，更新可见性映射仍然是安全的。
+	 * 任何清除可见性映射位的 WAL 记录都会在检查页面 LSN 之前执行清除，因此
+	 * 任何需要被清除的位仍然会被清除。
 	 */
 	if (XLogReadBufferForRedoExtended(record, 0, RBM_ZERO_ON_ERROR, false,
 									  &vmbuffer) == BLK_NEEDS_REDO)
@@ -281,16 +263,16 @@ heap_xlog_visible(XLogReaderState *record)
 		Relation	reln;
 		uint8		vmbits;
 
-		/* initialize the page if it was read as zeros */
+		/* 如果页面是以全零形式读入的，则初始化它 */
 		if (PageIsNew(vmpage))
 			PageInit(vmpage, BLCKSZ, 0);
 
-		/* remove VISIBILITYMAP_XLOG_* */
+		/* 移除 VISIBILITYMAP_XLOG_* */
 		vmbits = xlrec->flags & VISIBILITYMAP_VALID_BITS;
 
 		/*
-		 * XLogReadBufferForRedoExtended locked the buffer. But
-		 * visibilitymap_set will handle locking itself.
+		 * XLogReadBufferForRedoExtended 已经锁定了缓冲区。但 visibilitymap_set
+		 * 会自行处理加锁。
 		 */
 		LockBuffer(vmbuffer, BUFFER_LOCK_UNLOCK);
 
@@ -308,10 +290,10 @@ heap_xlog_visible(XLogReaderState *record)
 }
 
 /*
- * Given an "infobits" field from an XLog record, set the correct bits in the
- * given infomask and infomask2 for the tuple touched by the record.
+ * 给定一个来自 XLog 记录的 "infobits" 字段，为记录所涉及的元组在指定的
+ * infomask 和 infomask2 中设置正确的位。
  *
- * (This is the reverse of compute_infobits).
+ * （这是 compute_infobits 的逆操作）。
  */
 static void
 fix_infomask_from_infobits(uint8 infobits, uint16 *infomask, uint16 *infomask2)
@@ -326,7 +308,7 @@ fix_infomask_from_infobits(uint8 infobits, uint16 *infomask, uint16 *infomask2)
 		*infomask |= HEAP_XMAX_LOCK_ONLY;
 	if (infobits & XLHL_XMAX_EXCL_LOCK)
 		*infomask |= HEAP_XMAX_EXCL_LOCK;
-	/* note HEAP_XMAX_SHR_LOCK isn't considered here */
+	/* 注意：这里没有考虑 HEAP_XMAX_SHR_LOCK */
 	if (infobits & XLHL_XMAX_KEYSHR_LOCK)
 		*infomask |= HEAP_XMAX_KEYSHR_LOCK;
 
@@ -335,7 +317,7 @@ fix_infomask_from_infobits(uint8 infobits, uint16 *infomask, uint16 *infomask2)
 }
 
 /*
- * Replay XLOG_HEAP_DELETE records.
+ * Replay XLOG_HEAP_DELETE 记录。
  */
 static void
 heap_xlog_delete(XLogReaderState *record)
@@ -355,8 +337,7 @@ heap_xlog_delete(XLogReaderState *record)
 	ItemPointerSetOffsetNumber(&target_tid, xlrec->offnum);
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_DELETE_ALL_VISIBLE_CLEARED)
 	{
@@ -392,13 +373,13 @@ heap_xlog_delete(XLogReaderState *record)
 			HeapTupleHeaderSetXmin(htup, InvalidTransactionId);
 		HeapTupleHeaderSetCmax(htup, FirstCommandId, false);
 
-		/* Mark the page as a candidate for pruning */
+		/* 将页面标记为清理的候选 */
 		PageSetPrunable(page, XLogRecGetXid(record));
 
 		if (xlrec->flags & XLH_DELETE_ALL_VISIBLE_CLEARED)
 			PageClearAllVisible(page);
 
-		/* Make sure t_ctid is set correctly */
+		/* 确保 t_ctid 被正确设置 */
 		if (xlrec->flags & XLH_DELETE_IS_PARTITION_MOVE)
 			HeapTupleHeaderSetMovedPartitions(htup);
 		else
@@ -411,7 +392,7 @@ heap_xlog_delete(XLogReaderState *record)
 }
 
 /*
- * Replay XLOG_HEAP_INSERT records.
+ * Replay XLOG_HEAP_INSERT 记录。
  */
 static void
 heap_xlog_insert(XLogReaderState *record)
@@ -438,12 +419,11 @@ heap_xlog_insert(XLogReaderState *record)
 	ItemPointerSetBlockNumber(&target_tid, blkno);
 	ItemPointerSetOffsetNumber(&target_tid, xlrec->offnum);
 
-	/* No freezing in the heap_insert() code path */
+	/* heap_insert() 代码路径中不会冻结 */
 	Assert(!(xlrec->flags & XLH_INSERT_ALL_FROZEN_SET));
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_INSERT_ALL_VISIBLE_CLEARED)
 	{
@@ -457,8 +437,7 @@ heap_xlog_insert(XLogReaderState *record)
 	}
 
 	/*
-	 * If we inserted the first and only tuple on the page, re-initialize the
-	 * page from scratch.
+	 * 如果我们插入的是页面上第一个也是唯一一个元组，就从头重新初始化该页面。
 	 */
 	if (XLogRecGetInfo(record) & XLOG_HEAP_INIT_PAGE)
 	{
@@ -488,7 +467,7 @@ heap_xlog_insert(XLogReaderState *record)
 
 		htup = &tbuf.hdr;
 		MemSet(htup, 0, SizeofHeapTupleHeader);
-		/* PG73FORMAT: get bitmap [+ padding] [+ oid] + data */
+		/* PG73FORMAT: 获取 bitmap [+ padding] [+ oid] + data */
 		memcpy((char *) htup + SizeofHeapTupleHeader,
 			   data,
 			   newlen);
@@ -504,7 +483,7 @@ heap_xlog_insert(XLogReaderState *record)
 						true, true) == InvalidOffsetNumber)
 			elog(PANIC, "failed to add tuple");
 
-		freespace = PageGetHeapFreeSpace(page); /* needed to update FSM below */
+		freespace = PageGetHeapFreeSpace(page); /* 用于更新下面的 FSM */
 
 		PageSetLSN(page, lsn);
 
@@ -517,20 +496,18 @@ heap_xlog_insert(XLogReaderState *record)
 		UnlockReleaseBuffer(buffer);
 
 	/*
-	 * If the page is running low on free space, update the FSM as well.
-	 * Arbitrarily, our definition of "low" is less than 20%. We can't do much
-	 * better than that without knowing the fill-factor for the table.
+	 * 如果页面的空闲空间很少，也要更新 FSM。我们随意地将“很少”定义为低于
+	 * 20%。在不了解表填充因子的情况下，我们做不到更好。
 	 *
-	 * XXX: Don't do this if the page was restored from full page image. We
-	 * don't bother to update the FSM in that case, it doesn't need to be
-	 * totally accurate anyway.
+	 * XXX: 如果页面是从全页镜像恢复的，就不要这样做。我们在那种情况下不费心
+	 * 更新 FSM，反正它也不需要完全准确。
 	 */
 	if (action == BLK_NEEDS_REDO && freespace < BLCKSZ / 5)
 		XLogRecordPageWithFreeSpace(target_locator, blkno, freespace);
 }
 
 /*
- * Replay XLOG_HEAP2_MULTI_INSERT records.
+ * Replay XLOG_HEAP2_MULTI_INSERT 记录。
  */
 static void
 heap_xlog_multi_insert(XLogReaderState *record)
@@ -554,20 +531,18 @@ heap_xlog_multi_insert(XLogReaderState *record)
 	XLogRedoAction action;
 
 	/*
-	 * Insertion doesn't overwrite MVCC data, so no conflict processing is
-	 * required.
+	 * 插入操作不会覆盖 MVCC 数据，因此不需要冲突处理。
 	 */
 	xlrec = (xl_heap_multi_insert *) XLogRecGetData(record);
 
 	XLogRecGetBlockTag(record, 0, &rlocator, NULL, &blkno);
 
-	/* check that the mutually exclusive flags are not both set */
+	/* 检查互斥的标志没有同时被设置 */
 	Assert(!((xlrec->flags & XLH_INSERT_ALL_VISIBLE_CLEARED) &&
 			 (xlrec->flags & XLH_INSERT_ALL_FROZEN_SET)));
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_INSERT_ALL_VISIBLE_CLEARED)
 	{
@@ -595,7 +570,7 @@ heap_xlog_multi_insert(XLogReaderState *record)
 		char	   *endptr;
 		Size		len;
 
-		/* Tuples are stored as block data */
+		/* 元组以块数据的形式存储 */
 		tupdata = XLogRecGetBlockData(record, 0, &len);
 		endptr = tupdata + len;
 
@@ -607,9 +582,8 @@ heap_xlog_multi_insert(XLogReaderState *record)
 			xl_multi_insert_tuple *xlhdr;
 
 			/*
-			 * If we're reinitializing the page, the tuples are stored in
-			 * order from FirstOffsetNumber. Otherwise there's an array of
-			 * offsets in the WAL record, and the tuples come after that.
+			 * 如果我们正在重新初始化页面，元组会按从 FirstOffsetNumber 开始的顺序
+			 * 存储。否则，WAL 记录中会有一个偏移量数组，元组紧随其后。
 			 */
 			if (isinit)
 				offnum = FirstOffsetNumber + i;
@@ -625,7 +599,7 @@ heap_xlog_multi_insert(XLogReaderState *record)
 			Assert(newlen <= MaxHeapTupleSize);
 			htup = &tbuf.hdr;
 			MemSet(htup, 0, SizeofHeapTupleHeader);
-			/* PG73FORMAT: get bitmap [+ padding] [+ oid] + data */
+			/* PG73FORMAT: 获取 bitmap [+ padding] [+ oid] + data */
 			memcpy((char *) htup + SizeofHeapTupleHeader,
 				   tupdata,
 				   newlen);
@@ -647,14 +621,14 @@ heap_xlog_multi_insert(XLogReaderState *record)
 		if (tupdata != endptr)
 			elog(PANIC, "total tuple length mismatch");
 
-		freespace = PageGetHeapFreeSpace(page); /* needed to update FSM below */
+		freespace = PageGetHeapFreeSpace(page); /* 用于更新下面的 FSM */
 
 		PageSetLSN(page, lsn);
 
 		if (xlrec->flags & XLH_INSERT_ALL_VISIBLE_CLEARED)
 			PageClearAllVisible(page);
 
-		/* XLH_INSERT_ALL_FROZEN_SET implies that all tuples are visible */
+		/* XLH_INSERT_ALL_FROZEN_SET 意味着所有元组都是可见的 */
 		if (xlrec->flags & XLH_INSERT_ALL_FROZEN_SET)
 			PageSetAllVisible(page);
 
@@ -664,20 +638,18 @@ heap_xlog_multi_insert(XLogReaderState *record)
 		UnlockReleaseBuffer(buffer);
 
 	/*
-	 * If the page is running low on free space, update the FSM as well.
-	 * Arbitrarily, our definition of "low" is less than 20%. We can't do much
-	 * better than that without knowing the fill-factor for the table.
+	 * 如果页面的空闲空间很少，也要更新 FSM。我们随意地将“很少”定义为低于
+	 * 20%。在不了解表填充因子的情况下，我们做不到更好。
 	 *
-	 * XXX: Don't do this if the page was restored from full page image. We
-	 * don't bother to update the FSM in that case, it doesn't need to be
-	 * totally accurate anyway.
+	 * XXX: 如果页面是从全页镜像恢复的，就不要这样做。我们在那种情况下不费心
+	 * 更新 FSM，反正它也不需要完全准确。
 	 */
 	if (action == BLK_NEEDS_REDO && freespace < BLCKSZ / 5)
 		XLogRecordPageWithFreeSpace(rlocator, blkno, freespace);
 }
 
 /*
- * Replay XLOG_HEAP_UPDATE and XLOG_HEAP_HOT_UPDATE records.
+ * Replay XLOG_HEAP_UPDATE 和 XLOG_HEAP_HOT_UPDATE 记录。
  */
 static void
 heap_xlog_update(XLogReaderState *record, bool hot_update)
@@ -709,14 +681,14 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 	XLogRedoAction oldaction;
 	XLogRedoAction newaction;
 
-	/* initialize to keep the compiler quiet */
+	/* 初始化以保持编译器安静 */
 	oldtup.t_data = NULL;
 	oldtup.t_len = 0;
 
 	XLogRecGetBlockTag(record, 0, &rlocator, NULL, &newblk);
 	if (XLogRecGetBlockTagExtended(record, 1, NULL, NULL, &oldblk, NULL))
 	{
-		/* HOT updates are never done across pages */
+		/* HOT 更新绝不会跨页面进行 */
 		Assert(!hot_update);
 	}
 	else
@@ -725,8 +697,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 	ItemPointerSet(&newtid, newblk, xlrec->new_offnum);
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_UPDATE_OLD_ALL_VISIBLE_CLEARED)
 	{
@@ -740,16 +711,13 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 	}
 
 	/*
-	 * In normal operation, it is important to lock the two pages in
-	 * page-number order, to avoid possible deadlocks against other update
-	 * operations going the other way.  However, during WAL replay there can
-	 * be no other update happening, so we don't need to worry about that. But
-	 * we *do* need to worry that we don't expose an inconsistent state to Hot
-	 * Standby queries --- so the original page can't be unlocked before we've
-	 * added the new tuple to the new page.
+	 * 在正常操作中，按页号顺序锁定两个页面非常重要，以避免与其他反向进行的
+	 * 更新操作发生可能的死锁。然而，在 WAL 重放期间不可能有其他更新发生，所以
+	 * 我们不必担心这一点。但我们的确需要担心：不能向 Hot Standby 查询暴露
+	 * 不一致的状态——因此在将新元组添加到新页面之前，不能解锁原始页面。
 	 */
 
-	/* Deal with old tuple version */
+	/* 处理旧的元组版本 */
 	oldaction = XLogReadBufferForRedo(record, (oldblk == newblk) ? 0 : 1,
 									  &obuffer);
 	if (oldaction == BLK_NEEDS_REDO)
@@ -777,10 +745,10 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 								   &htup->t_infomask2);
 		HeapTupleHeaderSetXmax(htup, xlrec->old_xmax);
 		HeapTupleHeaderSetCmax(htup, FirstCommandId, false);
-		/* Set forward chain link in t_ctid */
+		/* 在 t_ctid 中设置前向链链接 */
 		htup->t_ctid = newtid;
 
-		/* Mark the page as a candidate for pruning */
+		/* 将页面标记为清理的候选 */
 		PageSetPrunable(page, XLogRecGetXid(record));
 
 		if (xlrec->flags & XLH_UPDATE_OLD_ALL_VISIBLE_CLEARED)
@@ -791,7 +759,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 	}
 
 	/*
-	 * Read the page the new tuple goes into, if different from old.
+	 * 读取新元组要插入的页面（如果与旧页面不同的话）。
 	 */
 	if (oldblk == newblk)
 	{
@@ -809,8 +777,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		newaction = XLogReadBufferForRedo(record, 0, &nbuffer);
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_UPDATE_NEW_ALL_VISIBLE_CLEARED)
 	{
@@ -823,7 +790,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		FreeFakeRelcacheEntry(reln);
 	}
 
-	/* Deal with new tuple */
+	/* 处理新元组 */
 	if (newaction == BLK_NEEDS_REDO)
 	{
 		char	   *recdata;
@@ -862,26 +829,25 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		htup = &tbuf.hdr;
 		MemSet(htup, 0, SizeofHeapTupleHeader);
 
-		/*
-		 * Reconstruct the new tuple using the prefix and/or suffix from the
-		 * old tuple, and the data stored in the WAL record.
-		 */
+			/*
+			 * 利用旧元组的前缀和/或后缀，以及 WAL 记录中存储的数据，重建新元组。
+			 */
 		newp = (char *) htup + SizeofHeapTupleHeader;
 		if (prefixlen > 0)
 		{
 			int			len;
 
-			/* copy bitmap [+ padding] [+ oid] from WAL record */
+			/* 从 WAL 记录复制 bitmap [+ padding] [+ oid] */
 			len = xlhdr.t_hoff - SizeofHeapTupleHeader;
 			memcpy(newp, recdata, len);
 			recdata += len;
 			newp += len;
 
-			/* copy prefix from old tuple */
+			/* 从旧元组复制前缀 */
 			memcpy(newp, (char *) oldtup.t_data + oldtup.t_data->t_hoff, prefixlen);
 			newp += prefixlen;
 
-			/* copy new tuple data from WAL record */
+			/* 从 WAL 记录复制新元组数据 */
 			len = tuplen - (xlhdr.t_hoff - SizeofHeapTupleHeader);
 			memcpy(newp, recdata, len);
 			recdata += len;
@@ -890,8 +856,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		else
 		{
 			/*
-			 * copy bitmap [+ padding] [+ oid] + data from record, all in one
-			 * go
+			 * 一次性地从记录中复制 bitmap [+ padding] [+ oid] + data
 			 */
 			memcpy(newp, recdata, tuplen);
 			recdata += tuplen;
@@ -899,7 +864,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		}
 		Assert(recdata == recdata_end);
 
-		/* copy suffix from old tuple */
+		/* 从旧元组复制后缀 */
 		if (suffixlen > 0)
 			memcpy(newp, (char *) oldtup.t_data + oldtup.t_len - suffixlen, suffixlen);
 
@@ -911,7 +876,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		HeapTupleHeaderSetXmin(htup, XLogRecGetXid(record));
 		HeapTupleHeaderSetCmin(htup, FirstCommandId);
 		HeapTupleHeaderSetXmax(htup, xlrec->new_xmax);
-		/* Make sure there is no forward chain link in t_ctid */
+		/* 确保 t_ctid 中没有前向链链接 */
 		htup->t_ctid = newtid;
 
 		offnum = PageAddItem(page, (Item) htup, newlen, offnum, true, true);
@@ -921,7 +886,7 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		if (xlrec->flags & XLH_UPDATE_NEW_ALL_VISIBLE_CLEARED)
 			PageClearAllVisible(page);
 
-		freespace = PageGetHeapFreeSpace(page); /* needed to update FSM below */
+		freespace = PageGetHeapFreeSpace(page); /* 用于更新下面的 FSM */
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(nbuffer);
@@ -933,26 +898,22 @@ heap_xlog_update(XLogReaderState *record, bool hot_update)
 		UnlockReleaseBuffer(obuffer);
 
 	/*
-	 * If the new page is running low on free space, update the FSM as well.
-	 * Arbitrarily, our definition of "low" is less than 20%. We can't do much
-	 * better than that without knowing the fill-factor for the table.
+	 * 如果新页面的空闲空间很少，也要更新 FSM。我们随意地将“很少”定义为低于
+	 * 20%。在不了解表填充因子的情况下，我们做不到更好。
 	 *
-	 * However, don't update the FSM on HOT updates, because after crash
-	 * recovery, either the old or the new tuple will certainly be dead and
-	 * prunable. After pruning, the page will have roughly as much free space
-	 * as it did before the update, assuming the new tuple is about the same
-	 * size as the old one.
+	 * 然而，不要在 HOT 更新时更新 FSM，因为在崩溃恢复后，旧元组或新元组之一
+	 * 必然已死且可被清理。假设新元组与旧元组大小大致相同，在清理之后，页面的
+	 * 空闲空间将大致与更新前一样多。
 	 *
-	 * XXX: Don't do this if the page was restored from full page image. We
-	 * don't bother to update the FSM in that case, it doesn't need to be
-	 * totally accurate anyway.
+	 * XXX: 如果页面是从全页镜像恢复的，就不要这样做。我们在那种情况下不费心
+	 * 更新 FSM，反正它也不需要完全准确。
 	 */
 	if (newaction == BLK_NEEDS_REDO && !hot_update && freespace < BLCKSZ / 5)
 		XLogRecordPageWithFreeSpace(rlocator, newblk, freespace);
 }
 
 /*
- * Replay XLOG_HEAP_CONFIRM records.
+ * Replay XLOG_HEAP_CONFIRM 记录。
  */
 static void
 heap_xlog_confirm(XLogReaderState *record)
@@ -979,7 +940,7 @@ heap_xlog_confirm(XLogReaderState *record)
 		htup = (HeapTupleHeader) PageGetItem(page, lp);
 
 		/*
-		 * Confirm tuple as actually inserted
+		 * 将元组确认为实际已插入
 		 */
 		ItemPointerSet(&htup->t_ctid, BufferGetBlockNumber(buffer), offnum);
 
@@ -991,7 +952,7 @@ heap_xlog_confirm(XLogReaderState *record)
 }
 
 /*
- * Replay XLOG_HEAP_LOCK records.
+ * Replay XLOG_HEAP_LOCK 记录。
  */
 static void
 heap_xlog_lock(XLogReaderState *record)
@@ -1005,8 +966,7 @@ heap_xlog_lock(XLogReaderState *record)
 	HeapTupleHeader htup;
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_LOCK_ALL_FROZEN_CLEARED)
 	{
@@ -1044,13 +1004,12 @@ heap_xlog_lock(XLogReaderState *record)
 								   &htup->t_infomask2);
 
 		/*
-		 * Clear relevant update flags, but only if the modified infomask says
-		 * there's no update.
+		 * 清除相关的更新标志，但仅在修改后的 infomask 表明没有更新时才清除。
 		 */
 		if (HEAP_XMAX_IS_LOCKED_ONLY(htup->t_infomask))
 		{
 			HeapTupleHeaderClearHotUpdated(htup);
-			/* Make sure there is no forward chain link in t_ctid */
+			/* 确保 t_ctid 中没有前向链链接 */
 			ItemPointerSet(&htup->t_ctid,
 						   BufferGetBlockNumber(buffer),
 						   offnum);
@@ -1065,7 +1024,7 @@ heap_xlog_lock(XLogReaderState *record)
 }
 
 /*
- * Replay XLOG_HEAP2_LOCK_UPDATED records.
+ * Replay XLOG_HEAP2_LOCK_UPDATED 记录。
  */
 static void
 heap_xlog_lock_updated(XLogReaderState *record)
@@ -1081,8 +1040,7 @@ heap_xlog_lock_updated(XLogReaderState *record)
 	xlrec = (xl_heap_lock_updated *) XLogRecGetData(record);
 
 	/*
-	 * The visibility map may need to be fixed even if the heap page is
-	 * already up-to-date.
+	 * 即使堆页面已经是最新的，可见性映射可能仍然需要被修复。
 	 */
 	if (xlrec->flags & XLH_LOCK_ALL_FROZEN_CLEARED)
 	{
@@ -1128,7 +1086,7 @@ heap_xlog_lock_updated(XLogReaderState *record)
 }
 
 /*
- * Replay XLOG_HEAP_INPLACE records.
+ * Replay XLOG_HEAP_INPLACE 记录。
  */
 static void
 heap_xlog_inplace(XLogReaderState *record)
@@ -1183,8 +1141,8 @@ heap_redo(XLogReaderState *record)
 	uint8		info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
 
 	/*
-	 * These operations don't overwrite MVCC data so no conflict processing is
-	 * required. The ones in heap2 rmgr do.
+	 * 这些操作不会覆盖 MVCC 数据，因此不需要冲突处理。heap2 资源管理器中的
+	 * 那些操作则需要。
 	 */
 
 	switch (info & XLOG_HEAP_OPMASK)
@@ -1200,11 +1158,10 @@ heap_redo(XLogReaderState *record)
 			break;
 		case XLOG_HEAP_TRUNCATE:
 
-			/*
-			 * TRUNCATE is a no-op because the actions are already logged as
-			 * SMGR WAL records.  TRUNCATE WAL record only exists for logical
-			 * decoding.
-			 */
+		/*
+		 * TRUNCATE 是一个空操作，因为其动作已经作为 SMGR WAL 记录被记录了。
+		 * TRUNCATE WAL 记录仅用于逻辑解码。
+		 */
 			break;
 		case XLOG_HEAP_HOT_UPDATE:
 			heap_xlog_update(record, true);
@@ -1246,10 +1203,9 @@ heap2_redo(XLogReaderState *record)
 			break;
 		case XLOG_HEAP2_NEW_CID:
 
-			/*
-			 * Nothing to do on a real replay, only used during logical
-			 * decoding.
-			 */
+		/*
+		 * 在真正的重放时无需做任何事，它仅在逻辑解码期间使用。
+		 */
 			break;
 		case XLOG_HEAP2_REWRITE:
 			heap_xlog_logical_rewrite(record);
@@ -1260,7 +1216,7 @@ heap2_redo(XLogReaderState *record)
 }
 
 /*
- * Mask a heap page before performing consistency checks on it.
+ * 在对堆页面执行一致性检查之前，对页面进行掩码处理。
  */
 void
 heap_mask(char *pagedata, BlockNumber blkno)
@@ -1285,53 +1241,47 @@ heap_mask(char *pagedata, BlockNumber blkno)
 			HeapTupleHeader page_htup = (HeapTupleHeader) page_item;
 
 			/*
-			 * If xmin of a tuple is not yet frozen, we should ignore
-			 * differences in hint bits, since they can be set without
-			 * emitting WAL.
+			 * 如果元组的 xmin 尚未冻结，我们应该忽略 hint 位上的差异，因为
+			 * 它们可以在不写 WAL 的情况下被设置。
 			 */
 			if (!HeapTupleHeaderXminFrozen(page_htup))
 				page_htup->t_infomask &= ~HEAP_XACT_MASK;
 			else
 			{
-				/* Still we need to mask xmax hint bits. */
+				/* 我们仍然需要掩码掉 xmax 的 hint 位。 */
 				page_htup->t_infomask &= ~HEAP_XMAX_INVALID;
 				page_htup->t_infomask &= ~HEAP_XMAX_COMMITTED;
 			}
 
 			/*
-			 * During replay, we set Command Id to FirstCommandId. Hence, mask
-			 * it. See heap_xlog_insert() for details.
+			 * 在重放期间，我们将 Command Id 设置为 FirstCommandId。因此，对它也
+			 * 进行掩码。详见 heap_xlog_insert()。
 			 */
 			page_htup->t_choice.t_heap.t_field3.t_cid = MASK_MARKER;
 
 			/*
-			 * For a speculative tuple, heap_insert() does not set ctid in the
-			 * caller-passed heap tuple itself, leaving the ctid field to
-			 * contain a speculative token value - a per-backend monotonically
-			 * increasing identifier. Besides, it does not WAL-log ctid under
-			 * any circumstances.
+			 * 对于一个推测性元组（speculative tuple），heap_insert() 不会在调用者
+			 * 传入的堆元组本身中设置 ctid，而是让 ctid 字段包含一个推测性令牌值
+			 * ——一个每个后端单调递增的标识符。此外，它在任何情况下都不会将 ctid
+			 * 写入 WAL。
 			 *
-			 * During redo, heap_xlog_insert() sets t_ctid to current block
-			 * number and self offset number. It doesn't care about any
-			 * speculative insertions on the primary. Hence, we set t_ctid to
-			 * current block number and self offset number to ignore any
-			 * inconsistency.
+			 * 在 redo 期间，heap_xlog_insert() 将 t_ctid 设置为当前块号和自身偏移
+			 * 号。它并不关心主库上任何推测性插入。因此，我们将 t_ctid 设置为当前
+			 * 块号和自身偏移号，以忽略任何不一致。
 			 */
 			if (HeapTupleHeaderIsSpeculative(page_htup))
 				ItemPointerSet(&page_htup->t_ctid, blkno, off);
 
 			/*
-			 * NB: Not ignoring ctid changes due to the tuple having moved
-			 * (i.e. HeapTupleHeaderIndicatesMovedPartitions), because that's
-			 * important information that needs to be in-sync between primary
-			 * and standby, and thus is WAL logged.
+			 * 注意：不忽略因元组移动（即 HeapTupleHeaderIndicatesMovedPartitions）
+			 * 而导致的 ctid 变更，因为这是需要在主库和备库之间保持同步的重要信息，
+			 * 因此会被写入 WAL。
 			 */
 		}
 
-		/*
-		 * Ignore any padding bytes after the tuple, when the length of the
-		 * item is not MAXALIGNed.
-		 */
+			/*
+			 * 当项的长度不是 MAXALIGN 对齐时，忽略元组之后的任何填充字节。
+			 */
 		if (ItemIdHasStorage(iid))
 		{
 			int			len = ItemIdGetLength(iid);

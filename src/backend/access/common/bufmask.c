@@ -1,13 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * bufmask.c
- *	  Routines for buffer masking. Used to mask certain bits
- *	  in a page which can be different when the WAL is generated
- *	  and when the WAL is applied.
+ *	  用于缓冲区掩码处理的例程。用于屏蔽页面中某些在 WAL 生成时
+ *	  与 WAL 应用时不相同的位。
  *
  * Portions Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
- * Contains common routines required for masking a page.
+ * 包含屏蔽页面所需的通用例程。
  *
  * IDENTIFICATION
  *	  src/backend/access/common/bufmask.c
@@ -22,10 +21,9 @@
 /*
  * mask_page_lsn_and_checksum
  *
- * In consistency checks, the LSN of the two pages compared will likely be
- * different because of concurrent operations when the WAL is generated and
- * the state of the page when WAL is applied. Also, mask out checksum as
- * masking anything else on page means checksum is not going to match as well.
+ * 在一致性检查中，被比较的两个页面的 LSN 很可能不同，因为 WAL 生成时
+ * 存在并发操作，而 WAL 应用时页面状态已变。同时屏蔽掉校验和，因为
+ * 屏蔽页面上其它任何内容都意味着校验和也将无法匹配。
  */
 void
 mask_page_lsn_and_checksum(Page page)
@@ -39,25 +37,24 @@ mask_page_lsn_and_checksum(Page page)
 /*
  * mask_page_hint_bits
  *
- * Mask hint bits in PageHeader. We want to ignore differences in hint bits,
- * since they can be set without emitting any WAL.
+ * 屏蔽 PageHeader 中的提示位。我们希望忽略提示位上的差异，
+ * 因为它们可以在不写任何 WAL 的情况下被设置。
  */
 void
 mask_page_hint_bits(Page page)
 {
 	PageHeader	phdr = (PageHeader) page;
 
-	/* Ignore prune_xid (it's like a hint-bit) */
+	/* 忽略 prune_xid（它类似于一个提示位） */
 	phdr->pd_prune_xid = MASK_MARKER;
 
-	/* Ignore PD_PAGE_FULL and PD_HAS_FREE_LINES flags, they are just hints. */
+	/* 忽略 PD_PAGE_FULL 和 PD_HAS_FREE_LINES 标志，它们只是提示位。 */
 	PageClearFull(page);
 	PageClearHasFreeLinePointers(page);
 
 	/*
-	 * During replay, if the page LSN has advanced past our XLOG record's LSN,
-	 * we don't mark the page all-visible. See heap_xlog_visible() for
-	 * details.
+	 * 在回放期间，如果页面 LSN 已超过我们 XLOG 记录的 LSN，
+	 * 我们不会将页面标记为全部可见。详见 heap_xlog_visible()。
 	 */
 	PageClearAllVisible(page);
 }
@@ -65,7 +62,7 @@ mask_page_hint_bits(Page page)
 /*
  * mask_unused_space
  *
- * Mask the unused space of a page between pd_lower and pd_upper.
+ * 屏蔽页面上 pd_lower 与 pd_upper 之间的未使用空间。
  */
 void
 mask_unused_space(Page page)
@@ -74,7 +71,7 @@ mask_unused_space(Page page)
 	int			pd_upper = ((PageHeader) page)->pd_upper;
 	int			pd_special = ((PageHeader) page)->pd_special;
 
-	/* Sanity check */
+	/* 合理性检查 */
 	if (pd_lower > pd_upper || pd_special < pd_upper ||
 		pd_lower < SizeOfPageHeaderData || pd_special > BLCKSZ)
 	{
@@ -88,8 +85,8 @@ mask_unused_space(Page page)
 /*
  * mask_lp_flags
  *
- * In some index AMs, line pointer flags can be modified on the primary
- * without emitting any WAL record.
+ * 在某些索引访问方法中，行指针标志可以在主表上被修改，
+ * 而不写任何 WAL 记录。
  */
 void
 mask_lp_flags(Page page)
@@ -112,17 +109,16 @@ mask_lp_flags(Page page)
 /*
  * mask_page_content
  *
- * In some index AMs, the contents of deleted pages need to be almost
- * completely ignored.
+ * 在某些索引访问方法中，被删除页面的内容几乎需要被完全忽略。
  */
 void
 mask_page_content(Page page)
 {
-	/* Mask Page Content */
+	/* 屏蔽页面内容 */
 	memset(page + SizeOfPageHeaderData, MASK_MARKER,
 		   BLCKSZ - SizeOfPageHeaderData);
 
-	/* Mask pd_lower and pd_upper */
+	/* 屏蔽 pd_lower 和 pd_upper */
 	memset(&((PageHeader) page)->pd_lower, MASK_MARKER,
 		   sizeof(uint16));
 	memset(&((PageHeader) page)->pd_upper, MASK_MARKER,

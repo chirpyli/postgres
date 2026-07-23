@@ -1,14 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * attmap.c
- *	  Attribute mapping support.
+ *	  属性映射支持。
  *
- * This file provides utility routines to build and manage attribute
- * mappings by comparing input and output TupleDescs.  Such mappings
- * are typically used by DDL operating on inheritance and partition trees
- * to do a conversion between rowtypes logically equivalent but with
- * columns in a different order, taking into account dropped columns.
- * They are also used by the tuple conversion routines in tupconvert.c.
+ * 本文件提供通过比较输入与输出 TupleDesc 来构建和管理属性映射的
+ * 工具例程。此类映射通常被作用于继承树与分区树的 DDL 用来在逻辑上
+ * 等价、但列顺序不同的行类型之间进行转换，同时考虑被删除的列。
+ * tupconvert.c 中的元组转换例程也使用它们。
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -33,8 +31,7 @@ static bool check_attrmap_match(TupleDesc indesc,
 /*
  * make_attrmap
  *
- * Utility routine to allocate an attribute map in the current memory
- * context.
+ * 在当前内存上下文中分配一个属性映射的工具例程。
  */
 AttrMap *
 make_attrmap(int maplen)
@@ -50,7 +47,7 @@ make_attrmap(int maplen)
 /*
  * free_attrmap
  *
- * Utility routine to release an attribute map.
+ * 释放一个属性映射的工具例程。
  */
 void
 free_attrmap(AttrMap *map)
@@ -62,14 +59,13 @@ free_attrmap(AttrMap *map)
 /*
  * build_attrmap_by_position
  *
- * Return a palloc'd bare attribute map for tuple conversion, matching input
- * and output columns by position.  Dropped columns are ignored in both input
- * and output, marked as 0.  This is normally a subroutine for
- * convert_tuples_by_position in tupconvert.c, but it can be used standalone.
+ * 返回一个 palloc 分配的、用于元组转换的裸属性映射，按位置匹配输入
+ * 列与输出列。被删除的列在输入和输出中均被忽略，标记为 0。这通常
+ * 是 tupconvert.c 中 convert_tuples_by_position 的子例程，但也可
+ * 单独使用。
  *
- * Note: the errdetail messages speak of indesc as the "returned" rowtype,
- * outdesc as the "expected" rowtype.  This is okay for current uses but
- * might need generalization in future.
+ * 注意：errdetail 消息将 indesc 称为“返回”的行类型，将 outdesc 称为
+ * “期望”的行类型。这对当前用途没问题，但将来可能需要一般化。
  */
 AttrMap *
 build_attrmap_by_position(TupleDesc indesc,
@@ -84,22 +80,21 @@ build_attrmap_by_position(TupleDesc indesc,
 	int			j;
 	bool		same;
 
-	/*
-	 * The length is computed as the number of attributes of the expected
-	 * rowtype as it includes dropped attributes in its count.
-	 */
+/*
+ * 长度按期望行类型的属性数量计算，因为它在计数中包含了被删除的属性。
+ */
 	n = outdesc->natts;
 	attrMap = make_attrmap(n);
 
-	j = 0;						/* j is next physical input attribute */
-	nincols = noutcols = 0;		/* these count non-dropped attributes */
+	j = 0;						/* j 是下一个物理输入属性 */
+	nincols = noutcols = 0;		/* 它们统计非删除的属性 */
 	same = true;
 	for (i = 0; i < n; i++)
 	{
 		Form_pg_attribute outatt = TupleDescAttr(outdesc, i);
 
 		if (outatt->attisdropped)
-			continue;			/* attrMap->attnums[i] is already 0 */
+			continue;			/* attrMap->attnums[i] 已经为 0 */
 		noutcols++;
 		for (; j < indesc->natts; j++)
 		{
@@ -109,7 +104,7 @@ build_attrmap_by_position(TupleDesc indesc,
 				continue;
 			nincols++;
 
-			/* Found matching column, now check type */
+			/* 找到匹配的列，现在检查类型 */
 			if (outatt->atttypid != inatt->atttypid ||
 				(outatt->atttypmod != inatt->atttypmod && outatt->atttypmod >= 0))
 				ereport(ERROR,
@@ -127,19 +122,19 @@ build_attrmap_by_position(TupleDesc indesc,
 			break;
 		}
 		if (attrMap->attnums[i] == 0)
-			same = false;		/* we'll complain below */
+			same = false;		/* 我们会在下方报错 */
 	}
 
-	/* Check for unused input columns */
+	/* 检查未使用的输入列 */
 	for (; j < indesc->natts; j++)
 	{
 		if (TupleDescCompactAttr(indesc, j)->attisdropped)
 			continue;
 		nincols++;
-		same = false;			/* we'll complain below */
+		same = false;			/* 我们会在下方报错 */
 	}
 
-	/* Report column count mismatch using the non-dropped-column counts */
+	/* 使用非删除列计数报告列数不匹配 */
 	if (!same)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -148,10 +143,10 @@ build_attrmap_by_position(TupleDesc indesc,
 						   "expected column count (%d).",
 						   nincols, noutcols)));
 
-	/* Check if the map has a one-to-one match */
+	/* 检查映射是否为一一匹配 */
 	if (check_attrmap_match(indesc, outdesc, attrMap))
 	{
-		/* Runtime conversion is not needed */
+		/* 不需要运行时转换 */
 		free_attrmap(attrMap);
 		return NULL;
 	}
@@ -162,14 +157,14 @@ build_attrmap_by_position(TupleDesc indesc,
 /*
  * build_attrmap_by_name
  *
- * Return a palloc'd bare attribute map for tuple conversion, matching input
- * and output columns by name.  (Dropped columns are ignored in both input and
- * output.)  This is normally a subroutine for convert_tuples_by_name in
- * tupconvert.c, but can be used standalone.
+ * 返回一个 palloc 分配的、用于元组转换的裸属性映射，按名称匹配输入
+ * 列与输出列。（被删除的列在输入和输出中均被忽略。）这通常
+ * 是 tupconvert.c 中 convert_tuples_by_name 的子例程，但也可
+ * 单独使用。
  *
- * If 'missing_ok' is true, a column from 'outdesc' not being present in
- * 'indesc' is not flagged as an error; AttrMap.attnums[] entry for such an
- * outdesc column will be 0 in that case.
+ * 如果 'missing_ok' 为真，那么 'outdesc' 中某个不在 'indesc' 里出现的
+ * 列不会被当作错误；这种情况下该 outdesc 列对应的 AttrMap.attnums[]
+ * 条目为 0。
  */
 AttrMap *
 build_attrmap_by_name(TupleDesc indesc,
@@ -195,21 +190,18 @@ build_attrmap_by_name(TupleDesc indesc,
 		int			j;
 
 		if (outatt->attisdropped)
-			continue;			/* attrMap->attnums[i] is already 0 */
+			continue;			/* attrMap->attnums[i] 已经为 0 */
 		attname = NameStr(outatt->attname);
 		atttypid = outatt->atttypid;
 		atttypmod = outatt->atttypmod;
 
 		/*
-		 * Now search for an attribute with the same name in the indesc. It
-		 * seems likely that a partitioned table will have the attributes in
-		 * the same order as the partition, so the search below is optimized
-		 * for that case.  It is possible that columns are dropped in one of
-		 * the relations, but not the other, so we use the 'nextindesc'
-		 * counter to track the starting point of the search.  If the inner
-		 * loop encounters dropped columns then it will have to skip over
-		 * them, but it should leave 'nextindesc' at the correct position for
-		 * the next outer loop.
+		 * 现在在 indesc 中搜索同名的属性。分区表很可能其属性顺序与
+		 * 分区保持一致，因此下面的搜索针对这种情况做了优化。有可能
+		 * 其中一个关系的列被删除了而另一个没有，因此我们使用
+		 * 'nextindesc' 计数器来记录搜索的起始点。如果内层循环遇到
+		 * 被删除的列，它必须跳过它们，但应当让 'nextindesc' 停留在
+		 * 正确的位置以便下一次外层循环使用。
 		 */
 		for (j = 0; j < innatts; j++)
 		{
@@ -224,7 +216,7 @@ build_attrmap_by_name(TupleDesc indesc,
 				continue;
 			if (strcmp(attname, NameStr(inatt->attname)) == 0)
 			{
-				/* Found it, check type */
+				/* 找到了，检查类型 */
 				if (atttypid != inatt->atttypid || atttypmod != inatt->atttypmod)
 					ereport(ERROR,
 							(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -252,10 +244,9 @@ build_attrmap_by_name(TupleDesc indesc,
 /*
  * build_attrmap_by_name_if_req
  *
- * Returns mapping created by build_attrmap_by_name, or NULL if no
- * conversion is required.  This is a convenience routine for
- * convert_tuples_by_name() in tupconvert.c and other functions, but it
- * can be used standalone.
+ * 返回由 build_attrmap_by_name 创建的映射，如果不需要转换则返回 NULL。
+ * 这是 tupconvert.c 中 convert_tuples_by_name() 及其它函数使用的便捷
+ * 例程，但也可单独使用。
  */
 AttrMap *
 build_attrmap_by_name_if_req(TupleDesc indesc,
@@ -264,13 +255,13 @@ build_attrmap_by_name_if_req(TupleDesc indesc,
 {
 	AttrMap    *attrMap;
 
-	/* Verify compatibility and prepare attribute-number map */
+	/* 校验兼容性并准备属性编号映射 */
 	attrMap = build_attrmap_by_name(indesc, outdesc, missing_ok);
 
-	/* Check if the map has a one-to-one match */
+	/* 检查映射是否为一一匹配 */
 	if (check_attrmap_match(indesc, outdesc, attrMap))
 	{
-		/* Runtime conversion is not needed */
+		/* 不需要运行时转换 */
 		free_attrmap(attrMap);
 		return NULL;
 	}
@@ -281,8 +272,8 @@ build_attrmap_by_name_if_req(TupleDesc indesc,
 /*
  * check_attrmap_match
  *
- * Check to see if the map is a one-to-one match, in which case we need
- * not to do a tuple conversion, and the attribute map is not necessary.
+ * 检查映射是否为一一匹配，若是则我们不需要做元组转换，
+ * 属性映射也就没有必要了。
  */
 static bool
 check_attrmap_match(TupleDesc indesc,
@@ -291,7 +282,7 @@ check_attrmap_match(TupleDesc indesc,
 {
 	int			i;
 
-	/* no match if attribute numbers are not the same */
+	/* 若属性编号不同则不匹配 */
 	if (indesc->natts != outdesc->natts)
 		return false;
 
@@ -301,7 +292,7 @@ check_attrmap_match(TupleDesc indesc,
 		CompactAttribute *outatt;
 
 		/*
-		 * If the input column has a missing attribute, we need a conversion.
+		 * 如果输入列含有缺失属性，我们就需要进行转换。
 		 */
 		if (inatt->atthasmissing)
 			return false;
@@ -312,9 +303,8 @@ check_attrmap_match(TupleDesc indesc,
 		outatt = TupleDescCompactAttr(outdesc, i);
 
 		/*
-		 * If it's a dropped column and the corresponding input column is also
-		 * dropped, we don't need a conversion.  However, attlen and
-		 * attalignby must agree.
+		 * 如果它是一个被删除的列，且对应的输入列也被删除了，那么我们
+		 * 就不需要转换。不过，attlen 和 attalignby 必须一致。
 		 */
 		if (attrMap->attnums[i] == 0 &&
 			inatt->attisdropped &&

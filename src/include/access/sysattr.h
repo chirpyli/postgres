@@ -16,7 +16,7 @@
 
 
 /*
- * Attribute numbers for the system-defined attributes
+ * 系统定义属性的属性号
  */
 #define SelfItemPointerAttributeNumber			(-1)
 #define MinTransactionIdAttributeNumber			(-2)
